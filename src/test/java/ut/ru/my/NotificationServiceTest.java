@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -248,7 +249,75 @@ public class NotificationServiceTest {
         service.processEvent(eventWithChanges());
 
         // ровно один вызов getSettings(watcher) — не два
-        verify(userSettingsService, org.mockito.Mockito.times(1)).getSettings(watcher);
+        verify(userSettingsService, times(1)).getSettings(watcher);
+    }
+
+    /**
+     * Неактивный пользователь-наблюдатель должен быть пропущен ещё до обращения к его настройкам.
+     */
+    @Test
+    public void skipsInactiveWatcher() {
+        ApplicationUser inactive = mock(ApplicationUser.class);
+        when(inactive.isActive()).thenReturn(false);
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(inactive));
+
+        service.processEvent(eventWithChanges());
+
+        verify(userSettingsService, never()).getSettings(inactive);
+        verify(sender, never()).send(any(), any());
+    }
+
+    /**
+     * Если два наблюдателя делегировали уведомления одному получателю,
+     * сообщение должно уйти ровно один раз, а не дважды.
+     */
+    @Test
+    public void sendsOnceWhenTwoWatchersDelegateToSameRecipient() {
+        ApplicationUser otherWatcher = new MockApplicationUser("bob");
+        ApplicationUser sharedDelegate = new MockApplicationUser("carol");
+
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, otherWatcher));
+        UserSettings baseSettings = UserSettings.builder().projects(List.of("*")).channels(List.of()).build();
+        when(userSettingsService.getSettings(watcher)).thenReturn(baseSettings);
+        when(userSettingsService.getSettings(otherWatcher)).thenReturn(baseSettings);
+        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(sharedDelegate);
+        when(delegationService.getEffectiveRecipient(otherWatcher)).thenReturn(sharedDelegate);
+        when(userSettingsService.getSettings(sharedDelegate))
+                .thenReturn(UserSettings.builder()
+                        .projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST))
+                        .build());
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(eventWithChanges());
+
+        verify(sender, times(1)).send(sharedDelegate, "msg");
+    }
+
+    /**
+     * Admin-флаги каналов должны читаться один раз на всё событие,
+     * независимо от числа получателей.
+     */
+    @Test
+    public void checksAdminChannelFlagsOncePerEvent() {
+        ApplicationUser watcher2 = new MockApplicationUser("carol");
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, watcher2));
+        UserSettings settings = UserSettings.builder()
+                .projects(List.of("*"))
+                .channels(List.of(NotificationChannel.MATTERMOST))
+                .build();
+        when(userSettingsService.getSettings(watcher)).thenReturn(settings);
+        when(userSettingsService.getSettings(watcher2)).thenReturn(settings);
+        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
+        when(delegationService.getEffectiveRecipient(watcher2)).thenReturn(watcher2);
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(eventWithChanges());
+
+        // buildChannelCache() вызывает isChannelEnabled один раз per канал, не per получатель
+        verify(adminSettingsService, times(1)).isChannelEnabled(NotificationChannel.MATTERMOST);
     }
 
     // ---- вспомогательные методы ----------------------------------------

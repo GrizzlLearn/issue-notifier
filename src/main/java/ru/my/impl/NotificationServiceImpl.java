@@ -23,6 +23,7 @@ import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,19 +36,20 @@ import static java.util.Collections.emptyList;
  * <p>
  * Pipeline обработки одного события:
  * <ol>
- *   <li>Парсим diff — если пусто, выходим;</li>
- *   <li>Получаем список наблюдателей задачи;</li>
- *   <li>Для каждого наблюдателя: пропускаем автора события и отключённых;</li>
- *   <li>Проверяем проектный фильтр наблюдателя;</li>
- *   <li>Определяем фактического получателя через делегирование;</li>
- *   <li>Если делегат отключил уведомления — пропускаем;</li>
- *   <li>Получаем каналы получателя, фильтруем по admin-флагам;</li>
- *   <li>Форматируем и отправляем; сбой одного канала не останавливает остальные.</li>
+ *   <li>Парсим diff — если пусто, выходим.</li>
+ *   <li>Снимаем кеш admin-флагов каналов один раз на всё событие.</li>
+ *   <li>Обходим наблюдателей: пропускаем неактивных, автора события, отключённых,
+ *       тех, кто не следит за этим проектом.</li>
+ *   <li>Определяем эффективного получателя через делегирование.</li>
+ *   <li>Дедуплицируем: каждый получатель обрабатывается ровно один раз,
+ *       даже если на него делегировали несколько наблюдателей.</li>
+ *   <li>Для каждого уникального получателя: проверяем его enabled,
+ *       берём его каналы, форматируем и отправляем.</li>
+ *   <li>Сбой одного канала не останавливает остальные.</li>
  * </ol>
  * <p>
  * Форматтеры ({@link MessageFormatter}) и отправщики ({@link NotificationSender})
- * инжектируются Spring-ом как {@code List<>} после создания бина — каждый
- * {@link Named}-компонент, реализующий эти интерфейсы, будет собран автоматически.
+ * инжектируются Spring-ом как {@code List<>} через {@link Autowired} после создания бина.
  * Карты строятся в {@link #buildChannelMaps()} и после этого неизменяемы.
  */
 @Named
@@ -61,14 +63,12 @@ public class NotificationServiceImpl implements NotificationService {
     private final DelegationService delegationService;
     private final AdminSettingsService adminSettingsService;
 
-    // инжектируются через @Autowired(required=false) до вызова @PostConstruct
     @Autowired(required = false)
     private List<MessageFormatter> injectedFormatters = emptyList();
 
     @Autowired(required = false)
     private List<NotificationSender> injectedSenders = emptyList();
 
-    // строятся в @PostConstruct и дальше только читаются
     private volatile Map<NotificationChannel, MessageFormatter> formatters = Map.of();
     private volatile Map<NotificationChannel, NotificationSender> senders = Map.of();
 
@@ -103,10 +103,6 @@ public class NotificationServiceImpl implements NotificationService {
         this.senders = Map.copyOf(senders);
     }
 
-    /**
-     * Вызывается Spring-ом после завершения всей инъекции зависимостей.
-     * Строит неизменяемые карты из списков форматтеров и отправщиков.
-     */
     @PostConstruct
     void buildChannelMaps() {
         Map<NotificationChannel, MessageFormatter> fmtMap = new EnumMap<>(NotificationChannel.class);
@@ -119,7 +115,7 @@ public class NotificationServiceImpl implements NotificationService {
         }
         this.formatters = Map.copyOf(fmtMap);
         this.senders = Map.copyOf(sndMap);
-        log.info("Зарегистрированы каналы уведомлений: форматтеры={}, отправщики={}",
+        log.info("Зарегистрированы каналы: форматтеры={}, отправщики={}",
                 formatters.keySet(), senders.keySet());
     }
 
@@ -131,53 +127,65 @@ public class NotificationServiceImpl implements NotificationService {
         }
 
         Issue issue = event.getIssue();
-        ApplicationUser author = event.getUser(); // инициатор изменения
+        ApplicationUser author = event.getUser();
         List<ApplicationUser> watchers = watcherManager.getWatchers(issue, Locale.ROOT);
 
+        // admin-флаги читаются один раз на всё событие, а не на каждого получателя
+        Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
+
+        // ключ = userKey получателя; putIfAbsent гарантирует отправку ровно один раз
+        // даже если несколько наблюдателей делегировали на одного человека
+        Map<String, Recipient> uniqueRecipients = new LinkedHashMap<>();
+
         for (ApplicationUser watcher : watchers) {
-            processForWatcher(issue, diff, watcher, author);
+            if (!watcher.isActive()) {
+                continue;
+            }
+            if (author != null && Objects.equals(watcher.getKey(), author.getKey())) {
+                continue;
+            }
+
+            UserSettings watcherSettings = userSettingsService.getSettings(watcher);
+            if (!watcherSettings.isEnabled()) {
+                continue;
+            }
+            if (!isProjectIncluded(watcherSettings, issue)) {
+                continue;
+            }
+
+            ApplicationUser recipient = delegationService.getEffectiveRecipient(watcher);
+            if (uniqueRecipients.containsKey(recipient.getKey())) {
+                continue;
+            }
+
+            // переиспользуем настройки наблюдателя, если делегирования нет
+            UserSettings recipientSettings = Objects.equals(recipient.getKey(), watcher.getKey())
+                    ? watcherSettings
+                    : userSettingsService.getSettings(recipient);
+
+            if (!recipientSettings.isEnabled()) {
+                continue;
+            }
+
+            uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
+        }
+
+        for (Recipient r : uniqueRecipients.values()) {
+            sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
         }
     }
 
-    private void processForWatcher(Issue issue, DiffResult diff,
-                                   ApplicationUser watcher, ApplicationUser author) {
-        // автор не получает уведомлений о своих собственных изменениях
-        if (author != null && Objects.equals(watcher.getKey(), author.getKey())) {
-            return;
-        }
-
-        UserSettings watcherSettings = userSettingsService.getSettings(watcher);
-
-        if (!watcherSettings.isEnabled()) {
-            return;
-        }
-        if (!isProjectIncluded(watcherSettings, issue)) {
-            return;
-        }
-
-        ApplicationUser recipient = delegationService.getEffectiveRecipient(watcher);
-
-        // настройки получателя: если делегат тот же — переиспользуем, иначе загружаем отдельно
-        UserSettings recipientSettings = Objects.equals(recipient.getKey(), watcher.getKey())
-                ? watcherSettings
-                : userSettingsService.getSettings(recipient);
-
-        // если делегат выключил уведомления — делегированные тоже не присылаем
-        if (!recipientSettings.isEnabled()) {
-            return;
-        }
-
-        for (NotificationChannel channel : recipientSettings.getChannels()) {
-            sendViaChannel(issue, diff, recipient, channel);
+    private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
+                                 UserSettings settings, Map<NotificationChannel, Boolean> channelCache) {
+        for (NotificationChannel channel : settings.getChannels()) {
+            if (Boolean.TRUE.equals(channelCache.get(channel))) {
+                sendViaChannel(issue, diff, recipient, channel);
+            }
         }
     }
 
     private void sendViaChannel(Issue issue, DiffResult diff, ApplicationUser recipient,
                                 NotificationChannel channel) {
-        if (!adminSettingsService.isChannelEnabled(channel)) {
-            return;
-        }
-
         MessageFormatter formatter = formatters.get(channel);
         NotificationSender sender = senders.get(channel);
 
@@ -195,6 +203,18 @@ public class NotificationServiceImpl implements NotificationService {
         }
     }
 
+    /**
+     * Снимает флаги включённости каналов один раз на событие.
+     * Защищает от N×M запросов в БД при большом числе наблюдателей.
+     */
+    private Map<NotificationChannel, Boolean> buildChannelCache() {
+        Map<NotificationChannel, Boolean> cache = new EnumMap<>(NotificationChannel.class);
+        for (NotificationChannel channel : NotificationChannel.values()) {
+            cache.put(channel, adminSettingsService.isChannelEnabled(channel));
+        }
+        return cache;
+    }
+
     private boolean isProjectIncluded(UserSettings settings, Issue issue) {
         List<String> projects = settings.getProjects();
         if (projects.contains("*")) {
@@ -207,4 +227,7 @@ public class NotificationServiceImpl implements NotificationService {
         }
         return projects.contains(project.getKey());
     }
+
+    /** Пара (получатель, его настройки) для однократной отправки. */
+    private record Recipient(ApplicationUser user, UserSettings settings) {}
 }

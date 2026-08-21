@@ -114,6 +114,12 @@ public class DelegationServiceTest {
         assertFalse(result.isPresent());
     }
 
+    /** Делегирование самому себе должно быть отклонено — бессмысленно и маскирует ошибки UI. */
+    @Test(expected = IllegalArgumentException.class)
+    public void throwsWhenDelegatingToSelf() {
+        service.setDelegation(alice, alice, null);
+    }
+
     private NotificationDelegationEntity activeDelegation(String from, String to, Date activeUntil) {
         NotificationDelegationEntity entity = mock(NotificationDelegationEntity.class);
         when(entity.getFromUserKey()).thenReturn(from);
