@@ -1,19 +1,23 @@
 package ru.my.ao;
 
 import net.java.ao.Entity;
+import net.java.ao.schema.NotNull;
 import net.java.ao.schema.StringLength;
 import net.java.ao.schema.Table;
+import net.java.ao.schema.Unique;
 
 /**
  * AO-сущность: настройки уведомлений одного пользователя.
  * <p>
- * Одна строка на пользователя. Уникальность по {@code USER_KEY} обеспечивается
- * upsert-логикой в {@link ru.my.impl.UserSettingsServiceImpl}.
+ * Одна строка на пользователя. {@code USER_KEY} имеет уникальный индекс на уровне БД
+ * (защита от race condition при параллельном upsert) и NOT NULL-ограничение.
  */
 @Table("USER_NOTIFICATION_SETTINGS")
 public interface UserNotificationSettingsEntity extends Entity {
 
     /** Ключ пользователя Jira ({@code ApplicationUser.getKey()}). */
+    @Unique
+    @NotNull
     String getUserKey();
     void setUserKey(String userKey);
 

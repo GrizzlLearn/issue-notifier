@@ -3,6 +3,7 @@ package ut.ru.my;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.MockApplicationUser;
@@ -36,13 +37,12 @@ import static org.mockito.Mockito.when;
 
 /**
  * Проверяет оркестрацию: фильтрацию наблюдателей, делегирование,
- * выбор каналов и изоляцию ошибок отправщика.
- * Все тесты используют пакетный конструктор, принимающий готовые моки.
+ * выбор каналов, исключение автора события и изоляцию ошибок отправщика.
  */
 @RunWith(MockitoJUnitRunner.class)
 public class NotificationServiceTest {
 
-    @Mock private com.atlassian.jira.issue.watchers.WatcherManager watcherManager;
+    @Mock private WatcherManager watcherManager;
     @Mock private UserSettingsService userSettingsService;
     @Mock private DelegationService delegationService;
     @Mock private AdminSettingsService adminSettingsService;
@@ -64,7 +64,7 @@ public class NotificationServiceTest {
                 watcherManager, userSettingsService, delegationService,
                 adminSettingsService, formatters, senders);
 
-        watcher = new MockApplicationUser("alice");
+        watcher = new MockApplicationUser("alice", "Alice", "alice@example.com");
 
         Project project = mock(Project.class);
         when(project.getKey()).thenReturn("PROJ");
@@ -129,12 +129,47 @@ public class NotificationServiceTest {
         verify(sender).send(watcher, "msg");
     }
 
+    /**
+     * Автор изменения — наблюдатель: он не должен получать уведомление о собственном действии.
+     */
+    @Test
+    public void skipsWatcherIfIsAuthorOfChange() {
+        IssueEvent event = eventWithChangesBy(watcher); // автор = watcher
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+
+        service.processEvent(event);
+
+        verify(sender, never()).send(any(), any());
+    }
+
+    /**
+     * Другой наблюдатель получает уведомление, даже если автор тоже наблюдатель.
+     */
+    @Test
+    public void sendsToOtherWatcherWhenAuthorIsAlsoWatcher() {
+        ApplicationUser other = new MockApplicationUser("bob");
+        IssueEvent event = eventWithChangesBy(watcher); // автор — alice
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, other));
+        when(userSettingsService.getSettings(other))
+                .thenReturn(UserSettings.builder()
+                        .projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST))
+                        .build());
+        when(delegationService.getEffectiveRecipient(other)).thenReturn(other);
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(event);
+
+        verify(sender, never()).send(eq(watcher), any());
+        verify(sender).send(other, "msg");
+    }
+
     @Test
     public void sendsToDelegateInsteadOfWatcher() {
         ApplicationUser delegate = new MockApplicationUser("bob");
         setupStandardWatcher(List.of("*"), List.of()); // у watcher нет каналов
         when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
-        // у делегата есть Mattermost
         when(userSettingsService.getSettings(delegate))
                 .thenReturn(UserSettings.builder()
                         .projects(List.of("*"))
@@ -148,6 +183,23 @@ public class NotificationServiceTest {
 
         verify(sender).send(delegate, "delegated");
         verify(sender, never()).send(eq(watcher), any());
+    }
+
+    /**
+     * Делегат с enabled=false не должен получать делегированные уведомления.
+     */
+    @Test
+    public void skipsDeliveryIfDelegateHasNotificationsDisabled() {
+        ApplicationUser delegate = new MockApplicationUser("bob");
+        setupStandardWatcher(List.of("*"), List.of());
+        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
+        when(userSettingsService.getSettings(delegate))
+                .thenReturn(UserSettings.builder().enabled(false).build());
+        IssueEvent event = eventWithChanges();
+
+        service.processEvent(event);
+
+        verify(sender, never()).send(any(), any());
     }
 
     @Test
@@ -164,8 +216,6 @@ public class NotificationServiceTest {
     @Test
     public void continuesDeliveryWhenSenderThrows() {
         ApplicationUser watcher2 = new MockApplicationUser("carol");
-
-        // оба наблюдателя с Mattermost
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, watcher2));
         UserSettings settings = UserSettings.builder()
                 .projects(List.of("*"))
@@ -177,35 +227,45 @@ public class NotificationServiceTest {
         when(delegationService.getEffectiveRecipient(watcher2)).thenReturn(watcher2);
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
-
-        // первый отправщик бросает исключение
         org.mockito.Mockito.doThrow(new RuntimeException("сеть недоступна"))
                 .when(sender).send(watcher, "msg");
 
         IssueEvent event = eventWithChanges();
         service.processEvent(event);
 
-        // второй получатель всё равно должен получить уведомление
         verify(sender).send(watcher2, "msg");
+    }
+
+    /**
+     * Если watcher == recipient (нет делегирования) — второй вызов getSettings не делается.
+     */
+    @Test
+    public void doesNotCallGetSettingsTwiceWhenNoDelegate() {
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(eventWithChanges());
+
+        // ровно один вызов getSettings(watcher) — не два
+        verify(userSettingsService, org.mockito.Mockito.times(1)).getSettings(watcher);
     }
 
     // ---- вспомогательные методы ----------------------------------------
 
-    /**
-     * Событие без changelog: используем конструктор IssueEvent без GenericValue —
-     * getChangeLog() вернёт null, DiffFormatter отдаст пустой DiffResult.
-     * IssueEvent финальный класс — Mockito не может его мокировать.
-     */
     private IssueEvent eventWithChangeLog(GenericValue changeLog) {
-        // конструктор IssueEvent(Issue, ApplicationUser, Comment, Worklog, GenericValue, Map, Long)
         return new IssueEvent(issue, null, null, null, changeLog,
                 Collections.emptyMap(), EventType.ISSUE_UPDATED_ID);
     }
 
-    /**
-     * Событие с одним изменённым полем "Status".
-     */
     private IssueEvent eventWithChanges() {
+        return eventWithChangesBy(null); // автор неизвестен
+    }
+
+    /**
+     * Событие с одним изменённым полем "Status" и указанным автором.
+     */
+    private IssueEvent eventWithChangesBy(ApplicationUser author) {
         GenericValue item = mock(GenericValue.class);
         when(item.getString("field")).thenReturn("Status");
         when(item.getString("oldstring")).thenReturn("Open");
@@ -218,12 +278,10 @@ public class NotificationServiceTest {
             throw new RuntimeException(e);
         }
 
-        return eventWithChangeLog(changeLog);
+        return new IssueEvent(issue, author, null, null, changeLog,
+                Collections.emptyMap(), EventType.ISSUE_UPDATED_ID);
     }
 
-    /**
-     * Настраивает watcher с заданными проектами и каналами без делегирования.
-     */
     private void setupStandardWatcher(List<String> projects, List<NotificationChannel> channels) {
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
         when(userSettingsService.getSettings(watcher))

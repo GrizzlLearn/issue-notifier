@@ -45,7 +45,7 @@ public final class DiffFormatter {
 
     /**
      * Парсит отдельные записи ChildChangeItem.
-     * Вынесен в package-private метод для удобного unit-тестирования без GenericValue.
+     * Вынесен в отдельный метод для unit-тестирования без GenericValue.
      *
      * @param items записи ChildChangeItem
      * @return набор изменений, никогда не null

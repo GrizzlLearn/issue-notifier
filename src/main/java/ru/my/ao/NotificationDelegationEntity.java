@@ -1,20 +1,24 @@
 package ru.my.ao;
 
 import net.java.ao.Entity;
+import net.java.ao.schema.NotNull;
 import net.java.ao.schema.Table;
+import net.java.ao.schema.Unique;
 
 import java.util.Date;
 
 /**
  * AO-сущность: делегирование уведомлений на период отпуска или больничного.
  * <p>
- * Одна строка на пользователя-делегирующего. Уникальность по {@code FROM_USER_KEY}
- * обеспечивается upsert-логикой в {@link ru.my.impl.DelegationServiceImpl}.
+ * Одна строка на пользователя-делегирующего. {@code FROM_USER_KEY} имеет уникальный
+ * индекс на уровне БД и NOT NULL-ограничение.
  */
 @Table("NOTIFICATION_DELEGATION")
 public interface NotificationDelegationEntity extends Entity {
 
     /** Ключ пользователя, который делегирует уведомления. */
+    @Unique
+    @NotNull
     String getFromUserKey();
     void setFromUserKey(String fromUserKey);
 

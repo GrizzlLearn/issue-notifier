@@ -11,6 +11,9 @@ import ru.my.api.UserSettingsService;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.Arrays;
@@ -25,6 +28,8 @@ import java.util.stream.Collectors;
 @Named
 @ExportAsService(UserSettingsService.class)
 public class UserSettingsServiceImpl implements UserSettingsService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserSettingsServiceImpl.class);
 
     private final ActiveObjects ao;
 
@@ -89,7 +94,11 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                 .collect(Collectors.toList());
     }
 
-    /** Разбирает строку через запятую в список каналов; пустая строка → пустой список. */
+    /**
+     * Разбирает строку через запятую в список каналов; пустая строка → пустой список.
+     * Неизвестные значения (удалённый канал, опечатка при ручной правке) пропускаются
+     * с предупреждением — пользователь не теряет оставшиеся каналы.
+     */
     private List<NotificationChannel> parseChannels(String raw) {
         if (raw == null || raw.isBlank()) {
             return List.of();
@@ -97,7 +106,14 @@ public class UserSettingsServiceImpl implements UserSettingsService {
         return Arrays.stream(raw.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .map(NotificationChannel::valueOf)
+                .flatMap(name -> {
+                    try {
+                        return java.util.stream.Stream.of(NotificationChannel.valueOf(name));
+                    } catch (IllegalArgumentException e) {
+                        log.warn("Неизвестный канал '{}' в настройках пользователя, пропускаем", name);
+                        return java.util.stream.Stream.empty();
+                    }
+                })
                 .collect(Collectors.toList());
     }
 }

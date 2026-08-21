@@ -8,13 +8,18 @@ import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import javax.annotation.PreDestroy;
 import ru.my.api.NotificationService;
 
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Слушатель событий Jira. Перекладывает обработку в отдельный поток,
@@ -22,13 +27,17 @@ import java.util.concurrent.Executors;
  * чтобы ThreadLocal-контекст (активный пользователь, транзакция) передавался
  * в задачу корректно.
  * <p>
- * Регистрируется в {@link EventPublisher} при создании бина и снимается
- * при уничтожении через {@link javax.annotation.PreDestroy}.
+ * Очередь ограничена {@value #QUEUE_CAPACITY} задачами — при переполнении новые
+ * события отбрасываются с предупреждением в лог, что позволяет избежать OOM
+ * при массовом bulk-edit. Регистрируется в {@link EventPublisher} через
+ * {@link PostConstruct}, когда все Spring-зависимости уже инициализированы.
  */
 @Named
 public class IssueEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(IssueEventListener.class);
+    private static final int QUEUE_CAPACITY = 1000;
+    private static final int SHUTDOWN_TIMEOUT_SEC = 10;
 
     private final EventPublisher eventPublisher;
     private final ExecutorService executor;
@@ -41,20 +50,34 @@ public class IssueEventListener {
             NotificationService notificationService) {
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
-        this.executor = delegateExecutorFactory.createExecutorService(
-                Executors.newSingleThreadExecutor(
-                        r -> new Thread(r, "issue-notifier-worker")));
-        eventPublisher.register(this);
+
+        RejectedExecutionHandler discardWithLog = (r, pool) ->
+                log.warn("Очередь уведомлений переполнена ({}), событие отброшено", QUEUE_CAPACITY);
+
+        ExecutorService bounded = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(QUEUE_CAPACITY),
+                r -> new Thread(r, "issue-notifier-worker"),
+                discardWithLog);
+
+        this.executor = delegateExecutorFactory.createExecutorService(bounded);
     }
 
     /**
-     * Конструктор для unit-тестов — принимает готовый executor без регистрации
-     * в eventPublisher.
+     * Конструктор для unit-тестов — не регистрируется в eventPublisher.
      */
     public IssueEventListener(ExecutorService executor, NotificationService notificationService) {
         this.eventPublisher = null;
         this.executor = executor;
         this.notificationService = notificationService;
+    }
+
+    /** Регистрируется после полной инициализации всех Spring-зависимостей. */
+    @PostConstruct
+    public void init() {
+        if (eventPublisher != null) {
+            eventPublisher.register(this);
+        }
     }
 
     @EventListener
@@ -78,6 +101,15 @@ public class IssueEventListener {
             eventPublisher.unregister(this);
         }
         executor.shutdown();
+        try {
+            if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SEC, TimeUnit.SECONDS)) {
+                log.warn("Executor не завершился за {} сек, принудительная остановка", SHUTDOWN_TIMEOUT_SEC);
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**

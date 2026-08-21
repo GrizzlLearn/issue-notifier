@@ -49,6 +49,10 @@ public class DelegationServiceImpl implements DelegationService {
 
     @Override
     public void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Date activeUntil) {
+        if (from.getKey().equals(to.getKey())) {
+            throw new IllegalArgumentException(
+                    "Нельзя делегировать уведомления самому себе: " + from.getDisplayName());
+        }
         ao.executeInTransaction(() -> {
             NotificationDelegationEntity[] rows = ao.find(
                     NotificationDelegationEntity.class,
