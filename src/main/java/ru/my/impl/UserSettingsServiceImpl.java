@@ -1,0 +1,103 @@
+package ru.my.impl;
+
+import com.atlassian.activeobjects.external.ActiveObjects;
+import com.atlassian.jira.user.ApplicationUser;
+import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
+import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import net.java.ao.DBParam;
+import net.java.ao.Query;
+import ru.my.ao.UserNotificationSettingsEntity;
+import ru.my.api.UserSettingsService;
+import ru.my.model.NotificationChannel;
+import ru.my.model.UserSettings;
+
+import javax.inject.Inject;
+import javax.inject.Named;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Реализация {@link UserSettingsService} на базе Active Objects.
+ * Использует upsert-паттерн: при сохранении ищет существующую запись по
+ * {@code USER_KEY} и обновляет её, либо создаёт новую.
+ */
+@Named
+@ExportAsService(UserSettingsService.class)
+public class UserSettingsServiceImpl implements UserSettingsService {
+
+    private final ActiveObjects ao;
+
+    @Inject
+    public UserSettingsServiceImpl(@ComponentImport ActiveObjects ao) {
+        this.ao = ao;
+    }
+
+    @Override
+    public UserSettings getSettings(ApplicationUser user) {
+        UserNotificationSettingsEntity[] rows = ao.find(
+                UserNotificationSettingsEntity.class,
+                Query.select().where("USER_KEY = ?", user.getKey()));
+
+        if (rows.length == 0) {
+            return UserSettings.defaultSettings();
+        }
+        return toModel(rows[0]);
+    }
+
+    @Override
+    public void saveSettings(ApplicationUser user, UserSettings settings) {
+        ao.executeInTransaction(() -> {
+            UserNotificationSettingsEntity[] rows = ao.find(
+                    UserNotificationSettingsEntity.class,
+                    Query.select().where("USER_KEY = ?", user.getKey()));
+
+            UserNotificationSettingsEntity entity = rows.length > 0
+                    ? rows[0]
+                    : ao.create(UserNotificationSettingsEntity.class,
+                            new DBParam("USER_KEY", user.getKey()));
+
+            entity.setEnabled(settings.isEnabled());
+            entity.setProjectsRaw(String.join(",", settings.getProjects()));
+            entity.setChannelsRaw(settings.getChannels().stream()
+                    .map(NotificationChannel::name)
+                    .collect(Collectors.joining(",")));
+            entity.setTelegramChatId(settings.getTelegramChatId());
+            entity.save();
+            return null;
+        });
+    }
+
+    /** Конвертирует AO-сущность в модель. */
+    private UserSettings toModel(UserNotificationSettingsEntity entity) {
+        return UserSettings.builder()
+                .enabled(entity.isEnabled())
+                .projects(parseList(entity.getProjectsRaw()))
+                .channels(parseChannels(entity.getChannelsRaw()))
+                .telegramChatId(entity.getTelegramChatId())
+                .build();
+    }
+
+    /** Разбирает строку через запятую в список строк; пустая строка → список из "*". */
+    private List<String> parseList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of("*");
+        }
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    /** Разбирает строку через запятую в список каналов; пустая строка → пустой список. */
+    private List<NotificationChannel> parseChannels(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(NotificationChannel::valueOf)
+                .collect(Collectors.toList());
+    }
+}
