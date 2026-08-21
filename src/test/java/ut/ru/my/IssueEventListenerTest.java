@@ -2,6 +2,7 @@ package ut.ru.my;
 
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
+import com.atlassian.jira.issue.Issue;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -10,13 +11,14 @@ import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.NotificationService;
 import ru.my.impl.IssueEventListener;
 
+import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 /**
  * Проверяет маршрутизацию событий: CREATED и DELETED игнорируются,
@@ -101,9 +103,11 @@ public class IssueEventListenerTest {
 
     // ---- вспомогательные методы ----------------------------------------
 
+    /**
+     * Создаём реальный IssueEvent через конструктор — IssueEvent финальный класс,
+     * Mockito не может его мокировать без инлайн-расширения.
+     */
     private IssueEvent eventWithType(Long typeId) {
-        IssueEvent event = org.mockito.Mockito.mock(IssueEvent.class);
-        when(event.getEventTypeId()).thenReturn(typeId);
-        return event;
+        return new IssueEvent(mock(Issue.class), Collections.emptyMap(), null, typeId);
     }
 }

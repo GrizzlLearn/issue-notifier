@@ -74,7 +74,7 @@ public class NotificationServiceImpl implements NotificationService {
      * Пакетный конструктор для unit-тестов — позволяет подать готовые моки
      * форматтеров и отправщиков без регистрации через register-методы.
      */
-    NotificationServiceImpl(
+    public NotificationServiceImpl(
             WatcherManager watcherManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,

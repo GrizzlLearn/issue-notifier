@@ -8,7 +8,7 @@ import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
+import javax.annotation.PreDestroy;
 import ru.my.api.NotificationService;
 
 import javax.inject.Inject;
@@ -26,7 +26,7 @@ import java.util.concurrent.Executors;
  * при уничтожении плагина через {@link DisposableBean}.
  */
 @Named
-public class IssueEventListener implements DisposableBean {
+public class IssueEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(IssueEventListener.class);
 
@@ -51,7 +51,7 @@ public class IssueEventListener implements DisposableBean {
      * Конструктор для unit-тестов — принимает готовый executor без регистрации
      * в eventPublisher.
      */
-    IssueEventListener(ExecutorService executor, NotificationService notificationService) {
+    public IssueEventListener(ExecutorService executor, NotificationService notificationService) {
         this.eventPublisher = null;
         this.executor = executor;
         this.notificationService = notificationService;
@@ -72,7 +72,7 @@ public class IssueEventListener implements DisposableBean {
         });
     }
 
-    @Override
+    @PreDestroy
     public void destroy() {
         if (eventPublisher != null) {
             eventPublisher.unregister(this);

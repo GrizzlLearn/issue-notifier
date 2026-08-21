@@ -1,6 +1,7 @@
 package ut.ru.my;
 
 import com.atlassian.jira.event.issue.IssueEvent;
+import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
@@ -17,16 +18,17 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
 import ru.my.impl.NotificationServiceImpl;
-import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -53,9 +55,6 @@ public class NotificationServiceTest {
 
     @Before
     public void setUp() {
-        when(formatter.channel()).thenReturn(NotificationChannel.MATTERMOST);
-        when(sender.channel()).thenReturn(NotificationChannel.MATTERMOST);
-
         Map<NotificationChannel, MessageFormatter> formatters = new EnumMap<>(NotificationChannel.class);
         formatters.put(NotificationChannel.MATTERMOST, formatter);
         Map<NotificationChannel, NotificationSender> senders = new EnumMap<>(NotificationChannel.class);
@@ -148,7 +147,7 @@ public class NotificationServiceTest {
         service.processEvent(event);
 
         verify(sender).send(delegate, "delegated");
-        verify(sender, never()).send(watcher, any());
+        verify(sender, never()).send(eq(watcher), any());
     }
 
     @Test
@@ -193,13 +192,14 @@ public class NotificationServiceTest {
     // ---- вспомогательные методы ----------------------------------------
 
     /**
-     * Событие без changelog — DiffFormatter вернёт пустой DiffResult.
+     * Событие без changelog: используем конструктор IssueEvent без GenericValue —
+     * getChangeLog() вернёт null, DiffFormatter отдаст пустой DiffResult.
+     * IssueEvent финальный класс — Mockito не может его мокировать.
      */
     private IssueEvent eventWithChangeLog(GenericValue changeLog) {
-        IssueEvent event = mock(IssueEvent.class);
-        when(event.getChangeLog()).thenReturn(changeLog);
-        when(event.getIssue()).thenReturn(issue);
-        return event;
+        // конструктор IssueEvent(Issue, ApplicationUser, Comment, Worklog, GenericValue, Map, Long)
+        return new IssueEvent(issue, null, null, null, changeLog,
+                Collections.emptyMap(), EventType.ISSUE_UPDATED_ID);
     }
 
     /**

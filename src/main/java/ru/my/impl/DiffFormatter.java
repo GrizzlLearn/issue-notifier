@@ -50,7 +50,7 @@ public final class DiffFormatter {
      * @param items записи ChildChangeItem
      * @return набор изменений, никогда не null
      */
-    static DiffResult parseItems(List<GenericValue> items) {
+    public static DiffResult parseItems(List<GenericValue> items) {
         List<DiffResult.FieldChange> changes = new ArrayList<>();
         for (GenericValue item : items) {
             String field = item.getString("field");
