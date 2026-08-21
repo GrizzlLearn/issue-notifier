@@ -167,6 +167,11 @@ public class NotificationServiceImpl implements NotificationService {
 
     private boolean isProjectIncluded(UserSettings settings, Issue issue) {
         List<String> projects = settings.getProjects();
-        return projects.contains("*") || projects.contains(issue.getProjectObject().getKey());
+        if (projects.contains("*")) {
+            return true;
+        }
+        // getProjectObject() теоретически null в тестах с неполным MockIssue
+        var project = issue.getProjectObject();
+        return project != null && projects.contains(project.getKey());
     }
 }

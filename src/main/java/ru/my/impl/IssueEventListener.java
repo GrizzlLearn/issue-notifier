@@ -18,12 +18,12 @@ import java.util.concurrent.Executors;
 
 /**
  * Слушатель событий Jira. Перекладывает обработку в отдельный поток,
- * не блокируя поток Jira-события. Использует {@link ThreadLocalDelegateExecutorService},
+ * не блокируя поток Jira-события. Использует {@link ThreadLocalDelegateExecutorFactory},
  * чтобы ThreadLocal-контекст (активный пользователь, транзакция) передавался
  * в задачу корректно.
  * <p>
  * Регистрируется в {@link EventPublisher} при создании бина и снимается
- * при уничтожении плагина через {@link DisposableBean}.
+ * при уничтожении через {@link javax.annotation.PreDestroy}.
  */
 @Named
 public class IssueEventListener {
