@@ -4,33 +4,33 @@ import com.atlassian.event.api.EventListener;
 import com.atlassian.event.api.EventPublisher;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
+import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.NotificationService;
+import ru.my.model.DiffResult;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Слушатель событий Jira. Перекладывает обработку в отдельный поток,
- * не блокируя поток Jira-события. Использует {@link ThreadLocalDelegateExecutorFactory},
- * чтобы ThreadLocal-контекст (активный пользователь, транзакция) передавался
- * в задачу корректно.
+ * Слушатель событий Jira. Парсит changelog в потоке Jira-события (C1),
+ * затем перекладывает рассылку в пул потоков, не блокируя поток события.
+ * Использует {@link ThreadLocalDelegateExecutorFactory} для передачи ThreadLocal-контекста.
  * <p>
- * Очередь ограничена {@value #QUEUE_CAPACITY} задачами — при переполнении новые
- * события отбрасываются с предупреждением в лог, что позволяет избежать OOM
- * при массовом bulk-edit. Регистрируется в {@link EventPublisher} через
- * {@link PostConstruct}, когда все Spring-зависимости уже инициализированы.
+ * Пул: core=2, max=4 потока (C3) — параллельная обработка нескольких событий.
+ * Очередь ограничена {@value #QUEUE_CAPACITY} задачами; переполнение логируется.
  */
 @Named
 public class IssueEventListener {
@@ -38,6 +38,8 @@ public class IssueEventListener {
     private static final Logger log = LoggerFactory.getLogger(IssueEventListener.class);
     private static final int QUEUE_CAPACITY = 1000;
     private static final int SHUTDOWN_TIMEOUT_SEC = 10;
+    private static final int CORE_POOL_SIZE = 2;
+    private static final int MAX_POOL_SIZE = 4;
 
     private final EventPublisher eventPublisher;
     private final ExecutorService executor;
@@ -51,28 +53,26 @@ public class IssueEventListener {
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
 
+        AtomicInteger threadCounter = new AtomicInteger();
         RejectedExecutionHandler discardWithLog = (r, pool) ->
                 log.warn("Очередь уведомлений переполнена ({}), событие отброшено", QUEUE_CAPACITY);
 
         ExecutorService bounded = new ThreadPoolExecutor(
-                1, 1, 0L, TimeUnit.MILLISECONDS,
+                CORE_POOL_SIZE, MAX_POOL_SIZE, 60L, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(QUEUE_CAPACITY),
-                r -> new Thread(r, "issue-notifier-worker"),
+                r -> new Thread(r, "issue-notifier-worker-" + threadCounter.incrementAndGet()),
                 discardWithLog);
 
         this.executor = delegateExecutorFactory.createExecutorService(bounded);
     }
 
-    /**
-     * Конструктор для unit-тестов — не регистрируется в eventPublisher.
-     */
+    /** Конструктор для unit-тестов — не регистрируется в eventPublisher. */
     public IssueEventListener(ExecutorService executor, NotificationService notificationService) {
         this.eventPublisher = null;
         this.executor = executor;
         this.notificationService = notificationService;
     }
 
-    /** Регистрируется после полной инициализации всех Spring-зависимостей. */
     @PostConstruct
     public void init() {
         if (eventPublisher != null) {
@@ -85,14 +85,30 @@ public class IssueEventListener {
         if (isIgnoredEvent(event)) {
             return;
         }
-        executor.submit(() -> {
-            try {
-                notificationService.processEvent(event);
-            } catch (Exception e) {
-                log.error("Необработанная ошибка при обработке события {}: {}",
-                        event.getEventTypeId(), e.getMessage(), e);
-            }
-        });
+        // C1: changelog читается здесь, в потоке Jira-события — OFBiz-ленивая загрузка
+        // через getRelated("ChildChangeItem") безопасна только в этом контексте.
+        DiffResult diff = DiffFormatter.parse(event.getChangeLog());
+        if (diff.isEmpty()) {
+            return;
+        }
+        Issue issue = event.getIssue();
+        ApplicationUser author = event.getUser();
+        // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
+        Long typeId = event.getEventTypeId();
+        try {
+            executor.submit(() -> {
+                try {
+                    notificationService.processEvent(issue, author, diff);
+                } catch (Exception e) {
+                    log.error("Необработанная ошибка при обработке события {}: {}",
+                            typeId, e.getMessage(), e);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // Бросается только если executor завершён (shutdown); переполнение очереди
+            // обрабатывается silently DiscardPolicy-хендлером внутри ThreadPoolExecutor
+            log.warn("Executor завершён, событие {} отброшено", typeId);
+        }
     }
 
     @PreDestroy

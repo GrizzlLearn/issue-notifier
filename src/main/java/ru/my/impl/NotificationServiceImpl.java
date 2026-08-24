@@ -1,6 +1,5 @@
 package ru.my.impl;
 
-import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.user.ApplicationUser;
@@ -36,7 +35,7 @@ import static java.util.Collections.emptyList;
  * <p>
  * Pipeline обработки одного события:
  * <ol>
- *   <li>Парсим diff — если пусто, выходим.</li>
+ *   <li>Проверяем diff — если пуст, выходим. Парсинг выполнен в потоке Jira-события.</li>
  *   <li>Снимаем кеш admin-флагов каналов один раз на всё событие.</li>
  *   <li>Обходим наблюдателей: пропускаем неактивных, автора события, отключённых,
  *       тех, кто не следит за этим проектом.</li>
@@ -107,11 +106,19 @@ public class NotificationServiceImpl implements NotificationService {
     void buildChannelMaps() {
         Map<NotificationChannel, MessageFormatter> fmtMap = new EnumMap<>(NotificationChannel.class);
         for (MessageFormatter f : injectedFormatters) {
-            fmtMap.put(f.channel(), f);
+            MessageFormatter prev = fmtMap.put(f.channel(), f);
+            if (prev != null) {
+                log.warn("Конфликт форматтеров для канала {}: {} перезаписан {}",
+                        f.channel(), prev.getClass().getSimpleName(), f.getClass().getSimpleName());
+            }
         }
         Map<NotificationChannel, NotificationSender> sndMap = new EnumMap<>(NotificationChannel.class);
         for (NotificationSender s : injectedSenders) {
-            sndMap.put(s.channel(), s);
+            NotificationSender prev = sndMap.put(s.channel(), s);
+            if (prev != null) {
+                log.warn("Конфликт отправщиков для канала {}: {} перезаписан {}",
+                        s.channel(), prev.getClass().getSimpleName(), s.getClass().getSimpleName());
+            }
         }
         this.formatters = Map.copyOf(fmtMap);
         this.senders = Map.copyOf(sndMap);
@@ -120,14 +127,16 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
-    public void processEvent(IssueEvent event) {
-        DiffResult diff = DiffFormatter.parse(event.getChangeLog());
+    public void processEvent(Issue issue, ApplicationUser author, DiffResult diff) {
         if (diff.isEmpty()) {
             return;
         }
+        if (formatters.isEmpty()) {
+            log.warn("Нет зарегистрированных каналов доставки — уведомление по задаче {} пропущено. " +
+                    "Возможна гонка инициализации или не зарегистрированы MessageFormatter", issue.getKey());
+            return;
+        }
 
-        Issue issue = event.getIssue();
-        ApplicationUser author = event.getUser();
         List<ApplicationUser> watchers = watcherManager.getWatchers(issue, Locale.ROOT);
 
         // admin-флаги читаются один раз на всё событие, а не на каждого получателя
@@ -177,7 +186,8 @@ public class NotificationServiceImpl implements NotificationService {
 
     private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
                                  UserSettings settings, Map<NotificationChannel, Boolean> channelCache) {
-        for (NotificationChannel channel : settings.getChannels()) {
+        // Set защищает от двойной отправки при дублях в List<NotificationChannel>
+        for (NotificationChannel channel : new java.util.LinkedHashSet<>(settings.getChannels())) {
             if (Boolean.TRUE.equals(channelCache.get(channel))) {
                 sendViaChannel(issue, diff, recipient, channel);
             }

@@ -101,6 +101,23 @@ public class AdminSettingsResourceTest {
     }
 
     @Test
+    public void putReturns400ForInvalidBooleanValue() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        assertEquals(400, resource.set(Map.of("email.enabled", "yes")).getStatus());
+        assertEquals(400, resource.set(Map.of("mattermost.enabled", "1")).getStatus());
+        assertEquals(400, resource.set(Map.of("telegram.enabled", "")).getStatus());
+    }
+
+    @Test
+    public void putAcceptsValidBooleanValues() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        assertEquals(204, resource.set(Map.of("email.enabled", "true")).getStatus());
+        assertEquals(204, resource.set(Map.of("mattermost.enabled", "false")).getStatus());
+    }
+
+    @Test
     public void putIgnoresUnknownKeys() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
@@ -108,5 +125,85 @@ public class AdminSettingsResourceTest {
 
         verify(adminSettingsService, never()).set(eq("unknown.key"), any());
         verify(adminSettingsService).set("email.enabled", "false");
+    }
+
+    // --- C4: маскировка секретов ---
+
+    @Test
+    public void getReturnsMaskedValueForNonEmptySecret() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get("mattermost.token", "")).thenReturn("real-token-value");
+
+        Response response = resource.get();
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) response.getEntity();
+        assertEquals("***", body.get("mattermost.token"));
+    }
+
+    @Test
+    public void getReturnsEmptyStringForUnsetSecret() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        // значение по умолчанию "" — маска не применяется, токен не задан
+        when(adminSettingsService.get("telegram.botToken", "")).thenReturn("");
+
+        Response response = resource.get();
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) response.getEntity();
+        assertEquals("", body.get("telegram.botToken"));
+    }
+
+    @Test
+    public void putDoesNotOverwriteSecretWithMaskValue() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        // GET вернул "***", фронт не изменил поле и отправил его обратно
+        resource.set(Map.of("mattermost.token", "***", "email.enabled", "true"));
+
+        verify(adminSettingsService, never()).set(eq("mattermost.token"), any());
+        verify(adminSettingsService).set("email.enabled", "true");
+    }
+
+    @Test
+    public void putDoesNotOverwriteSecretWithBlankValue() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of("mattermost.token", "", "email.enabled", "false"));
+
+        verify(adminSettingsService, never()).set(eq("mattermost.token"), any());
+        verify(adminSettingsService).set("email.enabled", "false");
+    }
+
+    @Test
+    public void putSavesSecretWhenNewRealValueProvided() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of("telegram.botToken", "123456:ABC-DEF"));
+
+        verify(adminSettingsService).set("telegram.botToken", "123456:ABC-DEF");
+    }
+
+    @Test
+    public void putAllowsClearingNonSecretFieldWithEmptyString() {
+        // mattermost.domain — не секрет, пустая строка должна сохраниться (очистка поля)
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of("mattermost.domain", ""));
+
+        verify(adminSettingsService).set("mattermost.domain", "");
+    }
+
+    @Test
+    public void getReturnsBotIdAsPlainText() {
+        // mattermost.botId — публичный идентификатор, не секрет, маскировать не надо
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get("mattermost.botId", "")).thenReturn("bot-abc-123");
+
+        Response response = resource.get();
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) response.getEntity();
+        assertEquals("bot-abc-123", body.get("mattermost.botId"));
     }
 }

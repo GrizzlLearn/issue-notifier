@@ -14,6 +14,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Named
@@ -22,7 +23,6 @@ import java.util.stream.Collectors;
 @Consumes(MediaType.APPLICATION_JSON)
 public class AdminSettingsResource {
 
-    // Все известные ключи глобальных настроек плагина
     static final List<String> KNOWN_KEYS = List.of(
             "email.enabled",
             "mattermost.enabled",
@@ -32,6 +32,14 @@ public class AdminSettingsResource {
             "telegram.enabled",
             "telegram.botToken"
     );
+
+    // C4: ключи, содержащие секреты — маскируются в GET, не перезаписываются маской в PUT
+    // mattermost.botId — публичный идентификатор, не секрет, маскировать не нужно
+    static final Set<String> SECRETS = Set.of("mattermost.token", "telegram.botToken");
+    private static final String MASKED = "***";
+
+    // B2: ключи с булевой семантикой — принимают только "true" или "false"
+    static final Set<String> BOOLEAN_KEYS = Set.of("email.enabled", "mattermost.enabled", "telegram.enabled");
 
     private final JiraAuthenticationContext authContext;
     private final GlobalPermissionManager globalPermissionManager;
@@ -54,11 +62,19 @@ public class AdminSettingsResource {
         if (!isAdmin(user)) return UserSettingsResource.forbidden();
 
         Map<String, String> settings = KNOWN_KEYS.stream()
-                .collect(Collectors.toMap(k -> k, k -> adminSettingsService.get(k, "")));
+                .collect(Collectors.toMap(k -> k, k -> maskIfSecret(k, adminSettingsService.get(k, ""))));
 
         return Response.ok(settings).build();
     }
 
+    /**
+     * Сохраняет настройки плагина. Возвращает {@code 204} при успехе.
+     * <p>
+     * Важно: {@code 204} не гарантирует запись всех переданных ключей —
+     * неизвестные ключи (не из {@link #KNOWN_KEYS}) молча игнорируются,
+     * секретные поля с пустым значением или маской {@code "***"} не перезаписываются,
+     * булевы поля с недопустимым значением возвращают {@code 400}.
+     */
     @PUT
     public Response set(Map<String, String> body) {
         ApplicationUser user = authContext.getLoggedInUser();
@@ -66,8 +82,18 @@ public class AdminSettingsResource {
         if (!isAdmin(user)) return UserSettingsResource.forbidden();
         if (body == null || body.isEmpty()) return UserSettingsResource.badRequest("Тело запроса не задано");
 
+        // B2: валидация булевых ключей до сохранения
+        for (Map.Entry<String, String> e : body.entrySet()) {
+            if (BOOLEAN_KEYS.contains(e.getKey())
+                    && !"true".equals(e.getValue()) && !"false".equals(e.getValue())) {
+                return UserSettingsResource.badRequest(
+                        "Недопустимое значение для '" + e.getKey() + "': ожидается 'true' или 'false'");
+            }
+        }
+
         body.entrySet().stream()
                 .filter(e -> KNOWN_KEYS.contains(e.getKey()))
+                .filter(e -> !isBlankOrMaskedSecret(e.getKey(), e.getValue()))
                 .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
 
         return Response.noContent().build();
@@ -75,5 +101,14 @@ public class AdminSettingsResource {
 
     private boolean isAdmin(ApplicationUser user) {
         return globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user);
+    }
+
+    private String maskIfSecret(String key, String value) {
+        return SECRETS.contains(key) && !value.isBlank() ? MASKED : value;
+    }
+
+    private boolean isBlankOrMaskedSecret(String key, String value) {
+        if (!SECRETS.contains(key)) return false; // несекретные поля (domain, enabled) очищать можно
+        return value == null || value.isBlank() || MASKED.equals(value);
     }
 }

@@ -1,7 +1,5 @@
 package ru.my.impl;
 
-import com.atlassian.jira.event.issue.IssueEvent;
-import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.project.Project;
@@ -12,16 +10,15 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
-import org.ofbiz.core.entity.GenericValue;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.DelegationService;
 import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
+import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
-import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
@@ -53,6 +50,11 @@ public class NotificationServiceTest {
     private ApplicationUser watcher;
     private Issue issue;
 
+    // diff-фикстуры: с изменениями и без
+    private static final DiffResult EMPTY_DIFF = new DiffResult(List.of());
+    private static final DiffResult NON_EMPTY_DIFF = new DiffResult(
+            List.of(new DiffResult.FieldChange("Status", "Open", "In Progress")));
+
     @Before
     public void setUp() {
         Map<NotificationChannel, MessageFormatter> formatters = new EnumMap<>(NotificationChannel.class);
@@ -73,34 +75,61 @@ public class NotificationServiceTest {
     }
 
     @Test
-    public void skipsEventWithEmptyChangelog() {
-        IssueEvent event = eventWithChangeLog(null);
-
-        service.processEvent(event);
+    public void skipsWhenDiffIsEmpty() {
+        service.processEvent(issue, null, EMPTY_DIFF);
 
         verify(watcherManager, never()).getWatchers(any(), any());
     }
 
     @Test
+    public void skipsWhenNoFormattersRegistered() {
+        // Пустые карты — гонка инициализации или незарегистрированные каналы
+        NotificationServiceImpl emptyService = new NotificationServiceImpl(
+                watcherManager, userSettingsService, delegationService, adminSettingsService,
+                Map.of(), Map.of());
+
+        emptyService.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void doesNotSendTwiceWhenChannelIsDuplicated() {
+        // channels содержит MATTERMOST дважды — LinkedHashSet защищает от двойной отправки
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder()
+                        .projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST, NotificationChannel.MATTERMOST))
+                        .build());
+        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(sender, times(1)).send(watcher, "msg");
+    }
+
+    @Test
     public void skipsWatcherIfSettingsDisabled() {
-        IssueEvent event = eventWithChanges();
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
         when(userSettingsService.getSettings(watcher))
                 .thenReturn(UserSettings.builder().enabled(false).build());
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(any(), any());
     }
 
     @Test
     public void skipsWatcherIfProjectNotInList() {
-        IssueEvent event = eventWithChanges();
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
         when(userSettingsService.getSettings(watcher))
                 .thenReturn(UserSettings.builder().projects(List.of("OTHER")).build());
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(any(), any());
     }
@@ -108,11 +137,10 @@ public class NotificationServiceTest {
     @Test
     public void sendsWhenProjectMatchesWildcard() {
         setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
-        IssueEvent event = eventWithChanges();
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender).send(watcher, "msg");
     }
@@ -120,11 +148,10 @@ public class NotificationServiceTest {
     @Test
     public void sendsWhenProjectExplicitlyListed() {
         setupStandardWatcher(List.of("PROJ", "TEST"), List.of(NotificationChannel.MATTERMOST));
-        IssueEvent event = eventWithChanges();
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender).send(watcher, "msg");
     }
@@ -134,10 +161,9 @@ public class NotificationServiceTest {
      */
     @Test
     public void skipsWatcherIfIsAuthorOfChange() {
-        IssueEvent event = eventWithChangesBy(watcher); // автор = watcher
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
 
-        service.processEvent(event);
+        service.processEvent(issue, watcher, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(any(), any());
     }
@@ -148,7 +174,6 @@ public class NotificationServiceTest {
     @Test
     public void sendsToOtherWatcherWhenAuthorIsAlsoWatcher() {
         ApplicationUser other = new MockApplicationUser("bob");
-        IssueEvent event = eventWithChangesBy(watcher); // автор — alice
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, other));
         when(userSettingsService.getSettings(other))
                 .thenReturn(UserSettings.builder()
@@ -159,7 +184,7 @@ public class NotificationServiceTest {
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(event);
+        service.processEvent(issue, watcher, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(eq(watcher), any());
         verify(sender).send(other, "msg");
@@ -168,18 +193,17 @@ public class NotificationServiceTest {
     @Test
     public void sendsToDelegateInsteadOfWatcher() {
         ApplicationUser delegate = new MockApplicationUser("bob");
-        setupStandardWatcher(List.of("*"), List.of()); // у watcher нет каналов
+        setupStandardWatcher(List.of("*"), List.of());
         when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
         when(userSettingsService.getSettings(delegate))
                 .thenReturn(UserSettings.builder()
                         .projects(List.of("*"))
                         .channels(List.of(NotificationChannel.MATTERMOST))
                         .build());
-        IssueEvent event = eventWithChanges();
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("delegated");
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender).send(delegate, "delegated");
         verify(sender, never()).send(eq(watcher), any());
@@ -195,9 +219,8 @@ public class NotificationServiceTest {
         when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
         when(userSettingsService.getSettings(delegate))
                 .thenReturn(UserSettings.builder().enabled(false).build());
-        IssueEvent event = eventWithChanges();
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(any(), any());
     }
@@ -205,10 +228,9 @@ public class NotificationServiceTest {
     @Test
     public void skipsChannelIfAdminDisabled() {
         setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
-        IssueEvent event = eventWithChanges();
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(false);
 
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender, never()).send(any(), any());
     }
@@ -230,8 +252,7 @@ public class NotificationServiceTest {
         org.mockito.Mockito.doThrow(new RuntimeException("сеть недоступна"))
                 .when(sender).send(watcher, "msg");
 
-        IssueEvent event = eventWithChanges();
-        service.processEvent(event);
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender).send(watcher2, "msg");
     }
@@ -245,9 +266,8 @@ public class NotificationServiceTest {
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(eventWithChanges());
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
-        // ровно один вызов getSettings(watcher) — не два
         verify(userSettingsService, times(1)).getSettings(watcher);
     }
 
@@ -260,7 +280,7 @@ public class NotificationServiceTest {
         when(inactive.isActive()).thenReturn(false);
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(inactive));
 
-        service.processEvent(eventWithChanges());
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(userSettingsService, never()).getSettings(inactive);
         verify(sender, never()).send(any(), any());
@@ -289,7 +309,7 @@ public class NotificationServiceTest {
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(eventWithChanges());
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
         verify(sender, times(1)).send(sharedDelegate, "msg");
     }
@@ -313,42 +333,12 @@ public class NotificationServiceTest {
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
-        service.processEvent(eventWithChanges());
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
 
-        // buildChannelCache() вызывает isChannelEnabled один раз per канал, не per получатель
         verify(adminSettingsService, times(1)).isChannelEnabled(NotificationChannel.MATTERMOST);
     }
 
     // ---- вспомогательные методы ----------------------------------------
-
-    private IssueEvent eventWithChangeLog(GenericValue changeLog) {
-        return new IssueEvent(issue, null, null, null, changeLog,
-                Collections.emptyMap(), EventType.ISSUE_UPDATED_ID);
-    }
-
-    private IssueEvent eventWithChanges() {
-        return eventWithChangesBy(null); // автор неизвестен
-    }
-
-    /**
-     * Событие с одним изменённым полем "Status" и указанным автором.
-     */
-    private IssueEvent eventWithChangesBy(ApplicationUser author) {
-        GenericValue item = mock(GenericValue.class);
-        when(item.getString("field")).thenReturn("Status");
-        when(item.getString("oldstring")).thenReturn("Open");
-        when(item.getString("newstring")).thenReturn("In Progress");
-
-        GenericValue changeLog = mock(GenericValue.class);
-        try {
-            when(changeLog.getRelated("ChildChangeItem")).thenReturn(List.of(item));
-        } catch (org.ofbiz.core.entity.GenericEntityException e) {
-            throw new RuntimeException(e);
-        }
-
-        return new IssueEvent(issue, author, null, null, changeLog,
-                Collections.emptyMap(), EventType.ISSUE_UPDATED_ID);
-    }
 
     private void setupStandardWatcher(List<String> projects, List<NotificationChannel> channels) {
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
