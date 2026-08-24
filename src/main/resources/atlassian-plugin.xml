@@ -18,6 +18,11 @@
         <entity>ru.my.ao.AdminSettingsEntity</entity>
     </ao>
 
+    <!-- REST API плагина -->
+    <rest key="issue-notifier-rest" name="Issue Notifier REST API" path="/issue-notifier" version="1">
+        <description>REST API для управления настройками уведомлений</description>
+    </rest>
+
     <!-- add our web resources -->
     <web-resource key="issue-notifier-resources" name="issue-notifier Web Resources">
         <dependency>com.atlassian.auiplugin:ajs</dependency>
