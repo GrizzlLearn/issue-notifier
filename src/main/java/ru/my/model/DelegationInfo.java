@@ -1,6 +1,6 @@
 package ru.my.model;
 
-import java.util.Date;
+import java.time.Instant;
 
 /**
  * Информация об активной делегации уведомлений.
@@ -10,13 +10,13 @@ import java.util.Date;
 public class DelegationInfo {
 
     private final String toUserKey;
-    private final Date activeUntil;
+    private final Instant activeUntil;
 
     /**
      * @param toUserKey   ключ пользователя-получателя уведомлений
-     * @param activeUntil дата окончания делегации; {@code null} — бессрочная
+     * @param activeUntil момент окончания делегации; {@code null} — бессрочная
      */
-    public DelegationInfo(String toUserKey, Date activeUntil) {
+    public DelegationInfo(String toUserKey, Instant activeUntil) {
         this.toUserKey = toUserKey;
         this.activeUntil = activeUntil;
     }
@@ -27,10 +27,10 @@ public class DelegationInfo {
     }
 
     /**
-     * Дата окончания делегации. {@code null} означает бессрочную делегацию.
+     * Момент окончания делегации. {@code null} означает бессрочную делегацию.
      * Для проверки актуальности используйте {@link #isActive()}.
      */
-    public Date getActiveUntil() {
+    public Instant getActiveUntil() {
         return activeUntil;
     }
 
@@ -39,6 +39,6 @@ public class DelegationInfo {
      * Делегация считается истёкшей если {@code activeUntil} задан и уже в прошлом.
      */
     public boolean isActive() {
-        return activeUntil == null || activeUntil.after(new Date());
+        return activeUntil == null || activeUntil.isAfter(Instant.now());
     }
 }

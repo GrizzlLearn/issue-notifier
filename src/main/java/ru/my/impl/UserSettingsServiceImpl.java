@@ -105,7 +105,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
         return Arrays.stream(raw.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -128,6 +128,6 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                         return java.util.stream.Stream.empty();
                     }
                 })
-                .collect(Collectors.toList());
+                .toList();
     }
 }

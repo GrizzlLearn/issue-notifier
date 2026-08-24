@@ -12,9 +12,9 @@ import ru.my.api.DelegationService;
 import ru.my.model.DelegationInfo;
 
 import javax.ws.rs.core.Response;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.Date;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
@@ -54,7 +54,7 @@ public class UserDelegationResourceTest {
     @Test
     public void getReturnsDelegationWithDate() {
         when(authContext.getLoggedInUser()).thenReturn(user);
-        Date until = Date.from(LocalDate.of(2026, 12, 31).atStartOfDay(ZoneOffset.UTC).toInstant());
+        Instant until = LocalDate.of(2026, 12, 31).atStartOfDay(ZoneOffset.UTC).toInstant();
         when(delegationService.getDelegation(user)).thenReturn(Optional.of(new DelegationInfo("bob", until)));
 
         Response response = resource.get();
@@ -74,7 +74,7 @@ public class UserDelegationResourceTest {
 
         assertEquals(200, response.getStatus());
         DelegationDto dto = (DelegationDto) response.getEntity();
-        assertNull(dto.getActiveUntil());
+        assertEquals(null, dto.getActiveUntil());
     }
 
     // --- PUT ---
@@ -142,9 +142,5 @@ public class UserDelegationResourceTest {
         Response response = resource.remove();
         assertEquals(204, response.getStatus());
         verify(delegationService).removeDelegation(user);
-    }
-
-    private static void assertNull(Object o) {
-        assertEquals(null, o);
     }
 }

@@ -14,6 +14,7 @@ import ru.my.model.DelegationInfo;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.time.Instant;
 import java.util.Date;
 import java.util.Optional;
 
@@ -48,16 +49,18 @@ public class DelegationServiceImpl implements DelegationService {
     public ApplicationUser getEffectiveRecipient(ApplicationUser user) {
         return getDelegation(user)
                 .filter(DelegationInfo::isActive)
-                .map(d -> userManager.getUserByKey(d.getToUserKey()))
+                .flatMap(d -> Optional.ofNullable(userManager.getUserByKey(d.getToUserKey())))
                 .orElse(user);
     }
 
     @Override
-    public void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Date activeUntil) {
+    public void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Instant activeUntil) {
         if (from.getKey().equals(to.getKey())) {
             throw new IllegalArgumentException(
                     "Нельзя делегировать уведомления самому себе: " + from.getDisplayName());
         }
+        // AO работает с java.util.Date — конвертируем на границе слоя
+        Date dateUntil = activeUntil != null ? Date.from(activeUntil) : null;
         ao.executeInTransaction(() -> {
             NotificationDelegationEntity[] rows = ao.find(
                     NotificationDelegationEntity.class,
@@ -69,7 +72,7 @@ public class DelegationServiceImpl implements DelegationService {
                             new DBParam("FROM_USER_KEY", from.getKey()));
 
             entity.setToUserKey(to.getKey());
-            entity.setActiveUntil(activeUntil);
+            entity.setActiveUntil(dateUntil);
             entity.save();
             return null;
         });
@@ -98,6 +101,9 @@ public class DelegationServiceImpl implements DelegationService {
             return Optional.empty();
         }
         NotificationDelegationEntity entity = rows[0];
-        return Optional.of(new DelegationInfo(entity.getToUserKey(), entity.getActiveUntil()));
+        // AO работает с java.util.Date — конвертируем на границе слоя
+        Date rawDate = entity.getActiveUntil();
+        Instant until = rawDate != null ? rawDate.toInstant() : null;
+        return Optional.of(new DelegationInfo(entity.getToUserKey(), until));
     }
 }

@@ -22,16 +22,4 @@ public class MattermostClientTest {
     public void extractIdThrowsWhenFieldMissing() {
         MattermostClient.extractId("{\"name\":\"test\"}");
     }
-
-    @Test
-    public void jsonStringEscapesSpecialChars() {
-        assertEquals("\"hello\\nworld\"", MattermostClient.jsonString("hello\nworld"));
-        assertEquals("\"say \\\"hi\\\"\"", MattermostClient.jsonString("say \"hi\""));
-        assertEquals("\"a\\\\b\"", MattermostClient.jsonString("a\\b"));
-    }
-
-    @Test
-    public void jsonStringHandlesNull() {
-        assertEquals("null", MattermostClient.jsonString(null));
-    }
 }

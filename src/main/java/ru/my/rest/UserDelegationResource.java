@@ -12,9 +12,9 @@ import javax.inject.Named;
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.Date;
 import java.util.Optional;
 
 @Named
@@ -48,10 +48,11 @@ public class UserDelegationResource {
         }
 
         DelegationInfo info = delegation.get();
-        String activeUntil = info.getActiveUntil() == null ? null
-                : info.getActiveUntil().toInstant().atOffset(ZoneOffset.UTC).toLocalDate().toString();
+        Instant activeUntil = info.getActiveUntil();
+        String activeUntilStr = activeUntil == null ? null
+                : activeUntil.atOffset(ZoneOffset.UTC).toLocalDate().toString();
 
-        return Response.ok(new DelegationDto(info.getToUserKey(), activeUntil)).build();
+        return Response.ok(new DelegationDto(info.getToUserKey(), activeUntilStr)).build();
     }
 
     @PUT
@@ -67,11 +68,10 @@ public class UserDelegationResource {
             return UserSettingsResource.notFound("Пользователь не найден: " + dto.getToUserKey());
         }
 
-        Date activeUntil = null;
+        Instant activeUntil = null;
         if (dto.getActiveUntil() != null) {
             try {
-                activeUntil = Date.from(
-                        LocalDate.parse(dto.getActiveUntil()).atStartOfDay(ZoneOffset.UTC).toInstant());
+                activeUntil = LocalDate.parse(dto.getActiveUntil()).atStartOfDay(ZoneOffset.UTC).toInstant();
             } catch (Exception e) {
                 return UserSettingsResource.badRequest("Неверный формат даты, ожидается YYYY-MM-DD");
             }

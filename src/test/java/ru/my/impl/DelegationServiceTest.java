@@ -12,6 +12,8 @@ import org.mockito.MockitoAnnotations;
 import ru.my.ao.NotificationDelegationEntity;
 import ru.my.model.DelegationInfo;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.Optional;
 
@@ -50,7 +52,7 @@ public class DelegationServiceTest {
 
     @Test
     public void returnsDelegateWhenDelegationIsActive() {
-        NotificationDelegationEntity entity = activeDelegation("alice", "bob", null);
+        NotificationDelegationEntity entity = delegationEntity("alice", "bob", null);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("bob")).thenReturn(bob);
@@ -66,8 +68,8 @@ public class DelegationServiceTest {
      */
     @Test
     public void returnsOriginalUserWhenDelegationExpired() {
-        Date yesterday = new Date(System.currentTimeMillis() - 86_400_000);
-        NotificationDelegationEntity entity = activeDelegation("alice", "bob", yesterday);
+        Instant yesterday = Instant.now().minus(1, ChronoUnit.DAYS);
+        NotificationDelegationEntity entity = delegationEntity("alice", "bob", yesterday);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
 
@@ -79,7 +81,7 @@ public class DelegationServiceTest {
 
     @Test
     public void returnsOriginalUserWhenDelegateNotFoundInJira() {
-        NotificationDelegationEntity entity = activeDelegation("alice", "deleted-user", null);
+        NotificationDelegationEntity entity = delegationEntity("alice", "deleted-user", null);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("deleted-user")).thenReturn(null);
@@ -91,8 +93,8 @@ public class DelegationServiceTest {
 
     @Test
     public void getDelegationReturnsPresentWhenRecordExists() {
-        Date tomorrow = new Date(System.currentTimeMillis() + 86_400_000);
-        NotificationDelegationEntity entity = activeDelegation("alice", "bob", tomorrow);
+        Instant tomorrow = Instant.now().plus(1, ChronoUnit.DAYS);
+        NotificationDelegationEntity entity = delegationEntity("alice", "bob", tomorrow);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
 
@@ -119,11 +121,12 @@ public class DelegationServiceTest {
         service.setDelegation(alice, alice, null);
     }
 
-    private NotificationDelegationEntity activeDelegation(String from, String to, Date activeUntil) {
+    private NotificationDelegationEntity delegationEntity(String from, String to, Instant activeUntil) {
         NotificationDelegationEntity entity = mock(NotificationDelegationEntity.class);
         when(entity.getFromUserKey()).thenReturn(from);
         when(entity.getToUserKey()).thenReturn(to);
-        when(entity.getActiveUntil()).thenReturn(activeUntil);
+        // AO возвращает java.util.Date — имитируем конвертацию на границе слоя
+        when(entity.getActiveUntil()).thenReturn(activeUntil != null ? Date.from(activeUntil) : null);
         return entity;
     }
 }

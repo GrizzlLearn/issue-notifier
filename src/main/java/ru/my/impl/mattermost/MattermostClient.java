@@ -3,6 +3,8 @@ package ru.my.impl.mattermost;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.ChannelKeys;
+import ru.my.impl.util.JsonUtil;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -30,15 +32,13 @@ public class MattermostClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final Pattern ID_PATTERN = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
 
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(TIMEOUT)
-            .build();
-
     private final AdminSettingsService adminSettings;
+    private final HttpClient http;
 
     @Inject
     public MattermostClient(AdminSettingsService adminSettings) {
         this.adminSettings = adminSettings;
+        this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
     /**
@@ -47,9 +47,9 @@ public class MattermostClient {
      * Возвращает empty если пользователь с таким email не найден в Mattermost.
      */
     public Optional<String> findDirectChannelId(String email) {
-        String domain = adminSettings.get("mattermost.domain", "");
-        String token  = adminSettings.get("mattermost.token", "");
-        String botId  = adminSettings.get("mattermost.botId", "");
+        String domain = adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, "");
+        String token  = adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, "");
+        String botId  = adminSettings.get(ChannelKeys.MATTERMOST_BOT_ID, "");
 
         HttpResponse<String> userResp = get(domain, token,
                 "/api/v4/users/email/" + URLEncoder.encode(email, StandardCharsets.UTF_8));
@@ -69,10 +69,11 @@ public class MattermostClient {
 
     /** Отправляет сообщение в канал. Бросает {@link MattermostException} при сбое. */
     public void sendMessage(String channelId, String text) {
-        String domain = adminSettings.get("mattermost.domain", "");
-        String token  = adminSettings.get("mattermost.token", "");
+        String domain = adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, "");
+        String token  = adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, "");
 
-        String body = "{\"channel_id\":" + jsonString(channelId) + ",\"message\":" + jsonString(text) + "}";
+        String body = "{\"channel_id\":" + JsonUtil.jsonString(channelId)
+                + ",\"message\":" + JsonUtil.jsonString(text) + "}";
         HttpResponse<String> resp = post(domain, token, "/api/v4/posts", body);
         requireSuccess(resp);
         log.debug("Сообщение отправлено в канал {}", channelId);
@@ -100,7 +101,7 @@ public class MattermostClient {
 
     private HttpResponse<String> execute(HttpRequest req) {
         try {
-            return HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+            return http.send(req, HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
             throw new MattermostException("Ошибка HTTP-запроса: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -122,15 +123,6 @@ public class MattermostClient {
             throw new MattermostException("Поле 'id' не найдено в ответе: " + json);
         }
         return m.group(1);
-    }
-
-    static String jsonString(String s) {
-        if (s == null) return "null";
-        return "\"" + s.replace("\\", "\\\\")
-                       .replace("\"", "\\\"")
-                       .replace("\n", "\\n")
-                       .replace("\r", "\\r")
-                       .replace("\t", "\\t") + "\"";
     }
 
     public static class MattermostException extends RuntimeException {

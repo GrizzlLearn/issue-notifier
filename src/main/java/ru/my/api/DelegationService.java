@@ -4,7 +4,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import ru.my.model.DelegationInfo;
 
 import javax.annotation.Nullable;
-import java.util.Date;
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -35,9 +35,9 @@ public interface DelegationService {
      *
      * @param from        пользователь, который делегирует
      * @param to          получатель уведомлений на время делегации
-     * @param activeUntil дата окончания делегации; {@code null} — бессрочная
+     * @param activeUntil момент окончания делегации; {@code null} — бессрочная
      */
-    void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Date activeUntil);
+    void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Instant activeUntil);
 
     /**
      * Снимает делегацию пользователя. Если делегации не было — ничего не делает.

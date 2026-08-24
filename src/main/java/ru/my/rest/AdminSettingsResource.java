@@ -6,6 +6,7 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.ChannelKeys;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -26,19 +27,19 @@ public class AdminSettingsResource {
     static final List<String> KNOWN_KEYS = List.of(
             "email.enabled",
             "mattermost.enabled",
-            "mattermost.domain",
-            "mattermost.token",
-            "mattermost.botId",
+            ChannelKeys.MATTERMOST_DOMAIN,
+            ChannelKeys.MATTERMOST_TOKEN,
+            ChannelKeys.MATTERMOST_BOT_ID,
             "telegram.enabled",
-            "telegram.botToken"
+            ChannelKeys.TELEGRAM_BOT_TOKEN
     );
 
-    // C4: ключи, содержащие секреты — маскируются в GET, не перезаписываются маской в PUT
+    // ключи, содержащие секреты — маскируются в GET, не перезаписываются маской в PUT
     // mattermost.botId — публичный идентификатор, не секрет, маскировать не нужно
-    static final Set<String> SECRETS = Set.of("mattermost.token", "telegram.botToken");
+    static final Set<String> SECRETS = Set.of(ChannelKeys.MATTERMOST_TOKEN, ChannelKeys.TELEGRAM_BOT_TOKEN);
     private static final String MASKED = "***";
 
-    // B2: ключи с булевой семантикой — принимают только "true" или "false"
+    // ключи с булевой семантикой — принимают только "true" или "false"
     static final Set<String> BOOLEAN_KEYS = Set.of("email.enabled", "mattermost.enabled", "telegram.enabled");
 
     private final JiraAuthenticationContext authContext;
