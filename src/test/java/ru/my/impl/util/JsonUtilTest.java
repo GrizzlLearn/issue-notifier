@@ -21,12 +21,25 @@ public class JsonUtilTest {
 
     @Test
     public void escapesControlCharsBelowU0020() {
-        // U+000B вертикальная табуляция — не входит в \n \r \t, должна стать
+        // U+000B вертикальная табуляция — не входит в \n \r \t
         assertEquals("\"\\u000b\"", JsonUtil.jsonString(""));
-        // U+0001
         assertEquals("\"\\u0001\"", JsonUtil.jsonString(""));
-        // U+001F
         assertEquals("\"\\u001f\"", JsonUtil.jsonString(""));
+    }
+
+    @Test
+    public void passesEmojiThrough() {
+        // emoji (U+1F680 = суррогатная пара в UTF-16) должен пройти как есть
+        String rocket = "🚀"; // 🚀
+        String result = JsonUtil.jsonString("Fix " + rocket + " deployment");
+        assertEquals("\"Fix 🚀 deployment\"", result);
+    }
+
+    @Test
+    public void escapesLoneSurrogate() {
+        // одиночный high surrogate (без парного low) — невалидный UTF-16
+        String lone = "\uD83D";
+        assertEquals("\"\\ud83d\"", JsonUtil.jsonString(lone));
     }
 
     @Test

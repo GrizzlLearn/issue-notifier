@@ -60,7 +60,7 @@ public class AdminSettingsResource {
     public Response get() {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
-        if (!isAdmin(user)) return UserSettingsResource.forbidden();
+        if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
 
         Map<String, String> settings = KNOWN_KEYS.stream()
                 .collect(Collectors.toMap(k -> k, k -> maskIfSecret(k, adminSettingsService.get(k, ""))));
@@ -80,7 +80,7 @@ public class AdminSettingsResource {
     public Response set(Map<String, String> body) {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
-        if (!isAdmin(user)) return UserSettingsResource.forbidden();
+        if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
         if (body == null || body.isEmpty()) return UserSettingsResource.badRequest("Тело запроса не задано");
 
         // B2: валидация булевых ключей до сохранения
@@ -98,10 +98,6 @@ public class AdminSettingsResource {
                 .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
 
         return Response.noContent().build();
-    }
-
-    private boolean isAdmin(ApplicationUser user) {
-        return globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user);
     }
 
     private String maskIfSecret(String key, String value) {

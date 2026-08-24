@@ -5,6 +5,7 @@ import com.atlassian.jira.user.MockApplicationUser;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import net.java.ao.Query;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -29,6 +30,7 @@ public class DelegationServiceTest {
     @Mock
     private UserManager userManager;
 
+    private AutoCloseable mocks;
     private DelegationServiceImpl service;
 
     private final ApplicationUser alice = new MockApplicationUser("alice");
@@ -36,8 +38,13 @@ public class DelegationServiceTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
+        mocks = MockitoAnnotations.openMocks(this);
         service = new DelegationServiceImpl(ao, userManager);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        mocks.close();
     }
 
     @Test
@@ -52,7 +59,7 @@ public class DelegationServiceTest {
 
     @Test
     public void returnsDelegateWhenDelegationIsActive() {
-        NotificationDelegationEntity entity = delegationEntity("alice", "bob", null);
+        NotificationDelegationEntity entity = delegationEntity("bob", null);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("bob")).thenReturn(bob);
@@ -69,7 +76,7 @@ public class DelegationServiceTest {
     @Test
     public void returnsOriginalUserWhenDelegationExpired() {
         Instant yesterday = Instant.now().minus(1, ChronoUnit.DAYS);
-        NotificationDelegationEntity entity = delegationEntity("alice", "bob", yesterday);
+        NotificationDelegationEntity entity = delegationEntity("bob", yesterday);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
 
@@ -81,7 +88,7 @@ public class DelegationServiceTest {
 
     @Test
     public void returnsOriginalUserWhenDelegateNotFoundInJira() {
-        NotificationDelegationEntity entity = delegationEntity("alice", "deleted-user", null);
+        NotificationDelegationEntity entity = delegationEntity("deleted-user", null);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("deleted-user")).thenReturn(null);
@@ -94,7 +101,7 @@ public class DelegationServiceTest {
     @Test
     public void getDelegationReturnsPresentWhenRecordExists() {
         Instant tomorrow = Instant.now().plus(1, ChronoUnit.DAYS);
-        NotificationDelegationEntity entity = delegationEntity("alice", "bob", tomorrow);
+        NotificationDelegationEntity entity = delegationEntity("bob", tomorrow);
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
 
@@ -121,10 +128,9 @@ public class DelegationServiceTest {
         service.setDelegation(alice, alice, null);
     }
 
-    private NotificationDelegationEntity delegationEntity(String from, String to, Instant activeUntil) {
+    private NotificationDelegationEntity delegationEntity(String toUserKey, Instant activeUntil) {
         NotificationDelegationEntity entity = mock(NotificationDelegationEntity.class);
-        when(entity.getFromUserKey()).thenReturn(from);
-        when(entity.getToUserKey()).thenReturn(to);
+        when(entity.getToUserKey()).thenReturn(toUserKey);
         // AO возвращает java.util.Date — имитируем конвертацию на границе слоя
         when(entity.getActiveUntil()).thenReturn(activeUntil != null ? Date.from(activeUntil) : null);
         return entity;

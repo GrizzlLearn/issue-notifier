@@ -17,7 +17,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.Optional;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -74,7 +74,7 @@ public class UserDelegationResourceTest {
 
         assertEquals(200, response.getStatus());
         DelegationDto dto = (DelegationDto) response.getEntity();
-        assertEquals(null, dto.getActiveUntil());
+        assertNull(dto.getActiveUntil());
     }
 
     // --- PUT ---

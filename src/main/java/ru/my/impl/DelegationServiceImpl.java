@@ -11,6 +11,9 @@ import ru.my.ao.NotificationDelegationEntity;
 import ru.my.api.DelegationService;
 import ru.my.model.DelegationInfo;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -34,6 +37,8 @@ import java.util.Optional;
 @ExportAsService(DelegationService.class)
 public class DelegationServiceImpl implements DelegationService {
 
+    private static final Logger log = LoggerFactory.getLogger(DelegationServiceImpl.class);
+
     private final ActiveObjects ao;
     private final UserManager userManager;
 
@@ -49,7 +54,15 @@ public class DelegationServiceImpl implements DelegationService {
     public ApplicationUser getEffectiveRecipient(ApplicationUser user) {
         return getDelegation(user)
                 .filter(DelegationInfo::isActive)
-                .flatMap(d -> Optional.ofNullable(userManager.getUserByKey(d.getToUserKey())))
+                .flatMap(d -> {
+                    try {
+                        return Optional.ofNullable(userManager.getUserByKey(d.getToUserKey()));
+                    } catch (Exception e) {
+                        log.warn("Не удалось получить делегата '{}', уведомление вернётся оригинальному пользователю",
+                                d.getToUserKey(), e);
+                        return Optional.empty();
+                    }
+                })
                 .orElse(user);
     }
 

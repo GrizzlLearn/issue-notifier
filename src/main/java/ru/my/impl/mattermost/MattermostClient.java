@@ -60,7 +60,7 @@ public class MattermostClient {
         String userId = extractId(userResp.body());
 
         // POST /api/v4/channels/direct — идемпотентно, возвращает существующий канал
-        String body = "[\"" + botId + "\",\"" + userId + "\"]";
+        String body = "[" + JsonUtil.jsonString(botId) + "," + JsonUtil.jsonString(userId) + "]";
         HttpResponse<String> chanResp = post(domain, token, "/api/v4/channels/direct", body);
         requireSuccess(chanResp);
 

@@ -13,7 +13,6 @@ import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
 import javax.inject.Named;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -29,8 +28,11 @@ import java.util.concurrent.TimeUnit;
 @ExportAsService(AdminSettingsService.class)
 public class AdminSettingsServiceImpl implements AdminSettingsService {
 
+    /** Сентинел в кеше: ключ отсутствует в БД — вернуть defaultValue вызывающему. */
+    private static final String ABSENT = "\0";
+
     private final ActiveObjects ao;
-    private final Cache<String, Optional<String>> cache = CacheBuilder.newBuilder()
+    private final Cache<String, String> cache = CacheBuilder.newBuilder()
             .expireAfterWrite(60, TimeUnit.SECONDS)
             .build();
 
@@ -41,18 +43,16 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     @Override
     public String get(String key, String defaultValue) {
-        Optional<String> cached = cache.getIfPresent(key);
+        String cached = cache.getIfPresent(key);
         if (cached != null) {
-            return cached.orElse(defaultValue);
+            return ABSENT.equals(cached) ? defaultValue : cached;
         }
         AdminSettingsEntity[] rows = ao.find(
                 AdminSettingsEntity.class,
                 Query.select().where("SETTING_KEY = ?", key));
-        Optional<String> value = rows.length > 0
-                ? Optional.of(rows[0].getSettingValue())
-                : Optional.empty();
+        String value = rows.length > 0 ? rows[0].getSettingValue() : ABSENT;
         cache.put(key, value);
-        return value.orElse(defaultValue);
+        return ABSENT.equals(value) ? defaultValue : value;
     }
 
     @Override
