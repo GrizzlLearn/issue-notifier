@@ -21,6 +21,7 @@ const SECTIONS = [
     title: 'Telegram',
     fields: [
       { key: 'telegram.enabled', label: 'Включить канал', type: 'checkbox' },
+      { key: 'telegram.botUsername', label: 'Username бота', type: 'text', placeholder: 'MyJiraBot' },
       { key: 'telegram.botToken', label: 'Токен бота', type: 'password', isSetKey: 'telegram.botToken.isSet', placeholder: '123456:ABC-DEF…' },
     ],
   },
