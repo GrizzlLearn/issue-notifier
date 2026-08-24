@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.impl.email;
 
 import com.atlassian.jira.issue.Issue;
 import org.junit.Test;

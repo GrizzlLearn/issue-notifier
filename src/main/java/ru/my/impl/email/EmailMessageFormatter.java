@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.impl.email;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
@@ -6,6 +6,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 
+import ru.my.impl.util.TextDiff;
 import javax.inject.Named;
 import java.util.List;
 

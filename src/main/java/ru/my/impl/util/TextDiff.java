@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.impl.util;
 
 import java.util.ArrayList;
 import java.util.List;

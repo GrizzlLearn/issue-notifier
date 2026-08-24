@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.impl.email;
 
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.mail.queue.MailQueue;
