@@ -7,10 +7,14 @@ import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 
 import javax.inject.Named;
+import java.util.List;
 
 @Named
 @ExportAsService(MessageFormatter.class)
 public class EmailMessageFormatter implements MessageFormatter {
+
+    /** Суммарная длина from+to, при превышении которой используется diff-вид. */
+    static final int DIFF_THRESHOLD = 300;
 
     @Override
     public String format(Issue issue, DiffResult diff) {
@@ -22,11 +26,14 @@ public class EmailMessageFormatter implements MessageFormatter {
           .append("<tr style=\"background:#f5f5f5;\"><th>Поле</th><th>Было</th><th>Стало</th></tr>");
 
         for (DiffResult.FieldChange c : diff.getChanges()) {
-            sb.append("<tr>")
-              .append("<td>").append(esc(c.fieldName())).append("</td>")
-              .append("<td>").append(esc(c.fromValue())).append("</td>")
-              .append("<td>").append(esc(c.toValue())).append("</td>")
-              .append("</tr>");
+            String from = c.fromValue() != null ? c.fromValue() : "";
+            String to   = c.toValue()   != null ? c.toValue()   : "";
+
+            if (from.length() + to.length() > DIFF_THRESHOLD) {
+                appendDiffRow(sb, c.fieldName(), from, to);
+            } else {
+                appendSimpleRow(sb, c.fieldName(), from, to);
+            }
         }
 
         sb.append("</table></body></html>");
@@ -36,6 +43,34 @@ public class EmailMessageFormatter implements MessageFormatter {
     @Override
     public NotificationChannel channel() {
         return NotificationChannel.EMAIL;
+    }
+
+    private static void appendSimpleRow(StringBuilder sb, String field, String from, String to) {
+        sb.append("<tr>")
+          .append("<td>").append(esc(field)).append("</td>")
+          .append("<td>").append(esc(from)).append("</td>")
+          .append("<td>").append(esc(to)).append("</td>")
+          .append("</tr>");
+    }
+
+    private static void appendDiffRow(StringBuilder sb, String field, String from, String to) {
+        List<TextDiff.Line> lines = TextDiff.diff(from, to);
+
+        sb.append("<tr>")
+          .append("<td valign=\"top\">").append(esc(field)).append("</td>")
+          .append("<td colspan=\"2\">")
+          .append("<pre style=\"font-size:12px;background:#f8f8f8;padding:8px;")
+          .append("white-space:pre-wrap;margin:0;\">");
+
+        for (TextDiff.Line line : lines) {
+            switch (line.marker()) {
+                case '-' -> sb.append("<span style=\"color:#c00\">- ").append(esc(line.text())).append("</span>\n");
+                case '+' -> sb.append("<span style=\"color:#060\">+ ").append(esc(line.text())).append("</span>\n");
+                default  -> sb.append("  ").append(esc(line.text())).append("\n");
+            }
+        }
+
+        sb.append("</pre></td></tr>");
     }
 
     private static String esc(String s) {

@@ -77,6 +77,37 @@ public class EmailMessageFormatterTest {
         assertTrue(html.contains("Low"));
     }
 
+    @Test
+    public void longValueTriggersInlineDiff() {
+        Issue issue = mockIssue("PROJ-5", "Задача");
+        String longFrom = "строка один\nстрока два\nстрока три\n".repeat(10);
+        String longTo   = "строка один\nстрока ДВА\nстрока три\n".repeat(10);
+        DiffResult diff = new DiffResult(List.of(
+                new DiffResult.FieldChange("Description", longFrom, longTo)));
+
+        String html = formatter.format(issue, diff);
+
+        assertTrue(html.contains("<pre"));
+        assertTrue(html.contains("colspan=\"2\""));
+        // изменённые строки помечены цветом
+        assertTrue(html.contains("color:#c00")); // удалено
+        assertTrue(html.contains("color:#060")); // добавлено
+        // неизменённые строки присутствуют как контекст
+        assertTrue(html.contains("строка один"));
+    }
+
+    @Test
+    public void shortValueUsesSimpleColumns() {
+        Issue issue = mockIssue("PROJ-6", "Задача");
+        DiffResult diff = new DiffResult(List.of(
+                new DiffResult.FieldChange("Status", "Open", "Done")));
+
+        String html = formatter.format(issue, diff);
+
+        assertFalse(html.contains("<pre"));
+        assertFalse(html.contains("colspan"));
+    }
+
     private static Issue mockIssue(String key, String summary) {
         Issue issue = mock(Issue.class);
         when(issue.getKey()).thenReturn(key);
