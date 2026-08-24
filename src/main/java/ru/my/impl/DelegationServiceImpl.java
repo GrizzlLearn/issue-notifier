@@ -106,9 +106,14 @@ public class DelegationServiceImpl implements DelegationService {
 
     @Override
     public Optional<DelegationInfo> getDelegation(ApplicationUser from) {
-        NotificationDelegationEntity[] rows = ao.find(
-                NotificationDelegationEntity.class,
-                Query.select().where("FROM_USER_KEY = ?", from.getKey()));
+        NotificationDelegationEntity[] rows;
+        try {
+            rows = ao.find(NotificationDelegationEntity.class,
+                    Query.select().where("FROM_USER_KEY = ?", from.getKey()));
+        } catch (IllegalStateException e) {
+            log.warn("AO ещё не инициализирован, getDelegation возвращает пустой результат");
+            return Optional.empty();
+        }
 
         if (rows.length == 0) {
             return Optional.empty();

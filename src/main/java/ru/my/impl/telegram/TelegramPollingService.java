@@ -39,7 +39,7 @@ public class TelegramPollingService implements DisposableBean {
             t.setDaemon(true);
             return t;
         });
-        scheduler.scheduleWithFixedDelay(this::pollOnce, 5, 5, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(this::pollOnce, 30, 5, TimeUnit.SECONDS);
     }
 
     @Override

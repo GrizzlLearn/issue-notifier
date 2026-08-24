@@ -12,7 +12,7 @@ import net.java.ao.schema.Unique;
  * Одна строка на пользователя. {@code USER_KEY} имеет уникальный индекс на уровне БД
  * (защита от race condition при параллельном upsert) и NOT NULL-ограничение.
  */
-@Table("USER_NOTIFICATION_SETTINGS")
+@Table("USER_NOTIF_SETTINGS")
 public interface UserNotificationSettingsEntity extends Entity {
 
     /** Ключ пользователя Jira ({@code ApplicationUser.getKey()}). */

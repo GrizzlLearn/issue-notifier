@@ -13,7 +13,7 @@ import java.util.Date;
  * Одна строка на пользователя-делегирующего. {@code FROM_USER_KEY} имеет уникальный
  * индекс на уровне БД и NOT NULL-ограничение.
  */
-@Table("NOTIFICATION_DELEGATION")
+@Table("NOTIF_DELEGATION")
 public interface NotificationDelegationEntity extends Entity {
 
     /** Ключ пользователя, который делегирует уведомления. */

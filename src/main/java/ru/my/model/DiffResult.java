@@ -28,12 +28,20 @@ public class DiffResult {
         return changes.isEmpty();
     }
 
-    /**
-     * Одно изменённое поле задачи.
-     *
-     * @param fieldName  отображаемое название поля, например {@code "Assignee"}
-     * @param fromValue  значение до изменения; {@code null} — поле было пустым
-     * @param toValue    значение после изменения; {@code null} — поле очищено
-     */
-    public record FieldChange(String fieldName, String fromValue, String toValue) {}
+    /** Одно изменённое поле задачи. */
+    public static final class FieldChange {
+        private final String fieldName;
+        private final String fromValue; // null — поле было пустым
+        private final String toValue;   // null — поле очищено
+
+        public FieldChange(String fieldName, String fromValue, String toValue) {
+            this.fieldName = fieldName;
+            this.fromValue = fromValue;
+            this.toValue = toValue;
+        }
+
+        public String fieldName()  { return fieldName; }
+        public String fromValue()  { return fromValue; }
+        public String toValue()    { return toValue; }
+    }
 }

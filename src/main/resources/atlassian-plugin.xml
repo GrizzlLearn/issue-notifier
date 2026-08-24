@@ -26,7 +26,7 @@
     <!-- Кнопка в шапке Jira — открывает пользовательские настройки -->
     <web-item key="issue-notifier-nav-item" name="Issue Notifier Settings" section="system.top.navigation.bar" weight="200">
         <label>Уведомления</label>
-        <link linkId="issue-notifier-nav-link" href="#">Уведомления</link>
+        <link linkId="issue-notifier-nav-link">/</link>
     </web-item>
 
     <!-- Пункт в Manage Apps -->

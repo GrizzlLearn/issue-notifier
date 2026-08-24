@@ -51,9 +51,14 @@ public class UserSettingsServiceImpl implements UserSettingsService {
         if (cached != null) {
             return cached;
         }
-        UserSettings settings = loadFromAO(user);
-        cache.put(key, settings);
-        return settings;
+        try {
+            UserSettings settings = loadFromAO(user);
+            cache.put(key, settings);
+            return settings;
+        } catch (IllegalStateException e) {
+            log.warn("AO ещё не инициализирован, getSettings возвращает настройки по умолчанию");
+            return UserSettings.defaultSettings();
+        }
     }
 
     @Override

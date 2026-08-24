@@ -11,6 +11,9 @@ import ru.my.ao.AdminSettingsEntity;
 import ru.my.api.AdminSettingsService;
 import ru.my.model.NotificationChannel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.concurrent.TimeUnit;
@@ -27,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 @Named
 @ExportAsService(AdminSettingsService.class)
 public class AdminSettingsServiceImpl implements AdminSettingsService {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminSettingsServiceImpl.class);
 
     /** Сентинел в кеше: ключ отсутствует в БД — вернуть defaultValue вызывающему. */
     private static final String ABSENT = "\0";
@@ -47,9 +52,14 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
         if (cached != null) {
             return ABSENT.equals(cached) ? defaultValue : cached;
         }
-        AdminSettingsEntity[] rows = ao.find(
-                AdminSettingsEntity.class,
-                Query.select().where("SETTING_KEY = ?", key));
+        AdminSettingsEntity[] rows;
+        try {
+            rows = ao.find(AdminSettingsEntity.class,
+                    Query.select().where("SETTING_KEY = ?", key));
+        } catch (IllegalStateException e) {
+            log.warn("AO ещё не инициализирован, ключ '{}' возвращает значение по умолчанию", key);
+            return defaultValue;
+        }
         String value = rows.length > 0 ? rows[0].getSettingValue() : ABSENT;
         cache.put(key, value);
         return ABSENT.equals(value) ? defaultValue : value;

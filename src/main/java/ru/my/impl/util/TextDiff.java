@@ -11,7 +11,15 @@ public final class TextDiff {
 
     private TextDiff() {}
 
-    public record Line(char marker, String text) {}
+    public static final class Line {
+        private final char marker;
+        private final String text;
+
+        public Line(char marker, String text) { this.marker = marker; this.text = text; }
+
+        public char marker()   { return marker; }
+        public String text()   { return text; }
+    }
 
     /**
      * Возвращает список строк с маркерами: ' ' — контекст, '+' — добавлено, '-' — удалено.
