@@ -22,7 +22,7 @@ public class MattermostMessageFormatterTest {
 
     @Test
     public void headerContainsKeyAndSummary() {
-        String result = formatter.format(mockIssue("PROJ-1", "Задача"), singleChange("Status", "Open", "Done"));
+        String result = formatter.format(mockIssue("Задача"), singleChange("Status", "Open", "Done"));
 
         assertTrue(result.contains("**PROJ-1**"));
         assertTrue(result.contains("Задача"));
@@ -30,7 +30,7 @@ public class MattermostMessageFormatterTest {
 
     @Test
     public void shortChangesRenderAsTable() {
-        String result = formatter.format(mockIssue("PROJ-1", "X"), singleChange("Status", "Open", "Done"));
+        String result = formatter.format(mockIssue("X"), singleChange("Status", "Open", "Done"));
 
         assertTrue(result.contains("| Поле | Было | Стало |"));
         assertTrue(result.contains("Status"));
@@ -41,7 +41,7 @@ public class MattermostMessageFormatterTest {
 
     @Test
     public void nullValuesRenderAsEmptyCells() {
-        String result = formatter.format(mockIssue("PROJ-1", "X"), singleChange("Assignee", null, "alice"));
+        String result = formatter.format(mockIssue("X"), singleChange("Assignee", null, "alice"));
 
         assertTrue(result.contains("Assignee"));
         assertTrue(result.contains("alice"));
@@ -50,7 +50,7 @@ public class MattermostMessageFormatterTest {
 
     @Test
     public void pipeInValueIsEscaped() {
-        String result = formatter.format(mockIssue("PROJ-1", "X"), singleChange("Field", "a|b", "c"));
+        String result = formatter.format(mockIssue("X"), singleChange("Field", "a|b", "c"));
 
         assertTrue(result.contains("a\\|b"));
     }
@@ -59,7 +59,7 @@ public class MattermostMessageFormatterTest {
     public void longChangesRenderAsDiffBlock() {
         String longFrom = "строка один\nстрока два\n".repeat(12);
         String longTo   = "строка один\nстрока ДВА\n".repeat(12);
-        String result = formatter.format(mockIssue("PROJ-1", "X"), singleChange("Description", longFrom, longTo));
+        String result = formatter.format(mockIssue("X"), singleChange("Description", longFrom, longTo));
 
         assertTrue(result.contains("```diff"));
         assertTrue(result.contains("- строка два"));
@@ -75,7 +75,7 @@ public class MattermostMessageFormatterTest {
                 new DiffResult.FieldChange("Status", "Open", "Done"),
                 new DiffResult.FieldChange("Description", longFrom, longTo)));
 
-        String result = formatter.format(mockIssue("PROJ-1", "X"), diff);
+        String result = formatter.format(mockIssue("X"), diff);
 
         assertTrue(result.contains("| Поле | Было | Стало |")); // таблица для Status
         assertTrue(result.contains("```diff"));                 // блок для Description
@@ -85,9 +85,9 @@ public class MattermostMessageFormatterTest {
         return new DiffResult(List.of(new DiffResult.FieldChange(field, from, to)));
     }
 
-    private static Issue mockIssue(String key, String summary) {
+    private static Issue mockIssue(String summary) {
         Issue issue = mock(Issue.class);
-        when(issue.getKey()).thenReturn(key);
+        when(issue.getKey()).thenReturn("PROJ-1");
         when(issue.getSummary()).thenReturn(summary);
         return issue;
     }
