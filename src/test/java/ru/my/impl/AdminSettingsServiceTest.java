@@ -1,4 +1,4 @@
-package ut.ru.my;
+package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import net.java.ao.Query;
@@ -7,7 +7,6 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import ru.my.ao.AdminSettingsEntity;
-import ru.my.impl.AdminSettingsServiceImpl;
 import ru.my.model.NotificationChannel;
 
 import static org.junit.Assert.*;

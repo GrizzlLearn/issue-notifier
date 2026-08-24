@@ -1,4 +1,4 @@
-package ut.ru.my;
+package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.jira.user.MockApplicationUser;
@@ -10,7 +10,6 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import ru.my.ao.NotificationDelegationEntity;
-import ru.my.impl.DelegationServiceImpl;
 import ru.my.model.DelegationInfo;
 
 import java.util.Date;

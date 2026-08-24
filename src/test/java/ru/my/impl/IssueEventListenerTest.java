@@ -1,4 +1,4 @@
-package ut.ru.my;
+package ru.my.impl;
 
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
@@ -9,7 +9,6 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.NotificationService;
-import ru.my.impl.IssueEventListener;
 
 import java.util.Collections;
 import java.util.concurrent.ExecutorService;

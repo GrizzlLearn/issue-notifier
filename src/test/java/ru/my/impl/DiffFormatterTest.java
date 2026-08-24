@@ -1,10 +1,9 @@
-package ut.ru.my;
+package ru.my.impl;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.ofbiz.core.entity.GenericValue;
-import ru.my.impl.DiffFormatter;
 import ru.my.model.DiffResult;
 
 import java.util.List;

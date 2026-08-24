@@ -1,4 +1,4 @@
-package ut.ru.my;
+package ru.my.impl;
 
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
@@ -18,7 +18,6 @@ import ru.my.api.DelegationService;
 import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
-import ru.my.impl.NotificationServiceImpl;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
