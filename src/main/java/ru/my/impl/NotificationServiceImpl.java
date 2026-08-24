@@ -7,7 +7,6 @@ import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.DelegationService;
 import ru.my.api.MessageFormatter;
@@ -18,7 +17,6 @@ import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
-import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.EnumMap;
@@ -27,8 +25,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-
-import static java.util.Collections.emptyList;
 
 /**
  * Оркестратор уведомлений.
@@ -48,8 +44,9 @@ import static java.util.Collections.emptyList;
  * </ol>
  * <p>
  * Форматтеры ({@link MessageFormatter}) и отправщики ({@link NotificationSender})
- * инжектируются Spring-ом как {@code List<>} через {@link Autowired} после создания бина.
- * Карты строятся в {@link #buildChannelMaps()} и после этого неизменяемы.
+ * инжектируются Spring-ом как {@code List<>} через конструктор; Spring собирает все бины
+ * нужного типа из контекста плагина, при отсутствии — передаёт пустой список.
+ * Карты строятся в конструкторе и после этого неизменяемы.
  */
 @Named
 @ExportAsService(NotificationService.class)
@@ -62,31 +59,28 @@ public class NotificationServiceImpl implements NotificationService {
     private final DelegationService delegationService;
     private final AdminSettingsService adminSettingsService;
 
-    @Autowired(required = false)
-    private List<MessageFormatter> injectedFormatters = emptyList();
-
-    @Autowired(required = false)
-    private List<NotificationSender> injectedSenders = emptyList();
-
-    private volatile Map<NotificationChannel, MessageFormatter> formatters = Map.of();
-    private volatile Map<NotificationChannel, NotificationSender> senders = Map.of();
+    private final Map<NotificationChannel, MessageFormatter> formatters;
+    private final Map<NotificationChannel, NotificationSender> senders;
 
     @Inject
     public NotificationServiceImpl(
             @ComponentImport WatcherManager watcherManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
-            AdminSettingsService adminSettingsService) {
+            AdminSettingsService adminSettingsService,
+            List<MessageFormatter> formatters,
+            List<NotificationSender> senders) {
         this.watcherManager = watcherManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
+        this.formatters = buildFormatterMap(formatters);
+        this.senders = buildSenderMap(senders);
+        log.info("Зарегистрированы каналы: форматтеры={}, отправщики={}",
+                this.formatters.keySet(), this.senders.keySet());
     }
 
-    /**
-     * Конструктор для unit-тестов — принимает готовые карты форматтеров/отправщиков,
-     * обходя Spring-инъекцию и {@link #buildChannelMaps()}.
-     */
+    /** Конструктор для unit-тестов — принимает готовые карты, обходя Spring-инжекцию. */
     public NotificationServiceImpl(
             WatcherManager watcherManager,
             UserSettingsService userSettingsService,
@@ -102,28 +96,28 @@ public class NotificationServiceImpl implements NotificationService {
         this.senders = Map.copyOf(senders);
     }
 
-    @PostConstruct
-    void buildChannelMaps() {
-        Map<NotificationChannel, MessageFormatter> fmtMap = new EnumMap<>(NotificationChannel.class);
-        for (MessageFormatter f : injectedFormatters) {
-            MessageFormatter prev = fmtMap.put(f.channel(), f);
+    private static Map<NotificationChannel, MessageFormatter> buildFormatterMap(List<MessageFormatter> list) {
+        Map<NotificationChannel, MessageFormatter> map = new EnumMap<>(NotificationChannel.class);
+        for (MessageFormatter f : list) {
+            MessageFormatter prev = map.put(f.channel(), f);
             if (prev != null) {
                 log.warn("Конфликт форматтеров для канала {}: {} перезаписан {}",
                         f.channel(), prev.getClass().getSimpleName(), f.getClass().getSimpleName());
             }
         }
-        Map<NotificationChannel, NotificationSender> sndMap = new EnumMap<>(NotificationChannel.class);
-        for (NotificationSender s : injectedSenders) {
-            NotificationSender prev = sndMap.put(s.channel(), s);
+        return Map.copyOf(map);
+    }
+
+    private static Map<NotificationChannel, NotificationSender> buildSenderMap(List<NotificationSender> list) {
+        Map<NotificationChannel, NotificationSender> map = new EnumMap<>(NotificationChannel.class);
+        for (NotificationSender s : list) {
+            NotificationSender prev = map.put(s.channel(), s);
             if (prev != null) {
                 log.warn("Конфликт отправщиков для канала {}: {} перезаписан {}",
                         s.channel(), prev.getClass().getSimpleName(), s.getClass().getSimpleName());
             }
         }
-        this.formatters = Map.copyOf(fmtMap);
-        this.senders = Map.copyOf(sndMap);
-        log.info("Зарегистрированы каналы: форматтеры={}, отправщики={}",
-                formatters.keySet(), senders.keySet());
+        return Map.copyOf(map);
     }
 
     @Override
