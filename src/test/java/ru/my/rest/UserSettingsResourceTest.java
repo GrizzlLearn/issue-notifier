@@ -7,6 +7,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
+import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
@@ -22,13 +23,15 @@ public class UserSettingsResourceTest {
 
     @Mock private JiraAuthenticationContext authContext;
     @Mock private UserSettingsService userSettingsService;
+    @Mock private AdminSettingsService adminSettingsService;
 
     private UserSettingsResource resource;
     private final MockApplicationUser user = new MockApplicationUser("jdoe");
 
     @Before
     public void setUp() {
-        resource = new UserSettingsResource(authContext, userSettingsService);
+        resource = new UserSettingsResource(authContext, userSettingsService, adminSettingsService);
+        when(adminSettingsService.get(anyString(), anyString())).thenReturn("");
     }
 
     @Test
@@ -54,7 +57,7 @@ public class UserSettingsResourceTest {
     @Test
     public void putReturns401WhenNotLoggedIn() {
         when(authContext.getLoggedInUser()).thenReturn(null);
-        assertEquals(401, resource.save(new UserSettingsDto(true, List.of("*"), List.of(), null)).getStatus());
+        assertEquals(401, resource.save(new UserSettingsDto(true, List.of("*"), List.of(), null, null)).getStatus());
     }
 
     @Test
@@ -66,7 +69,7 @@ public class UserSettingsResourceTest {
     @Test
     public void putSavesSettingsAndReturns204() {
         when(authContext.getLoggedInUser()).thenReturn(user);
-        UserSettingsDto dto = new UserSettingsDto(false, List.of("PROJ"), List.of("EMAIL"), null);
+        UserSettingsDto dto = new UserSettingsDto(false, List.of("PROJ"), List.of("EMAIL"), null, null);
 
         Response response = resource.save(dto);
 
@@ -81,7 +84,7 @@ public class UserSettingsResourceTest {
     @Test
     public void putIgnoresUnknownChannelNames() {
         when(authContext.getLoggedInUser()).thenReturn(user);
-        UserSettingsDto dto = new UserSettingsDto(true, List.of("*"), List.of("UNKNOWN", "EMAIL"), null);
+        UserSettingsDto dto = new UserSettingsDto(true, List.of("*"), List.of("UNKNOWN", "EMAIL"), null, null);
 
         resource.save(dto);
 

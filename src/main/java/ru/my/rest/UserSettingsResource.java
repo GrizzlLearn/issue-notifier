@@ -3,7 +3,9 @@ package ru.my.rest;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
+import ru.my.impl.ChannelKeys;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -20,20 +22,24 @@ public class UserSettingsResource {
 
     private final JiraAuthenticationContext authContext;
     private final UserSettingsService userSettingsService;
+    private final AdminSettingsService adminSettingsService;
 
     @Inject
     public UserSettingsResource(
             @ComponentImport JiraAuthenticationContext authContext,
-            UserSettingsService userSettingsService) {
+            UserSettingsService userSettingsService,
+            AdminSettingsService adminSettingsService) {
         this.authContext = authContext;
         this.userSettingsService = userSettingsService;
+        this.adminSettingsService = adminSettingsService;
     }
 
     @GET
     public Response get() {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return unauthorized();
-        return Response.ok(UserSettingsDto.from(userSettingsService.getSettings(user))).build();
+        String botUsername = adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_USERNAME, "");
+        return Response.ok(UserSettingsDto.from(userSettingsService.getSettings(user), botUsername)).build();
     }
 
     @PUT

@@ -40,6 +40,7 @@ public class AdminSettingsResource {
             ChannelKeys.MATTERMOST_TOKEN,
             ChannelKeys.MATTERMOST_TOKEN + IS_SET_SUFFIX,
             "telegram.enabled",
+            ChannelKeys.TELEGRAM_BOT_USERNAME,
             ChannelKeys.TELEGRAM_BOT_TOKEN,
             ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX
     );

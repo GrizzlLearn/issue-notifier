@@ -13,5 +13,6 @@ public final class ChannelKeys {
     public static final String MATTERMOST_TOKEN   = "mattermost.token";
     public static final String MATTERMOST_BOT_ID  = "mattermost.botId";
 
-    public static final String TELEGRAM_BOT_TOKEN = "telegram.botToken";
+    public static final String TELEGRAM_BOT_TOKEN    = "telegram.botToken";
+    public static final String TELEGRAM_BOT_USERNAME = "telegram.botUsername";
 }

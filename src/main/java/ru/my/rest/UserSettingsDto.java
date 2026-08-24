@@ -7,28 +7,33 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@SuppressWarnings("unused") // сеттеры/геттеры используются JAX-RS при сериализации
 public class UserSettingsDto {
 
     private boolean enabled;
     private List<String> projects;
     private List<String> channels;
     private String telegramChatId;
+    private String telegramBotUsername; // read-only: из AdminSettings, не сохраняется
 
     public UserSettingsDto() {}
 
-    public UserSettingsDto(boolean enabled, List<String> projects, List<String> channels, String telegramChatId) {
+    public UserSettingsDto(boolean enabled, List<String> projects, List<String> channels,
+                           String telegramChatId, String telegramBotUsername) {
         this.enabled = enabled;
         this.projects = projects != null ? List.copyOf(projects) : List.of("*");
         this.channels = channels != null ? List.copyOf(channels) : List.of();
         this.telegramChatId = telegramChatId;
+        this.telegramBotUsername = telegramBotUsername;
     }
 
-    public static UserSettingsDto from(UserSettings settings) {
+    public static UserSettingsDto from(UserSettings settings, String telegramBotUsername) {
         return new UserSettingsDto(
                 settings.isEnabled(),
                 settings.getProjects(),
                 settings.getChannels().stream().map(NotificationChannel::name).collect(Collectors.toList()),
-                settings.getTelegramChatId());
+                settings.getTelegramChatId(),
+                telegramBotUsername);
     }
 
     public UserSettings toModel() {
@@ -62,4 +67,7 @@ public class UserSettingsDto {
 
     public String getTelegramChatId() { return telegramChatId; }
     public void setTelegramChatId(String telegramChatId) { this.telegramChatId = telegramChatId; }
+
+    public String getTelegramBotUsername() { return telegramBotUsername; }
+    public void setTelegramBotUsername(String telegramBotUsername) { this.telegramBotUsername = telegramBotUsername; }
 }

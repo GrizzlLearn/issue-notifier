@@ -7,6 +7,7 @@ import {
 const CHANNELS = [
   { id: 'EMAIL', label: 'Email' },
   { id: 'MATTERMOST', label: 'Mattermost' },
+  { id: 'TELEGRAM', label: 'Telegram' },
 ];
 
 function useSuccessTimer(delay = 2500) {
@@ -27,7 +28,7 @@ function StatusBanner({ error, success }) {
   return null;
 }
 
-function SettingsTab({ settings, onChange }) {
+function SettingsTab({ settings, onChange, telegramBotUsername }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
@@ -92,6 +93,27 @@ function SettingsTab({ settings, onChange }) {
           </label>
         ))}
       </div>
+
+      {settings.channels.includes('TELEGRAM') && (
+        <div className="field-group">
+          <label className="label" htmlFor="in-telegram-chat-id">Telegram Chat ID</label>
+          <input
+            id="in-telegram-chat-id"
+            className="text"
+            type="text"
+            value={settings.telegramChatId || ''}
+            onChange={e => onChange({ ...settings, telegramChatId: e.target.value })}
+            placeholder="123456789"
+            style={{ width: '100%' }}
+          />
+          <div className="description">
+            {telegramBotUsername
+              ? <>Найдите бота <code>@{telegramBotUsername}</code> в Telegram и напишите{' '}
+                  <code>/start</code> — он ответит вашим числовым ID.</>
+              : 'Найдите бота плагина в Telegram, напишите /start — он ответит вашим числовым ID. Имя бота уточните у администратора.'}
+          </div>
+        </div>
+      )}
 
       <div className="field-group">
         <label className="label" htmlFor="in-projects">Проекты</label>
@@ -276,7 +298,8 @@ export default function UserSettingsModal({ onClose }) {
     return (
       <>
         <div style={{ display: tab === 'settings' ? 'block' : 'none' }}>
-          <SettingsTab settings={settings} onChange={setSettings} />
+          <SettingsTab settings={settings} onChange={setSettings}
+                       telegramBotUsername={settings?.telegramBotUsername} />
         </div>
         <div style={{ display: tab === 'delegation' ? 'block' : 'none' }}>
           <DelegationTab delegation={delegation} onSaved={setDelegation} />
