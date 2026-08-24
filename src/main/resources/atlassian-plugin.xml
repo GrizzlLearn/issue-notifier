@@ -23,15 +23,43 @@
         <description>REST API для управления настройками уведомлений</description>
     </rest>
 
-    <!-- add our web resources -->
-    <web-resource key="issue-notifier-resources" name="issue-notifier Web Resources">
-        <dependency>com.atlassian.auiplugin:ajs</dependency>
-        
-        <resource type="download" name="issue-notifier.css" location="/css/issue-notifier.css"/>
-        <resource type="download" name="issue-notifier.js" location="/js/issue-notifier.js"/>
-        <resource type="download" name="images/" location="/images"/>
+    <!-- Кнопка в шапке Jira — открывает пользовательские настройки -->
+    <web-item key="issue-notifier-nav-item" name="Issue Notifier Settings" section="system.top.navigation.bar" weight="200">
+        <label>Уведомления</label>
+        <link linkId="issue-notifier-nav-link" href="#">Уведомления</link>
+    </web-item>
 
-        <context>issue-notifier</context>
+    <!-- Пункт в Manage Apps -->
+    <web-section key="issue-notifier-admin-section" name="Issue Notifier" location="admin_plugins_menu" weight="100">
+        <label>Issue Notifier</label>
+    </web-section>
+    <web-item key="issue-notifier-admin-link" name="Issue Notifier Admin" section="admin_plugins_menu/issue-notifier-admin-section" weight="10">
+        <label>Настройки плагина</label>
+        <link href="/plugins/servlet/issue-notifier/admin"/>
+    </web-item>
+
+    <!-- Сервлет admin-страницы -->
+    <servlet key="issue-notifier-admin-servlet" class="ru.my.servlet.AdminSettingsServlet">
+        <url-pattern>/issue-notifier/admin</url-pattern>
+    </servlet>
+
+    <!-- JS-бандл для пользовательского диалога (загружается на всех страницах) -->
+    <web-resource key="user-settings-resources" name="Issue Notifier User Settings">
+        <dependency>com.atlassian.auiplugin:ajs</dependency>
+        <resource type="download" name="user-settings.js" location="/js/user-settings.js"/>
+        <context>atl.general</context>
+    </web-resource>
+
+    <!-- JS-бандл для admin-страницы (подключается сервлетом напрямую) -->
+    <web-resource key="admin-settings-resources" name="Issue Notifier Admin Settings">
+        <resource type="download" name="admin-settings.js" location="/js/admin-settings.js"/>
+    </web-resource>
+
+    <!-- Общие ресурсы (CSS) -->
+    <web-resource key="issue-notifier-resources" name="Issue Notifier Common Resources">
+        <resource type="download" name="issue-notifier.css" location="/css/issue-notifier.css"/>
+        <resource type="download" name="images/" location="/images"/>
+        <context>atl.general</context>
     </web-resource>
     
 </atlassian-plugin>

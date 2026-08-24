@@ -149,3 +149,10 @@ hs_err_pid*
 replay_pid*
 
 # End of https://www.toptal.com/developers/gitignore/api/intellij,java
+
+# Frontend build artifacts
+src/main/frontend/node/
+src/main/frontend/node_modules/
+src/main/resources/js/user-settings.js
+src/main/resources/js/admin-settings.js
+src/main/resources/js/*.LICENSE.txt
