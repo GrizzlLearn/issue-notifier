@@ -90,6 +90,21 @@ public class AdminSettingsResourceTest {
     }
 
     @Test
+    public void getReturnsTrueForBothIsSetKeysWhenBothSecretsAreSet() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.MATTERMOST_TOKEN, "")).thenReturn("mm-token");
+        when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("tg-token");
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) resource.get().getEntity();
+
+        assertEquals("true", body.get(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX));
+        assertEquals("true", body.get(ChannelKeys.TELEGRAM_BOT_TOKEN + AdminSettingsResource.IS_SET_SUFFIX));
+        assertEquals("", body.get(ChannelKeys.MATTERMOST_TOKEN));
+        assertEquals("", body.get(ChannelKeys.TELEGRAM_BOT_TOKEN));
+    }
+
+    @Test
     public void getReturnsIsFalseWhenSecretIsNotSet() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("");
@@ -203,6 +218,19 @@ public class AdminSettingsResourceTest {
         resource.set(Map.of(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX, "true"));
 
         verify(adminSettingsService, never()).set(anyString(), anyString());
+    }
+
+    @Test
+    public void putIgnoresIsSetKeyButSavesOtherKeysInSameRequest() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of(
+                ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX, "true",
+                "email.enabled", "false"
+        ));
+
+        verify(adminSettingsService, never()).set(eq(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX), any());
+        verify(adminSettingsService).set("email.enabled", "false");
     }
 
     @Test
