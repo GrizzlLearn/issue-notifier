@@ -4,6 +4,8 @@ import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
 import ru.my.ao.UserNotificationSettingsEntity;
@@ -18,6 +20,7 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +35,9 @@ public class UserSettingsServiceImpl implements UserSettingsService {
     private static final Logger log = LoggerFactory.getLogger(UserSettingsServiceImpl.class);
 
     private final ActiveObjects ao;
+    private final Cache<String, UserSettings> cache = CacheBuilder.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .build();
 
     @Inject
     public UserSettingsServiceImpl(@ComponentImport ActiveObjects ao) {
@@ -40,14 +46,14 @@ public class UserSettingsServiceImpl implements UserSettingsService {
 
     @Override
     public UserSettings getSettings(ApplicationUser user) {
-        UserNotificationSettingsEntity[] rows = ao.find(
-                UserNotificationSettingsEntity.class,
-                Query.select().where("USER_KEY = ?", user.getKey()));
-
-        if (rows.length == 0) {
-            return UserSettings.defaultSettings();
+        String key = user.getKey();
+        UserSettings cached = cache.getIfPresent(key);
+        if (cached != null) {
+            return cached;
         }
-        return toModel(rows[0]);
+        UserSettings settings = loadFromAO(user);
+        cache.put(key, settings);
+        return settings;
     }
 
     @Override
@@ -71,6 +77,14 @@ public class UserSettingsServiceImpl implements UserSettingsService {
             entity.save();
             return null;
         });
+        cache.invalidate(user.getKey());
+    }
+
+    private UserSettings loadFromAO(ApplicationUser user) {
+        UserNotificationSettingsEntity[] rows = ao.find(
+                UserNotificationSettingsEntity.class,
+                Query.select().where("USER_KEY = ?", user.getKey()));
+        return rows.length == 0 ? UserSettings.defaultSettings() : toModel(rows[0]);
     }
 
     /** Конвертирует AO-сущность в модель. */

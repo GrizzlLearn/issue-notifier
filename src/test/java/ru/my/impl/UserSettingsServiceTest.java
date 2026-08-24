@@ -5,8 +5,9 @@ import com.atlassian.jira.user.MockApplicationUser;
 import net.java.ao.Query;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.ao.UserNotificationSettingsEntity;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+@RunWith(MockitoJUnitRunner.class)
 public class UserSettingsServiceTest {
 
     @Mock
@@ -25,7 +27,6 @@ public class UserSettingsServiceTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
         service = new UserSettingsServiceImpl(ao);
     }
 
@@ -60,6 +61,32 @@ public class UserSettingsServiceTest {
         assertTrue(result.getProjects().contains("TEST"));
         assertTrue(result.getChannels().contains(NotificationChannel.MATTERMOST));
         assertTrue(result.getChannels().contains(NotificationChannel.EMAIL));
+    }
+
+    @Test
+    public void secondCallReturnsCachedResultWithoutHittingAO() {
+        when(ao.find(eq(UserNotificationSettingsEntity.class), any(Query.class)))
+                .thenReturn(new UserNotificationSettingsEntity[0]);
+
+        MockApplicationUser user = new MockApplicationUser("jdoe");
+        service.getSettings(user);
+        service.getSettings(user);
+
+        verify(ao, times(1)).find(eq(UserNotificationSettingsEntity.class), any(Query.class));
+    }
+
+    @Test
+    public void saveInvalidatesCacheSoNextGetHitsAO() {
+        when(ao.find(eq(UserNotificationSettingsEntity.class), any(Query.class)))
+                .thenReturn(new UserNotificationSettingsEntity[0]);
+        when(ao.executeInTransaction(any())).thenReturn(null);
+
+        MockApplicationUser user = new MockApplicationUser("jdoe");
+        service.getSettings(user);
+        service.saveSettings(user, UserSettings.defaultSettings());
+        service.getSettings(user);
+
+        verify(ao, times(2)).find(eq(UserNotificationSettingsEntity.class), any(Query.class));
     }
 
     @Test
