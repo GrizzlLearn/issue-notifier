@@ -10,11 +10,12 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.ChannelKeys;
 
 import javax.ws.rs.core.Response;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -61,8 +62,55 @@ public class AdminSettingsResourceTest {
         Map<String, String> body = (Map<String, String>) response.getEntity();
         assertEquals(AdminSettingsResource.KNOWN_KEYS.size(), body.size());
         for (String key : AdminSettingsResource.KNOWN_KEYS) {
-            assertEquals(true, body.containsKey(key));
+            assertTrue("Ключ отсутствует в ответе: " + key, body.containsKey(key));
         }
+    }
+
+    @Test
+    public void getReturnsEmptyStringForSecretRegardlessOfStoredValue() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.MATTERMOST_TOKEN, "")).thenReturn("real-token");
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) resource.get().getEntity();
+
+        // секрет никогда не возвращается — write-only
+        assertEquals("", body.get(ChannelKeys.MATTERMOST_TOKEN));
+    }
+
+    @Test
+    public void getReturnsIsTrueWhenSecretIsSet() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.MATTERMOST_TOKEN, "")).thenReturn("real-token");
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) resource.get().getEntity();
+
+        assertEquals("true", body.get(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX));
+    }
+
+    @Test
+    public void getReturnsIsFalseWhenSecretIsNotSet() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("");
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) resource.get().getEntity();
+
+        assertEquals("false", body.get(ChannelKeys.TELEGRAM_BOT_TOKEN + AdminSettingsResource.IS_SET_SUFFIX));
+        assertEquals("", body.get(ChannelKeys.TELEGRAM_BOT_TOKEN));
+    }
+
+    @Test
+    public void getReturnsBotIdAsPlainText() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.MATTERMOST_BOT_ID, "")).thenReturn("bot-abc-123");
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) resource.get().getEntity();
+
+        // botId — публичный идентификатор, не секрет
+        assertEquals("bot-abc-123", body.get(ChannelKeys.MATTERMOST_BOT_ID));
     }
 
     // --- PUT ---
@@ -92,12 +140,12 @@ public class AdminSettingsResourceTest {
 
         Response response = resource.set(Map.of(
                 "email.enabled", "true",
-                "mattermost.token", "secret123"
+                ChannelKeys.MATTERMOST_TOKEN, "secret123"
         ));
 
         assertEquals(204, response.getStatus());
         verify(adminSettingsService).set("email.enabled", "true");
-        verify(adminSettingsService).set("mattermost.token", "secret123");
+        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_TOKEN, "secret123");
     }
 
     @Test
@@ -127,83 +175,43 @@ public class AdminSettingsResourceTest {
         verify(adminSettingsService).set("email.enabled", "false");
     }
 
-    // --- C4: маскировка секретов ---
-
-    @Test
-    public void getReturnsMaskedValueForNonEmptySecret() {
-        when(authContext.getLoggedInUser()).thenReturn(admin);
-        when(adminSettingsService.get("mattermost.token", "")).thenReturn("real-token-value");
-
-        Response response = resource.get();
-
-        @SuppressWarnings("unchecked")
-        Map<String, String> body = (Map<String, String>) response.getEntity();
-        assertEquals("***", body.get("mattermost.token"));
-    }
-
-    @Test
-    public void getReturnsEmptyStringForUnsetSecret() {
-        when(authContext.getLoggedInUser()).thenReturn(admin);
-        // значение по умолчанию "" — маска не применяется, токен не задан
-        when(adminSettingsService.get("telegram.botToken", "")).thenReturn("");
-
-        Response response = resource.get();
-
-        @SuppressWarnings("unchecked")
-        Map<String, String> body = (Map<String, String>) response.getEntity();
-        assertEquals("", body.get("telegram.botToken"));
-    }
-
-    @Test
-    public void putDoesNotOverwriteSecretWithMaskValue() {
-        when(authContext.getLoggedInUser()).thenReturn(admin);
-
-        // GET вернул "***", фронт не изменил поле и отправил его обратно
-        resource.set(Map.of("mattermost.token", "***", "email.enabled", "true"));
-
-        verify(adminSettingsService, never()).set(eq("mattermost.token"), any());
-        verify(adminSettingsService).set("email.enabled", "true");
-    }
-
     @Test
     public void putDoesNotOverwriteSecretWithBlankValue() {
+        // пустое значение секрета = "не менять существующий" (write-only семантика)
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        resource.set(Map.of("mattermost.token", "", "email.enabled", "false"));
+        resource.set(Map.of(ChannelKeys.MATTERMOST_TOKEN, "", "email.enabled", "false"));
 
-        verify(adminSettingsService, never()).set(eq("mattermost.token"), any());
+        verify(adminSettingsService, never()).set(eq(ChannelKeys.MATTERMOST_TOKEN), any());
         verify(adminSettingsService).set("email.enabled", "false");
     }
 
     @Test
-    public void putSavesSecretWhenNewRealValueProvided() {
+    public void putSavesSecretWhenNewValueProvided() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        resource.set(Map.of("telegram.botToken", "123456:ABC-DEF"));
+        resource.set(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123456:ABC-DEF"));
 
-        verify(adminSettingsService).set("telegram.botToken", "123456:ABC-DEF");
+        verify(adminSettingsService).set(ChannelKeys.TELEGRAM_BOT_TOKEN, "123456:ABC-DEF");
+    }
+
+    @Test
+    public void putIgnoresIsSetKeys() {
+        // .isSet ключи read-only — PUT должен их игнорировать
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX, "true"));
+
+        verify(adminSettingsService, never()).set(anyString(), anyString());
     }
 
     @Test
     public void putAllowsClearingNonSecretFieldWithEmptyString() {
-        // mattermost.domain — не секрет, пустая строка должна сохраниться (очистка поля)
+        // не-секретные поля (domain) очищать можно
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        resource.set(Map.of("mattermost.domain", ""));
+        resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, ""));
 
-        verify(adminSettingsService).set("mattermost.domain", "");
-    }
-
-    @Test
-    public void getReturnsBotIdAsPlainText() {
-        // mattermost.botId — публичный идентификатор, не секрет, маскировать не надо
-        when(authContext.getLoggedInUser()).thenReturn(admin);
-        when(adminSettingsService.get("mattermost.botId", "")).thenReturn("bot-abc-123");
-
-        Response response = resource.get();
-
-        @SuppressWarnings("unchecked")
-        Map<String, String> body = (Map<String, String>) response.getEntity();
-        assertEquals("bot-abc-123", body.get("mattermost.botId"));
+        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "");
     }
 }
