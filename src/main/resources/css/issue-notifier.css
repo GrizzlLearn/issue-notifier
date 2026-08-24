@@ -1,0 +1,118 @@
+/* Backdrop модалки */
+.in-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 30, 66, 0.54);
+    z-index: 2999;
+}
+
+/* Контейнер диалога */
+.in-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3000;
+    background: #fff;
+    border-radius: 3px;
+    width: 500px;
+    box-shadow: 0 8px 32px rgba(9, 30, 66, 0.25);
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    outline: none; /* нужно для programmatic focus без видимого outline */
+}
+
+.in-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #dfe1e6;
+}
+
+.in-dialog-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.in-dialog-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 20px;
+    color: #5e6c84;
+    line-height: 1;
+    padding: 0;
+}
+
+.in-dialog-close:hover { color: #172b4d; }
+
+.in-dialog-tabs {
+    display: flex;
+    border-bottom: 1px solid #dfe1e6;
+    padding: 0 20px;
+}
+
+.in-dialog-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #5e6c84;
+    margin-bottom: -1px;
+}
+
+.in-dialog-tab.in-active {
+    color: #0052cc;
+    border-bottom-color: #0052cc;
+}
+
+.in-dialog-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Строка кнопок */
+.in-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 16px;
+}
+
+.in-actions-end { margin-left: auto; }
+
+/* Вспомогательный текст */
+.in-hint {
+    color: #5e6c84;
+    margin-bottom: 16px;
+}
+
+/* Индикатор загрузки */
+.in-loading {
+    text-align: center;
+    padding: 32px;
+    color: #5e6c84;
+}
+
+/* Admin-страница */
+.in-admin-wrap { max-width: 600px; }
+
+.in-section {
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.in-section legend {
+    font-weight: 600;
+    padding: 0 8px;
+    color: #172b4d;
+}

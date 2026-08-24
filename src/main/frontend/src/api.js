@@ -17,8 +17,9 @@ async function checkOk(resp) {
 }
 
 export async function getUserSettings(signal) {
-  return checkOk(await fetch(`${base()}/user/settings`, { credentials: 'same-origin', signal }))
-    .then(r => r.json());
+  const resp = await fetch(`${base()}/user/settings`, { credentials: 'same-origin', signal });
+  await checkOk(resp);
+  return resp.json();
 }
 
 export async function saveUserSettings(data) {
@@ -57,9 +58,10 @@ export async function removeDelegation() {
   }));
 }
 
-export async function getAdminSettings() {
-  return checkOk(await fetch(`${base()}/admin/settings`, { credentials: 'same-origin' }))
-    .then(r => r.json());
+export async function getAdminSettings(signal) {
+  const resp = await fetch(`${base()}/admin/settings`, { credentials: 'same-origin', signal });
+  await checkOk(resp);
+  return resp.json();
 }
 
 export async function saveAdminSettings(data) {

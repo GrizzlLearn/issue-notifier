@@ -36,10 +36,16 @@ export default function AdminApp() {
   const successTimerRef = useRef(null);
 
   useEffect(() => {
-    getAdminSettings()
+    const controller = new AbortController();
+    getAdminSettings(controller.signal)
       .then(data => { setValues(data); setLoading(false); })
-      .catch(e => { setError(e.message); setLoading(false); });
-    return () => clearTimeout(successTimerRef.current);
+      .catch(e => {
+        if (e.name !== 'AbortError') { setError(e.message); setLoading(false); }
+      });
+    return () => {
+      controller.abort();
+      clearTimeout(successTimerRef.current);
+    };
   }, []);
 
   async function handleSave() {
@@ -63,23 +69,18 @@ export default function AdminApp() {
     setValues(prev => ({ ...prev, [key]: val }));
   }
 
-  if (loading) return <div className="aui-message">Загрузка…</div>;
+  if (loading) return <div className="in-loading">Загрузка…</div>;
 
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div className="in-admin-wrap">
       <h2>Настройки Issue Notifier</h2>
 
       {error && <div className="aui-message aui-message-error" style={{ marginBottom: 16 }}>{error}</div>}
       {success && <div className="aui-message aui-message-success" style={{ marginBottom: 16 }}>Сохранено</div>}
 
       {SECTIONS.map(section => (
-        <fieldset key={section.title} style={{
-          border: '1px solid #dfe1e6', borderRadius: 3,
-          padding: '16px 20px', marginBottom: 20,
-        }}>
-          <legend style={{ fontWeight: 600, padding: '0 8px', color: '#172b4d' }}>
-            {section.title}
-          </legend>
+        <fieldset key={section.title} className="in-section">
+          <legend>{section.title}</legend>
 
           {section.fields.map(field => (
             <div key={field.key} className="field-group" style={{ marginBottom: 12 }}>
@@ -116,7 +117,7 @@ export default function AdminApp() {
       ))}
 
       <div style={{ marginTop: 8 }}>
-        <button className="aui-button aui-button-primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className="aui-button aui-button-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Сохранение…' : 'Сохранить'}
         </button>
       </div>
