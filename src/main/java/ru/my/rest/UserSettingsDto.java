@@ -1,5 +1,6 @@
 package ru.my.rest;
 
+import org.codehaus.jackson.annotate.JsonProperty;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
@@ -10,10 +11,17 @@ import java.util.stream.Stream;
 @SuppressWarnings("unused") // сеттеры/геттеры используются JAX-RS при сериализации
 public class UserSettingsDto {
 
+    // @JsonProperty обязателен — Jira отключает автодетект get-геттеров в своём Jackson,
+    // без аннотации поле молча пропадает из JSON (виден только is-геттер enabled)
+    @JsonProperty
     private boolean enabled;
+    @JsonProperty
     private List<String> projects;
+    @JsonProperty
     private List<String> channels;
+    @JsonProperty
     private String telegramChatId;
+    @JsonProperty
     private String telegramBotUsername; // read-only: из AdminSettings, не сохраняется
 
     public UserSettingsDto() {}

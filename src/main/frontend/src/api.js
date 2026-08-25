@@ -33,12 +33,9 @@ export async function saveUserSettings(data) {
 
 export async function getDelegation(signal) {
   const resp = await fetch(`${base()}/user/delegation`, { credentials: 'same-origin', signal });
-  if (resp.status === 404) return null;
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => resp.statusText);
-    throw new Error(text || resp.statusText);
-  }
-  return resp.json();
+  await checkOk(resp);
+  const dto = await resp.json();
+  return dto.toUserKey ? dto : null;
 }
 
 export async function saveDelegation(data) {

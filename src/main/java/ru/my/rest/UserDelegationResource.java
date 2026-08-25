@@ -44,7 +44,7 @@ public class UserDelegationResource {
 
         Optional<DelegationInfo> delegation = delegationService.getDelegation(user);
         if (delegation.isEmpty()) {
-            return Response.status(Response.Status.NOT_FOUND).build();
+            return Response.ok(new DelegationDto(null, null)).build();
         }
 
         DelegationInfo info = delegation.get();

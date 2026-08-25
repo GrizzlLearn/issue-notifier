@@ -45,10 +45,16 @@ public class UserDelegationResourceTest {
     }
 
     @Test
-    public void getReturns404WhenNoDelegation() {
+    public void getReturnsEmptyDtoWhenNoDelegation() {
         when(authContext.getLoggedInUser()).thenReturn(user);
         when(delegationService.getDelegation(user)).thenReturn(Optional.empty());
-        assertEquals(404, resource.get().getStatus());
+
+        Response response = resource.get();
+
+        assertEquals(200, response.getStatus());
+        DelegationDto dto = (DelegationDto) response.getEntity();
+        assertNull(dto.getToUserKey());
+        assertNull(dto.getActiveUntil());
     }
 
     @Test

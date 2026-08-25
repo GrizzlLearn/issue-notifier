@@ -1,9 +1,15 @@
 package ru.my.rest;
 
+import org.codehaus.jackson.annotate.JsonProperty;
+
 /** DTO для чтения и записи делегации. {@code activeUntil} — ISO-дата "YYYY-MM-DD" или null (бессрочно). */
 public class DelegationDto {
 
+    // @JsonProperty обязателен — Jira отключает автодетект get-геттеров в своём Jackson,
+    // без аннотации поле молча пропадает из JSON (виден только is-геттер enabled)
+    @JsonProperty
     private String toUserKey;
+    @JsonProperty
     private String activeUntil;
 
     public DelegationDto() {}

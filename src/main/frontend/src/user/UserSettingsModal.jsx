@@ -34,12 +34,15 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
   const [success, showSuccess] = useSuccessTimer();
   const isSavingRef = useRef(false);
 
-  const allProjects = settings.projects.length === 1 && settings.projects[0] === '*';
+  // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
+  const projects = settings.projects ?? ['*'];
+  const channels = settings.channels ?? [];
+  const allProjects = projects.length === 1 && projects[0] === '*';
 
   function toggleChannel(id) {
-    const next = settings.channels.includes(id)
-      ? settings.channels.filter(c => c !== id)
-      : [...settings.channels, id];
+    const next = channels.includes(id)
+      ? channels.filter(c => c !== id)
+      : [...channels, id];
     onChange({ ...settings, channels: next });
   }
 
@@ -85,7 +88,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
           <label key={ch.id} style={{ display: 'block', marginBottom: 4 }}>
             <input
               type="checkbox"
-              checked={settings.channels.includes(ch.id)}
+              checked={channels.includes(ch.id)}
               onChange={() => toggleChannel(ch.id)}
               style={{ marginRight: 6 }}
             />
@@ -94,7 +97,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
         ))}
       </div>
 
-      {settings.channels.includes('TELEGRAM') && (
+      {channels.includes('TELEGRAM') && (
         <div className="field-group">
           <label className="label" htmlFor="in-telegram-chat-id">Telegram Chat ID</label>
           <input
@@ -131,7 +134,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
             id="in-projects"
             className="text"
             type="text"
-            value={settings.projects.join(', ')}
+            value={projects.join(', ')}
             onChange={handleProjectsChange}
             placeholder="PROJ, TEST, DEV"
             style={{ width: '100%' }}

@@ -35,7 +35,7 @@
     </web-section>
     <web-item key="issue-notifier-admin-link" name="Issue Notifier Admin" section="admin_plugins_menu/issue-notifier-admin-section" weight="10">
         <label>Настройки плагина</label>
-        <link href="/plugins/servlet/issue-notifier/admin"/>
+        <link>/plugins/servlet/issue-notifier/admin</link>
     </web-item>
 
     <!-- Сервлет admin-страницы -->
@@ -46,13 +46,13 @@
     <!-- JS-бандл для пользовательского диалога (загружается на всех страницах) -->
     <web-resource key="user-settings-resources" name="Issue Notifier User Settings">
         <dependency>com.atlassian.auiplugin:ajs</dependency>
-        <resource type="download" name="user-settings.js" location="/js/user-settings.js"/>
+        <resource type="download" name="user-settings.js" location="/js/user-settings.min.js"/>
         <context>atl.general</context>
     </web-resource>
 
     <!-- JS-бандл для admin-страницы (подключается сервлетом напрямую) -->
     <web-resource key="admin-settings-resources" name="Issue Notifier Admin Settings">
-        <resource type="download" name="admin-settings.js" location="/js/admin-settings.js"/>
+        <resource type="download" name="admin-settings.js" location="/js/admin-settings.min.js"/>
     </web-resource>
 
     <!-- Общие ресурсы (CSS) -->

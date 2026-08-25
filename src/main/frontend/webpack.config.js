@@ -7,8 +7,10 @@ module.exports = {
     'admin-settings': './src/admin/index.jsx',
   },
   output: {
+    // .min.js — чтобы AMPS не пытался повторно минифицировать Closure Compiler'ом
+    // (он не понимает ES2020+ синтаксис вроде `??`, который оставляет Terser)
     path: path.resolve(__dirname, '../resources/js'),
-    filename: '[name].js',
+    filename: '[name].min.js',
   },
   module: {
     rules: [
