@@ -2,11 +2,15 @@ package ru.my.impl.mattermost;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
+import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import com.atlassian.sal.api.ApplicationProperties;
 import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 
+import ru.my.impl.util.ChangeSplitter;
 import ru.my.impl.util.TextDiff;
+import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.List;
 
@@ -16,17 +20,22 @@ public class MattermostMessageFormatter implements MessageFormatter {
 
     static final int DIFF_THRESHOLD = 300;
 
+    private final ApplicationProperties applicationProperties;
+
+    @Inject
+    public MattermostMessageFormatter(@ComponentImport ApplicationProperties applicationProperties) {
+        this.applicationProperties = applicationProperties;
+    }
+
     @Override
     public String format(Issue issue, DiffResult diff) {
         StringBuilder sb = new StringBuilder();
-        sb.append("**").append(issue.getKey()).append("** — ").append(issue.getSummary()).append("\n\n");
+        String issueUrl = applicationProperties.getBaseUrl() + "/browse/" + issue.getKey();
+        sb.append("В задаче **[").append(issue.getKey()).append("](").append(issueUrl).append(")** — ")
+          .append(issue.getSummary()).append(" произошли следующие изменения:\n\n");
 
-        List<DiffResult.FieldChange> shortChanges = diff.getChanges().stream()
-                .filter(c -> len(c.fromValue()) + len(c.toValue()) <= DIFF_THRESHOLD)
-                .toList();
-        List<DiffResult.FieldChange> longChanges = diff.getChanges().stream()
-                .filter(c -> len(c.fromValue()) + len(c.toValue()) > DIFF_THRESHOLD)
-                .toList();
+        List<DiffResult.FieldChange> shortChanges = ChangeSplitter.shortChanges(diff.getChanges(), DIFF_THRESHOLD);
+        List<DiffResult.FieldChange> longChanges = ChangeSplitter.longChanges(diff.getChanges(), DIFF_THRESHOLD);
 
         if (!shortChanges.isEmpty()) {
             sb.append("| Поле | Было | Стало |\n|------|------|-------|\n");
@@ -52,10 +61,6 @@ public class MattermostMessageFormatter implements MessageFormatter {
     @Override
     public NotificationChannel channel() {
         return NotificationChannel.MATTERMOST;
-    }
-
-    private static int len(String s) {
-        return s == null ? 0 : s.length();
     }
 
     /** Экранирует спецсимволы Markdown внутри ячейки таблицы. */

@@ -1,6 +1,7 @@
 package ru.my.impl.mattermost;
 
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.sal.api.ApplicationProperties;
 import org.junit.Test;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
@@ -13,7 +14,12 @@ import static org.mockito.Mockito.when;
 
 public class MattermostMessageFormatterTest {
 
-    private final MattermostMessageFormatter formatter = new MattermostMessageFormatter();
+    private final ApplicationProperties applicationProperties = mock(ApplicationProperties.class);
+    private final MattermostMessageFormatter formatter = new MattermostMessageFormatter(applicationProperties);
+
+    {
+        when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+    }
 
     @Test
     public void channelIsMattermost() {
@@ -21,11 +27,12 @@ public class MattermostMessageFormatterTest {
     }
 
     @Test
-    public void headerContainsKeyAndSummary() {
+    public void headerContainsKeyLinkAndSummary() {
         String result = formatter.format(mockIssue("Задача"), singleChange("Status", "Open", "Done"));
 
-        assertTrue(result.contains("**PROJ-1**"));
+        assertTrue(result.contains("В задаче **[PROJ-1](https://jira.example.com/browse/PROJ-1)**"));
         assertTrue(result.contains("Задача"));
+        assertTrue(result.contains("произошли следующие изменения:"));
     }
 
     @Test

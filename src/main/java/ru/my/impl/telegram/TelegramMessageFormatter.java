@@ -3,6 +3,7 @@ package ru.my.impl.telegram;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import ru.my.api.MessageFormatter;
+import ru.my.impl.util.ChangeSplitter;
 import ru.my.impl.util.TextDiff;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
@@ -22,12 +23,8 @@ public class TelegramMessageFormatter implements MessageFormatter {
         sb.append("<b>").append(htmlEsc(issue.getKey())).append("</b> — ")
           .append(htmlEsc(issue.getSummary())).append("\n\n");
 
-        List<DiffResult.FieldChange> shortChanges = diff.getChanges().stream()
-                .filter(c -> len(c.fromValue()) + len(c.toValue()) <= DIFF_THRESHOLD)
-                .toList();
-        List<DiffResult.FieldChange> longChanges = diff.getChanges().stream()
-                .filter(c -> len(c.fromValue()) + len(c.toValue()) > DIFF_THRESHOLD)
-                .toList();
+        List<DiffResult.FieldChange> shortChanges = ChangeSplitter.shortChanges(diff.getChanges(), DIFF_THRESHOLD);
+        List<DiffResult.FieldChange> longChanges = ChangeSplitter.longChanges(diff.getChanges(), DIFF_THRESHOLD);
 
         for (DiffResult.FieldChange c : shortChanges) {
             sb.append("<b>").append(htmlEsc(c.fieldName())).append(":</b> ");
@@ -51,10 +48,6 @@ public class TelegramMessageFormatter implements MessageFormatter {
     @Override
     public NotificationChannel channel() {
         return NotificationChannel.TELEGRAM;
-    }
-
-    private static int len(String s) {
-        return s == null ? 0 : s.length();
     }
 
     static String htmlEsc(String s) {
