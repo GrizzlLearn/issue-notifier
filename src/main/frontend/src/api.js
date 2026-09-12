@@ -1,7 +1,9 @@
-const base = () => {
+export const apiBase = () => {
   const ctx = window.AJS ? AJS.contextPath() : '';
   return `${ctx}/rest/issue-notifier/1`;
 };
+
+const base = apiBase;
 
 const mutationHeaders = {
   'Content-Type': 'application/json',
@@ -34,8 +36,7 @@ export async function saveUserSettings(data) {
 export async function getDelegation(signal) {
   const resp = await fetch(`${base()}/user/delegation`, { credentials: 'same-origin', signal });
   await checkOk(resp);
-  const dto = await resp.json();
-  return dto.toUserKey ? dto : null;
+  return resp.json();
 }
 
 export async function saveDelegation(data) {
@@ -53,6 +54,21 @@ export async function removeDelegation() {
     credentials: 'same-origin',
     headers: { 'X-Atlassian-Token': 'no-check' },
   }));
+}
+
+// Резолв уже сохранённых ключей (проект/пользователь) в человекочитаемые лейблы для
+// пред-заполнения пикеров — через собственный REST (см. ProjectPickerResource/UserPickerResource),
+// фронтенд не ходит в REST API самой Jira напрямую.
+export async function resolveProject(key, signal) {
+  const resp = await fetch(`${base()}/projects/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
+  if (!resp.ok) return null;
+  return (await resp.json()).label;
+}
+
+export async function resolveUser(key, signal) {
+  const resp = await fetch(`${base()}/users/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
+  if (!resp.ok) return null;
+  return (await resp.json()).label;
 }
 
 export async function getAdminSettings(signal) {

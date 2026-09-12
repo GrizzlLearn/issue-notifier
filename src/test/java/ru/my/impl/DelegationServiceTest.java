@@ -16,6 +16,7 @@ import ru.my.model.DelegationInfo;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.Assert.*;
@@ -35,6 +36,7 @@ public class DelegationServiceTest {
 
     private final ApplicationUser alice = new MockApplicationUser("alice");
     private final ApplicationUser bob = new MockApplicationUser("bob");
+    private final ApplicationUser carol = new MockApplicationUser("carol");
 
     @Before
     public void setUp() {
@@ -52,9 +54,9 @@ public class DelegationServiceTest {
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[0]);
 
-        ApplicationUser result = service.getEffectiveRecipient(alice);
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
 
-        assertSame(alice, result);
+        assertEquals(List.of(alice), result);
     }
 
     @Test
@@ -64,9 +66,37 @@ public class DelegationServiceTest {
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("bob")).thenReturn(bob);
 
-        ApplicationUser result = service.getEffectiveRecipient(alice);
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
 
-        assertSame(bob, result);
+        assertEquals(List.of(bob), result);
+    }
+
+    /** Делегация на нескольких получателей — все активные делегаты должны вернуться. */
+    @Test
+    public void returnsAllDelegatesWhenMultipleAreSet() {
+        NotificationDelegationEntity entity = delegationEntity("bob,carol", null);
+        when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
+                .thenReturn(new NotificationDelegationEntity[]{entity});
+        when(userManager.getUserByKey("bob")).thenReturn(bob);
+        when(userManager.getUserByKey("carol")).thenReturn(carol);
+
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
+
+        assertEquals(List.of(bob, carol), result);
+    }
+
+    /** Если один из делегатов удалён из Jira — пропускаем его, но остальные возвращаем. */
+    @Test
+    public void skipsMissingDelegateButKeepsOthers() {
+        NotificationDelegationEntity entity = delegationEntity("deleted-user,carol", null);
+        when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
+                .thenReturn(new NotificationDelegationEntity[]{entity});
+        when(userManager.getUserByKey("deleted-user")).thenReturn(null);
+        when(userManager.getUserByKey("carol")).thenReturn(carol);
+
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
+
+        assertEquals(List.of(carol), result);
     }
 
     /**
@@ -80,9 +110,9 @@ public class DelegationServiceTest {
         when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
                 .thenReturn(new NotificationDelegationEntity[]{entity});
 
-        ApplicationUser result = service.getEffectiveRecipient(alice);
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
 
-        assertSame(alice, result);
+        assertEquals(List.of(alice), result);
         verifyNoInteractions(userManager);
     }
 
@@ -93,9 +123,9 @@ public class DelegationServiceTest {
                 .thenReturn(new NotificationDelegationEntity[]{entity});
         when(userManager.getUserByKey("deleted-user")).thenReturn(null);
 
-        ApplicationUser result = service.getEffectiveRecipient(alice);
+        List<ApplicationUser> result = service.getEffectiveRecipients(alice);
 
-        assertSame(alice, result);
+        assertEquals(List.of(alice), result);
     }
 
     @Test
@@ -108,8 +138,19 @@ public class DelegationServiceTest {
         Optional<DelegationInfo> result = service.getDelegation(alice);
 
         assertTrue(result.isPresent());
-        assertEquals("bob", result.get().getToUserKey());
+        assertEquals(List.of("bob"), result.get().getToUserKeys());
         assertTrue(result.get().isActive());
+    }
+
+    @Test
+    public void getDelegationParsesMultipleKeys() {
+        NotificationDelegationEntity entity = delegationEntity("bob, carol", null);
+        when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
+                .thenReturn(new NotificationDelegationEntity[]{entity});
+
+        Optional<DelegationInfo> result = service.getDelegation(alice);
+
+        assertEquals(List.of("bob", "carol"), result.get().getToUserKeys());
     }
 
     @Test
@@ -125,12 +166,23 @@ public class DelegationServiceTest {
     /** Делегирование самому себе должно быть отклонено — бессмысленно и маскирует ошибки UI. */
     @Test(expected = IllegalArgumentException.class)
     public void throwsWhenDelegatingToSelf() {
-        service.setDelegation(alice, alice, null);
+        service.setDelegation(alice, List.of(alice), null);
     }
 
-    private NotificationDelegationEntity delegationEntity(String toUserKey, Instant activeUntil) {
+    /** Делегирование самому себе среди прочих получателей — тоже отклоняется. */
+    @Test(expected = IllegalArgumentException.class)
+    public void throwsWhenDelegatingToSelfAmongOthers() {
+        service.setDelegation(alice, List.of(bob, alice), null);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void throwsWhenDelegateListIsEmpty() {
+        service.setDelegation(alice, List.of(), null);
+    }
+
+    private NotificationDelegationEntity delegationEntity(String toUserKeysCsv, Instant activeUntil) {
         NotificationDelegationEntity entity = mock(NotificationDelegationEntity.class);
-        when(entity.getToUserKey()).thenReturn(toUserKey);
+        when(entity.getToUserKey()).thenReturn(toUserKeysCsv);
         // AO возвращает java.util.Date — имитируем конвертацию на границе слоя
         when(entity.getActiveUntil()).thenReturn(activeUntil != null ? Date.from(activeUntil) : null);
         return entity;

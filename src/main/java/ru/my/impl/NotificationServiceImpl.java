@@ -156,21 +156,22 @@ public class NotificationServiceImpl implements NotificationService {
                 continue;
             }
 
-            ApplicationUser recipient = delegationService.getEffectiveRecipient(watcher);
-            if (uniqueRecipients.containsKey(recipient.getKey())) {
-                continue;
+            for (ApplicationUser recipient : delegationService.getEffectiveRecipients(watcher)) {
+                if (uniqueRecipients.containsKey(recipient.getKey())) {
+                    continue;
+                }
+
+                // переиспользуем настройки наблюдателя, если делегирования нет
+                UserSettings recipientSettings = Objects.equals(recipient.getKey(), watcher.getKey())
+                        ? watcherSettings
+                        : userSettingsService.getSettings(recipient);
+
+                if (!recipientSettings.isEnabled()) {
+                    continue;
+                }
+
+                uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
             }
-
-            // переиспользуем настройки наблюдателя, если делегирования нет
-            UserSettings recipientSettings = Objects.equals(recipient.getKey(), watcher.getKey())
-                    ? watcherSettings
-                    : userSettingsService.getSettings(recipient);
-
-            if (!recipientSettings.isEnabled()) {
-                continue;
-            }
-
-            uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
         }
 
         for (Recipient r : uniqueRecipients.values()) {

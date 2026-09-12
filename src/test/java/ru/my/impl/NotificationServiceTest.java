@@ -103,7 +103,7 @@ public class NotificationServiceTest {
                         .projects(List.of("*"))
                         .channels(List.of(NotificationChannel.MATTERMOST, NotificationChannel.MATTERMOST))
                         .build());
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
@@ -180,7 +180,7 @@ public class NotificationServiceTest {
                         .projects(List.of("*"))
                         .channels(List.of(NotificationChannel.MATTERMOST))
                         .build());
-        when(delegationService.getEffectiveRecipient(other)).thenReturn(other);
+        when(delegationService.getEffectiveRecipients(other)).thenReturn(List.of(other));
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
@@ -194,7 +194,7 @@ public class NotificationServiceTest {
     public void sendsToDelegateInsteadOfWatcher() {
         ApplicationUser delegate = new MockApplicationUser("bob");
         setupStandardWatcher(List.of("*"), List.of());
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(delegate));
         when(userSettingsService.getSettings(delegate))
                 .thenReturn(UserSettings.builder()
                         .projects(List.of("*"))
@@ -216,7 +216,7 @@ public class NotificationServiceTest {
     public void skipsDeliveryIfDelegateHasNotificationsDisabled() {
         ApplicationUser delegate = new MockApplicationUser("bob");
         setupStandardWatcher(List.of("*"), List.of());
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(delegate);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(delegate));
         when(userSettingsService.getSettings(delegate))
                 .thenReturn(UserSettings.builder().enabled(false).build());
 
@@ -245,8 +245,8 @@ public class NotificationServiceTest {
                 .build();
         when(userSettingsService.getSettings(watcher)).thenReturn(settings);
         when(userSettingsService.getSettings(watcher2)).thenReturn(settings);
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
-        when(delegationService.getEffectiveRecipient(watcher2)).thenReturn(watcher2);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(delegationService.getEffectiveRecipients(watcher2)).thenReturn(List.of(watcher2));
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
         org.mockito.Mockito.doThrow(new RuntimeException("сеть недоступна"))
@@ -299,8 +299,8 @@ public class NotificationServiceTest {
         UserSettings baseSettings = UserSettings.builder().projects(List.of("*")).channels(List.of()).build();
         when(userSettingsService.getSettings(watcher)).thenReturn(baseSettings);
         when(userSettingsService.getSettings(otherWatcher)).thenReturn(baseSettings);
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(sharedDelegate);
-        when(delegationService.getEffectiveRecipient(otherWatcher)).thenReturn(sharedDelegate);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(sharedDelegate));
+        when(delegationService.getEffectiveRecipients(otherWatcher)).thenReturn(List.of(sharedDelegate));
         when(userSettingsService.getSettings(sharedDelegate))
                 .thenReturn(UserSettings.builder()
                         .projects(List.of("*"))
@@ -328,8 +328,8 @@ public class NotificationServiceTest {
                 .build();
         when(userSettingsService.getSettings(watcher)).thenReturn(settings);
         when(userSettingsService.getSettings(watcher2)).thenReturn(settings);
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
-        when(delegationService.getEffectiveRecipient(watcher2)).thenReturn(watcher2);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(delegationService.getEffectiveRecipients(watcher2)).thenReturn(List.of(watcher2));
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
         when(formatter.format(any(), any())).thenReturn("msg");
 
@@ -344,6 +344,6 @@ public class NotificationServiceTest {
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
         when(userSettingsService.getSettings(watcher))
                 .thenReturn(UserSettings.builder().projects(projects).channels(channels).build());
-        when(delegationService.getEffectiveRecipient(watcher)).thenReturn(watcher);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
     }
 }

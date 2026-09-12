@@ -1,6 +1,7 @@
 package ru.my.model;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Информация об активной делегации уведомлений.
@@ -9,21 +10,21 @@ import java.time.Instant;
  */
 public class DelegationInfo {
 
-    private final String toUserKey;
+    private final List<String> toUserKeys;
     private final Instant activeUntil;
 
     /**
-     * @param toUserKey   ключ пользователя-получателя уведомлений
+     * @param toUserKeys  ключи пользователей-получателей уведомлений
      * @param activeUntil момент окончания делегации; {@code null} — бессрочная
      */
-    public DelegationInfo(String toUserKey, Instant activeUntil) {
-        this.toUserKey = toUserKey;
+    public DelegationInfo(List<String> toUserKeys, Instant activeUntil) {
+        this.toUserKeys = List.copyOf(toUserKeys);
         this.activeUntil = activeUntil;
     }
 
-    /** Ключ пользователя, которому перенаправляются уведомления. */
-    public String getToUserKey() {
-        return toUserKey;
+    /** Ключи пользователей, которым перенаправляются уведомления. */
+    public List<String> getToUserKeys() {
+        return toUserKeys;
     }
 
     /**

@@ -2,7 +2,26 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   getUserSettings, saveUserSettings,
   getDelegation, saveDelegation, removeDelegation,
+  resolveProject, resolveUser, apiBase,
 } from '../api';
+import AjsMultiSelect from '../shared/AjsMultiSelect';
+
+// Резолвит ключи в {value,label} для пред-заполнения пикера; ключ, который не удалось
+// разрешить (пользователь/проект удалён), показываем как есть — сам ключ вместо лейбла.
+// AbortError пробрасываем дальше (не глотаем) — иначе Promise.all в загрузке модалки
+// не узнает об отмене и вызовет setState после размонтирования.
+async function resolveItems(keys, resolveLabel, signal) {
+  return Promise.all(keys.map(async key => {
+    let label;
+    try {
+      label = await resolveLabel(key, signal);
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      label = null;
+    }
+    return { value: key, label: label || key };
+  }));
+}
 
 const CHANNELS = [
   { id: 'EMAIL', label: 'Email' },
@@ -28,16 +47,34 @@ function StatusBanner({ error, success }) {
   return null;
 }
 
-function SettingsTab({ settings, onChange, telegramBotUsername }) {
+function SettingsTab({ settings, onChange, telegramBotUsername, projectItems }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
   const isSavingRef = useRef(false);
+  // Защита от state update на размонтированный компонент
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
   const projects = settings.projects ?? ['*'];
   const channels = settings.channels ?? [];
   const allProjects = projects.length === 1 && projects[0] === '*';
+
+  // Конкретный список проектов храним отдельно от settings.projects — пока включено
+  // "Все проекты", settings.projects равен ['*'], и при выключении чекбокса без этого
+  // стейта список оказался бы потерян (пикер спрятан через CSS, но жив и хранит свой
+  // выбор сам — читать его оттуда напрямую нечем, поэтому синхронизация через стейт)
+  const [explicitProjects, setExplicitProjects] = useState(allProjects ? [] : projects);
+
+  function handleProjectsChange(keys) {
+    setExplicitProjects(keys);
+    onChange({ ...settings, projects: keys });
+  }
+
+  function toggleAllProjects(checked) {
+    onChange({ ...settings, projects: checked ? ['*'] : explicitProjects });
+  }
 
   function toggleChannel(id) {
     const next = channels.includes(id)
@@ -46,22 +83,19 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
     onChange({ ...settings, channels: next });
   }
 
-  function handleProjectsChange(e) {
-    const val = e.target.value.trim();
-    onChange({ ...settings, projects: val ? val.split(',').map(s => s.trim()).filter(Boolean) : ['*'] });
-  }
-
   async function handleSave() {
     if (isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true); setError(null);
     try {
       await saveUserSettings(settings);
+      if (!mountedRef.current) return;
       showSuccess();
     } catch (e) {
+      if (!mountedRef.current) return;
       setError(e.message);
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
       isSavingRef.current = false;
     }
   }
@@ -124,22 +158,17 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
           <input
             type="checkbox"
             checked={allProjects}
-            onChange={e => onChange({ ...settings, projects: e.target.checked ? ['*'] : [] })}
+            onChange={e => toggleAllProjects(e.target.checked)}
             style={{ marginRight: 6 }}
           />
           Все проекты
         </label>
-        {!allProjects && (
-          <input
-            id="in-projects"
-            className="text"
-            type="text"
-            value={projects.join(', ')}
-            onChange={handleProjectsChange}
-            placeholder="PROJ, TEST, DEV"
-            style={{ width: '100%' }}
-          />
-        )}
+        {/* смонтирован всегда (даже под "Все проекты" скрыт через CSS) — чтобы не терять
+            уже введённый набор проектов при переключении чекбокса туда-обратно */}
+        <div style={{ display: allProjects ? 'none' : 'block' }}>
+          <AjsMultiSelect id="in-projects" initialItems={projectItems} url={`${apiBase()}/projects`}
+                          onChange={handleProjectsChange} />
+        </div>
       </div>
 
       <div className="in-actions">
@@ -151,7 +180,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername }) {
   );
 }
 
-function DelegationTab({ delegation, onSaved }) {
+function DelegationTab({ delegation, delegateItems, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
@@ -160,11 +189,16 @@ function DelegationTab({ delegation, onSaved }) {
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  const [toUserKey, setToUserKey] = useState(delegation?.toUserKey ?? '');
+  const [toUserKeys, setToUserKeys] = useState(delegation?.toUserKeys ?? []);
   const [activeUntil, setActiveUntil] = useState(delegation?.activeUntil ?? '');
+  // AjsMultiSelect читает initialItems только при монтировании — обычный ререндер
+  // с новыми props его не обновит. Когда список получателей сбрасывается не через сам
+  // пикер (см. handleRemove), форсируем пересоздание виджета через смену key.
+  const [pickerItems, setPickerItems] = useState(delegateItems);
+  const [pickerKey, setPickerKey] = useState(0);
 
   useEffect(() => {
-    setToUserKey(delegation?.toUserKey ?? '');
+    setToUserKeys(delegation?.toUserKeys ?? []);
     setActiveUntil(delegation?.activeUntil ?? '');
   }, [delegation]);
 
@@ -173,7 +207,7 @@ function DelegationTab({ delegation, onSaved }) {
     isSavingRef.current = true;
     setSaving(true); setError(null);
     try {
-      await saveDelegation({ toUserKey, activeUntil: activeUntil || null });
+      await saveDelegation({ toUserKeys, activeUntil: activeUntil || null });
       const updated = await getDelegation();
       if (!mountedRef.current) return;
       onSaved(updated);
@@ -194,7 +228,9 @@ function DelegationTab({ delegation, onSaved }) {
     try {
       await removeDelegation();
       if (!mountedRef.current) return;
-      onSaved(null);
+      onSaved({ toUserKeys: [], activeUntil: null });
+      setPickerItems([]);
+      setPickerKey(k => k + 1);
       showSuccess();
     } catch (e) {
       if (!mountedRef.current) return;
@@ -213,17 +249,9 @@ function DelegationTab({ delegation, onSaved }) {
       </p>
 
       <div className="field-group">
-        <label className="label" htmlFor="in-delegate">Ключ пользователя</label>
-        <input
-          id="in-delegate"
-          className="text"
-          type="text"
-          value={toUserKey}
-          onChange={e => setToUserKey(e.target.value)}
-          placeholder="jsmith"
-          style={{ width: '100%' }}
-        />
-        <div className="description">Используйте ключ пользователя из профиля Jira, не email</div>
+        <label className="label" htmlFor="in-delegate">Получатели</label>
+        <AjsMultiSelect key={pickerKey} id="in-delegate" initialItems={pickerItems} url={`${apiBase()}/users`}
+                        onChange={setToUserKeys} />
       </div>
 
       <div className="field-group">
@@ -239,7 +267,7 @@ function DelegationTab({ delegation, onSaved }) {
       </div>
 
       <div className="in-actions">
-        {delegation && (
+        {delegation?.toUserKeys?.length > 0 && (
           <button type="button" className="aui-button aui-button-danger" onClick={handleRemove} disabled={saving}>
             Снять делегацию
           </button>
@@ -248,7 +276,7 @@ function DelegationTab({ delegation, onSaved }) {
           type="button"
           className="aui-button aui-button-primary in-actions-end"
           onClick={handleSave}
-          disabled={saving || !toUserKey.trim()}
+          disabled={saving || toUserKeys.length === 0}
         >
           {saving ? 'Сохранение…' : 'Сохранить'}
         </button>
@@ -261,18 +289,33 @@ export default function UserSettingsModal({ onClose }) {
   const [tab, setTab] = useState('settings');
   const [settings, setSettings] = useState(null);
   const [delegation, setDelegation] = useState(null);
+  const [projectItems, setProjectItems] = useState([]);
+  const [delegateItems, setDelegateItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const dialogRef = useRef(null);
 
-  // Загрузка данных с отменой при размонтировании
+  // Загрузка данных с отменой при размонтировании. Лейблы для уже сохранённых ключей
+  // (проекты/делегаты) резолвим здесь же, до первого рендера пикеров — виджет читает
+  // начальные <option selected> только один раз, при инициализации.
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
       getUserSettings(controller.signal),
       getDelegation(controller.signal),
     ])
-      .then(([s, d]) => { setSettings(s); setDelegation(d); setLoading(false); })
+      .then(async ([s, d]) => {
+        const projectKeys = (s.projects || []).filter(k => k !== '*');
+        const [projItems, delItems] = await Promise.all([
+          resolveItems(projectKeys, resolveProject, controller.signal),
+          resolveItems(d.toUserKeys || [], resolveUser, controller.signal),
+        ]);
+        setSettings(s);
+        setDelegation(d);
+        setProjectItems(projItems);
+        setDelegateItems(delItems);
+        setLoading(false);
+      })
       .catch(e => {
         if (e.name !== 'AbortError') { setLoadError(e.message); setLoading(false); }
       });
@@ -302,10 +345,10 @@ export default function UserSettingsModal({ onClose }) {
       <>
         <div style={{ display: tab === 'settings' ? 'block' : 'none' }}>
           <SettingsTab settings={settings} onChange={setSettings}
-                       telegramBotUsername={settings?.telegramBotUsername} />
+                       telegramBotUsername={settings?.telegramBotUsername} projectItems={projectItems} />
         </div>
         <div style={{ display: tab === 'delegation' ? 'block' : 'none' }}>
-          <DelegationTab delegation={delegation} onSaved={setDelegation} />
+          <DelegationTab delegation={delegation} delegateItems={delegateItems} onSaved={setDelegation} />
         </div>
       </>
     );

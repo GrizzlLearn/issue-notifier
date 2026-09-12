@@ -15,6 +15,8 @@ import javax.ws.rs.core.Response;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 @Named
@@ -44,7 +46,7 @@ public class UserDelegationResource {
 
         Optional<DelegationInfo> delegation = delegationService.getDelegation(user);
         if (delegation.isEmpty()) {
-            return Response.ok(new DelegationDto(null, null)).build();
+            return Response.ok(new DelegationDto(List.of(), null)).build();
         }
 
         DelegationInfo info = delegation.get();
@@ -52,20 +54,24 @@ public class UserDelegationResource {
         String activeUntilStr = activeUntil == null ? null
                 : activeUntil.atOffset(ZoneOffset.UTC).toLocalDate().toString();
 
-        return Response.ok(new DelegationDto(info.getToUserKey(), activeUntilStr)).build();
+        return Response.ok(new DelegationDto(info.getToUserKeys(), activeUntilStr)).build();
     }
 
     @PUT
     public Response set(DelegationDto dto) {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
-        if (dto == null || dto.getToUserKey() == null || dto.getToUserKey().isBlank()) {
-            return UserSettingsResource.badRequest("Поле toUserKey обязательно");
+        if (dto == null || dto.getToUserKeys() == null || dto.getToUserKeys().isEmpty()) {
+            return UserSettingsResource.badRequest("Поле toUserKeys обязательно и не может быть пустым");
         }
 
-        ApplicationUser delegate = userManager.getUserByKey(dto.getToUserKey());
-        if (delegate == null) {
-            return UserSettingsResource.notFound("Пользователь не найден: " + dto.getToUserKey());
+        List<ApplicationUser> delegates = new ArrayList<>();
+        for (String key : dto.getToUserKeys()) {
+            ApplicationUser delegate = userManager.getUserByKey(key);
+            if (delegate == null) {
+                return UserSettingsResource.notFound("Пользователь не найден: " + key);
+            }
+            delegates.add(delegate);
         }
 
         Instant activeUntil = null;
@@ -77,7 +83,11 @@ public class UserDelegationResource {
             }
         }
 
-        delegationService.setDelegation(user, delegate, activeUntil);
+        try {
+            delegationService.setDelegation(user, delegates, activeUntil);
+        } catch (IllegalArgumentException e) {
+            return UserSettingsResource.badRequest(e.getMessage());
+        }
         return Response.noContent().build();
     }
 

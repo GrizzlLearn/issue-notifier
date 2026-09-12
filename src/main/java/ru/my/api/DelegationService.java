@@ -5,20 +5,21 @@ import ru.my.model.DelegationInfo;
 
 import javax.annotation.Nullable;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
  * Сервис делегирования уведомлений.
- * Позволяет пользователю перенаправить свои уведомления коллеге
- * на период отпуска или больничного.
+ * Позволяет пользователю перенаправить свои уведомления одному или нескольким
+ * коллегам на период отпуска или больничного.
  */
 public interface DelegationService {
 
     /**
-     * Возвращает фактического получателя уведомления.
-     * Если для {@code user} есть активная делегация — возвращает делегата.
-     * В противном случае (делегации нет, истекла или делегат удалён из Jira) —
-     * возвращает самого {@code user}.
+     * Возвращает фактических получателей уведомления.
+     * Если для {@code user} есть активная делегация — возвращает делегатов.
+     * В противном случае (делегации нет, истекла или все делегаты удалены из Jira) —
+     * возвращает список из самого {@code user}.
      * <p>
      * Ограничение: делегирование однозвенное. Если делегат {@code B} сам
      * делегировал уведомления на {@code C}, уведомление всё равно придёт {@code B},
@@ -26,18 +27,18 @@ public interface DelegationService {
      * чтобы избежать цикличности и неочевидных цепочек перенаправлений.
      *
      * @param user исходный наблюдатель задачи
-     * @return пользователь, которому нужно отправить уведомление
+     * @return пользователи, которым нужно отправить уведомление
      */
-    ApplicationUser getEffectiveRecipient(ApplicationUser user);
+    List<ApplicationUser> getEffectiveRecipients(ApplicationUser user);
 
     /**
      * Устанавливает или обновляет делегацию (upsert).
      *
      * @param from        пользователь, который делегирует
-     * @param to          получатель уведомлений на время делегации
+     * @param to          получатели уведомлений на время делегации; не должен быть пустым
      * @param activeUntil момент окончания делегации; {@code null} — бессрочная
      */
-    void setDelegation(ApplicationUser from, ApplicationUser to, @Nullable Instant activeUntil);
+    void setDelegation(ApplicationUser from, List<ApplicationUser> to, @Nullable Instant activeUntil);
 
     /**
      * Снимает делегацию пользователя. Если делегации не было — ничего не делает.

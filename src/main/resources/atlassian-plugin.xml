@@ -46,6 +46,9 @@
     <!-- JS-бандл для пользовательского диалога (загружается на всех страницах) -->
     <web-resource key="user-settings-resources" name="Issue Notifier User Settings">
         <dependency>com.atlassian.auiplugin:ajs</dependency>
+        <!-- jira/ajs/select/multi-select — тот же виджет, что рендерит User Picker/Fix Versions
+             в самой Jira; используем его для пикеров проектов и делегатов в модалке -->
+        <dependency>jira.webresources:frother-multiselect</dependency>
         <resource type="download" name="user-settings.js" location="/js/user-settings.min.js"/>
         <context>atl.general</context>
     </web-resource>
