@@ -8,6 +8,7 @@ import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
 import ru.my.impl.ActionTemplates;
 import ru.my.impl.ChannelKeys;
+import ru.my.impl.ClosingStatuses;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
@@ -37,7 +38,7 @@ public class AdminSettingsResource {
      */
     static final String IS_SET_SUFFIX = ".isSet";
 
-    /** Ключи SD-проектов, к которым применяется спец-логика портала: CSV из project key. */
+    /** Проекты, к которым применяется логика портала (SD и обычные): CSV из project key. */
     static final String SD_PROJECTS = "sd.projects";
 
     /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
@@ -62,7 +63,8 @@ public class AdminSettingsResource {
                 ChannelKeys.TELEGRAM_BOT_USERNAME,
                 ChannelKeys.TELEGRAM_BOT_TOKEN,
                 ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
-                SD_PROJECTS));
+                SD_PROJECTS,
+                ClosingStatuses.KEY));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
             for (NotificationChannel channel : ACTION_CHANNELS) {

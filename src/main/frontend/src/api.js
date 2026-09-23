@@ -85,15 +85,3 @@ export async function saveAdminSettings(data) {
     body: JSON.stringify(data),
   }));
 }
-
-export async function getSdProjects(signal) {
-  const resp = await fetch(`${base()}/admin/sd-projects`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
-  return resp.json();
-}
-
-export async function getActions(signal) {
-  const resp = await fetch(`${base()}/admin/actions`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
-  return resp.json();
-}

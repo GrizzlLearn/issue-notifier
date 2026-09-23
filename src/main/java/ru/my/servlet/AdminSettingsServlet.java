@@ -1,7 +1,9 @@
 package ru.my.servlet;
 
 import com.atlassian.jira.component.ComponentAccessor;
+import com.atlassian.jira.config.ConstantsManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
+import com.atlassian.jira.project.ProjectManager;
 import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
@@ -29,6 +31,12 @@ public class AdminSettingsServlet extends HttpServlet {
             return;
         }
 
+        // справочники страницы отдаём сразу в HTML — данные лежат в этом же
+        // процессе Jira, ходить за ними из браузера незачем
+        String pageData = AdminPageData.toJson(
+                ComponentAccessor.getComponent(ProjectManager.class).getProjectObjects(),
+                ComponentAccessor.getComponent(ConstantsManager.class).getStatuses());
+
         String pluginResourceBase = req.getContextPath()
                 + "/download/resources/ru.my.issue-notifier:admin-settings-resources";
 
@@ -44,6 +52,7 @@ public class AdminSettingsServlet extends HttpServlet {
         out.println("</head>");
         out.println("<body>");
         out.println("  <div id=\"issue-notifier-admin-root\"></div>");
+        out.println("  " + AdminPageData.embed(pageData));
         out.println("  <script src=\"" + pluginResourceBase + "/admin-settings.js\"></script>");
         out.println("</body>");
         out.println("</html>");

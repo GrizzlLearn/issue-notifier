@@ -7,7 +7,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>ru.my</groupId>
     <artifactId>issue-notifier</artifactId>
-    <version>1.0.15</version>
+    <version>1.0.20</version>
 
     <organization>
         <name>Example Company</name>

@@ -15,6 +15,7 @@ import com.atlassian.sal.api.ApplicationProperties;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.impl.util.MentionParser;
 import ru.my.model.DiffResult;
@@ -60,6 +61,7 @@ public class IssueEventListener {
     private final NotificationService notificationService;
     private final UserManager userManager;
     private final ApplicationProperties applicationProperties;
+    private final AdminSettingsService adminSettingsService;
 
     @Inject
     public IssueEventListener(
@@ -67,11 +69,13 @@ public class IssueEventListener {
             @ComponentImport ThreadLocalDelegateExecutorFactory delegateExecutorFactory,
             @ComponentImport UserManager userManager,
             @ComponentImport ApplicationProperties applicationProperties,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            AdminSettingsService adminSettingsService) {
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
         this.userManager = userManager;
         this.applicationProperties = applicationProperties;
+        this.adminSettingsService = adminSettingsService;
 
         AtomicInteger threadCounter = new AtomicInteger();
         RejectedExecutionHandler discardWithLog = (r, pool) ->
@@ -88,12 +92,14 @@ public class IssueEventListener {
 
     /** Конструктор для unit-тестов — не регистрируется в eventPublisher. */
     public IssueEventListener(ExecutorService executor, NotificationService notificationService,
-                              UserManager userManager, ApplicationProperties applicationProperties) {
+                              UserManager userManager, ApplicationProperties applicationProperties,
+                              AdminSettingsService adminSettingsService) {
         this.eventPublisher = null;
         this.executor = executor;
         this.notificationService = notificationService;
         this.userManager = userManager;
         this.applicationProperties = applicationProperties;
+        this.adminSettingsService = adminSettingsService;
     }
 
     @PostConstruct
@@ -126,10 +132,15 @@ public class IssueEventListener {
         if (diff.isEmpty()) {
             return;
         }
-        if (isClosingTransition(issue, diff)) {
-            submit(typeId, () -> notificationService.processAction(
-                    issue, author, NotificationAction.CLOSED, List.of(),
-                    placeholders(issue, author, "status", statusName(issue))));
+        if (hasStatusChange(diff)) {
+            // настройка закрывающих статусов читается в рабочем потоке — в потоке
+            // Jira-события обращений к БД быть не должно
+            submit(typeId, () -> {
+                if (isClosingTransition(issue)) {
+                    notificationService.processAction(issue, author, NotificationAction.CLOSED,
+                            List.of(), placeholders(issue, author, "status", statusName(issue)));
+                }
+            });
         }
         submit(typeId, () -> notificationService.processEvent(issue, author, diff));
     }
@@ -163,20 +174,26 @@ public class IssueEventListener {
         return users;
     }
 
+    private static boolean hasStatusChange(DiffResult diff) {
+        return diff.getChanges().stream().anyMatch(c -> "status".equalsIgnoreCase(c.fieldName()));
+    }
+
     /**
-     * Переход считается закрывающим, если менялось поле status и новый статус
-     * задачи относится к категории «Done» — это не зависит от названий статусов
-     * в конкретном workflow.
+     * Закрывающим считается статус, выбранный администратором для проекта задачи
+     * на вкладке «SD-проекты». Если для проекта ничего не выбрано — работает
+     * запасное правило: статус относится к категории «Done», что не зависит
+     * от названий статусов в конкретном workflow.
      */
-    private boolean isClosingTransition(Issue issue, DiffResult diff) {
-        boolean statusChanged = diff.getChanges().stream()
-                .anyMatch(c -> "status".equalsIgnoreCase(c.fieldName()));
-        if (!statusChanged) {
+    private boolean isClosingTransition(Issue issue) {
+        Status status = issue.getStatus();
+        if (status == null) {
             return false;
         }
-        Status status = issue.getStatus();
-        StatusCategory category = status != null ? status.getStatusCategory() : null;
-        return category != null && StatusCategory.COMPLETE.equals(category.getKey());
+        StatusCategory category = status.getStatusCategory();
+        boolean doneByCategory = category != null && StatusCategory.COMPLETE.equals(category.getKey());
+        String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : "";
+        return ClosingStatuses.isClosing(
+                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, status.getId(), doneByCategory);
     }
 
     private Map<String, String> placeholders(Issue issue, ApplicationUser author,

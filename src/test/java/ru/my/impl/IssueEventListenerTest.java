@@ -6,6 +6,7 @@ import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.comments.Comment;
 import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.issue.status.category.StatusCategory;
+import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.sal.api.ApplicationProperties;
@@ -15,6 +16,7 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.ofbiz.core.entity.GenericValue;
+import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
@@ -43,6 +45,7 @@ public class IssueEventListenerTest {
     @Mock private ExecutorService executor;
     @Mock private NotificationService notificationService;
     @Mock private UserManager userManager;
+    @Mock private AdminSettingsService adminSettingsService;
     @Mock private ApplicationProperties applicationProperties;
 
     private IssueEventListener listener;
@@ -55,7 +58,8 @@ public class IssueEventListenerTest {
             return null;
         }).when(executor).submit(any(Runnable.class));
 
-        listener = new IssueEventListener(executor, notificationService, userManager, applicationProperties);
+        listener = new IssueEventListener(executor, notificationService, userManager,
+                applicationProperties, adminSettingsService);
     }
 
     @Test
@@ -174,7 +178,8 @@ public class IssueEventListenerTest {
 
     @Test
     public void statusChangeToDoneCategoryTriggersClosedAction() {
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatusCategory("done")));
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID,
+                issueWithStatus("10001", "done", "PROJ")));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
@@ -182,7 +187,32 @@ public class IssueEventListenerTest {
 
     @Test
     public void statusChangeToInProgressCategoryDoesNotTriggerClosedAction() {
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatusCategory("indeterminate")));
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID,
+                issueWithStatus("3", "indeterminate", "PROJ")));
+
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
+    }
+
+    /** Для проекта выбран свой закрывающий статус — категория статуса не важна. */
+    @Test
+    public void statusSelectedForProjectTriggersClosedActionRegardlessOfCategory() {
+        org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
+
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID,
+                issueWithStatus("3", "indeterminate", "PROJ")));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
+    }
+
+    /** Статус категории «Done» не закрывающий, если для проекта выбраны другие статусы. */
+    @Test
+    public void doneStatusIsNotClosingWhenProjectSelectsOtherStatuses() {
+        org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
+
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID,
+                issueWithStatus("10001", "done", "PROJ")));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
@@ -205,14 +235,18 @@ public class IssueEventListenerTest {
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
     }
 
-    /** Задача, статус которой относится к указанной категории. */
-    private Issue issueWithStatusCategory(String categoryKey) {
+    /** Задача с заданным статусом, его категорией и проектом. */
+    private Issue issueWithStatus(String statusId, String categoryKey, String projectKey) {
         StatusCategory category = mock(StatusCategory.class);
         org.mockito.Mockito.when(category.getKey()).thenReturn(categoryKey);
         Status status = mock(Status.class);
+        org.mockito.Mockito.when(status.getId()).thenReturn(statusId);
         org.mockito.Mockito.when(status.getStatusCategory()).thenReturn(category);
+        Project project = mock(Project.class);
+        org.mockito.Mockito.when(project.getKey()).thenReturn(projectKey);
         Issue issue = mock(Issue.class);
         org.mockito.Mockito.when(issue.getStatus()).thenReturn(status);
+        org.mockito.Mockito.when(issue.getProjectObject()).thenReturn(project);
         org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
         return issue;
     }

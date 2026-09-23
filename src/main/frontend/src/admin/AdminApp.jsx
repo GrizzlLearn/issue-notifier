@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getAdminSettings, saveAdminSettings, getSdProjects, getActions } from '../api';
+import { getAdminSettings, saveAdminSettings } from '../api';
+
+// Справочники страницы (проекты, статусы, каталог действий) сервлет кладёт прямо
+// в HTML — см. AdminPageData. Поэтому поиск проектов идёт по массиву в памяти
+// браузера, без запросов на каждое нажатие клавиши.
+const PAGE_DATA = window.ISSUE_NOTIFIER_DATA || { projects: [], statuses: [], actions: [] };
+const MAX_SUGGESTIONS = 20;
 
 const SECTIONS = [
   {
@@ -94,71 +100,210 @@ function SecretField({ field, values, setValue }) {
   );
 }
 
-// Вкладка SD-проектов: список Service Desk-проектов инстанса с чекбоксами.
-// Отмеченные хранятся в одном admin-ключе sd.projects как CSV из project key.
-function SdProjectsPanel({ values, setValue }) {
-  const [projects, setProjects] = useState(null);
-  const [error, setError] = useState(null);
+const PROJECTS_KEY = 'sd.projects';
+const CLOSING_KEY = 'closed.statuses';
+const CLOSED_ACTION = 'closed';
+const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
+const hintStyle = { fontSize: 11, color: '#707070' };
 
-  useEffect(() => {
-    const controller = new AbortController();
-    getSdProjects(controller.signal)
-      .then(setProjects)
-      .catch(e => { if (e.name !== 'AbortError') setError(e.message); });
-    return () => controller.abort();
-  }, []);
+const parseKeys = raw => (raw || '').split(',').filter(Boolean);
 
-  const selected = (values['sd.projects'] || '').split(',').filter(Boolean);
+// "HELP:10001,3;SUP:10002" ↔ { HELP: ['10001','3'], SUP: ['10002'] }
+function parseClosing(raw) {
+  const map = {};
+  (raw || '').split(';').filter(Boolean).forEach(chunk => {
+    const colon = chunk.indexOf(':');
+    if (colon <= 0) return;
+    const ids = chunk.slice(colon + 1).split(',').filter(Boolean);
+    if (ids.length) map[chunk.slice(0, colon)] = ids;
+  });
+  return map;
+}
 
-  function toggle(key, checked) {
-    const next = checked ? [...selected, key] : selected.filter(k => k !== key);
-    setValue('sd.projects', next.join(','));
+function formatClosing(map) {
+  return Object.entries(map)
+    .filter(([, ids]) => ids.length)
+    .map(([key, ids]) => `${key}:${ids.join(',')}`)
+    .join(';');
+}
+
+// Пикер обычных проектов: их в инстансе могут быть сотни, поэтому список целиком
+// не рисуем — фильтруем по вводу и показываем выбранное чипами.
+function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
+  const [query, setQuery] = useState('');
+
+  const text = query.trim().toLowerCase();
+  const suggestions = text
+    ? projects
+        .filter(p => !selected.includes(p.value)
+          && (p.value.toLowerCase().includes(text) || p.label.toLowerCase().includes(text)))
+        .slice(0, MAX_SUGGESTIONS)
+    : [];
+
+  function pick(item) {
+    onAdd(item.value);
+    setQuery('');
   }
 
-  if (error) return <div className="aui-message aui-message-error">{error}</div>;
-  if (!projects) return <div className="in-loading">Загрузка…</div>;
-  if (projects.length === 0) return <p>Service Desk-проекты не найдены.</p>;
+  return (
+    <div style={{ position: 'relative' }}>
+      {selected.length > 0 && (
+        <div style={{ marginBottom: 6 }}>
+          {selected.map(key => (
+            <span key={key} className="aui-label" style={{ marginRight: 6, display: 'inline-block' }}>
+              {labels[key] || key}
+              <a
+                href="#"
+                onClick={e => { e.preventDefault(); onRemove(key); }}
+                style={{ marginLeft: 6, textDecoration: 'none' }}
+                title="Убрать проект"
+              >×</a>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <input
+        className="text"
+        type="text"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Начните вводить ключ или название проекта"
+        style={{ width: '100%' }}
+      />
+
+      {suggestions.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 10, left: 0, right: 0, margin: 0, padding: 0,
+          listStyle: 'none', background: '#fff', border: '1px solid #dfe1e6',
+          borderRadius: 4, maxHeight: 220, overflowY: 'auto',
+          boxShadow: '0 4px 8px rgba(9,30,66,.15)',
+        }}>
+          {suggestions.map(item => (
+            <li key={item.value}>
+              <a
+                href="#"
+                onClick={e => { e.preventDefault(); pick(item); }}
+                style={{ display: 'block', padding: '6px 10px', textDecoration: 'none', color: '#172b4d' }}
+              >
+                {item.label}
+                {item.serviceDesk && <span style={{ ...hintStyle, marginLeft: 6 }}>Service Desk</span>}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Проекты, к которым применяется логика портала: SD-проекты полным списком
+// (их немного), остальные — через пикер.
+function ProjectsPanel({ projects, selected, labels, setValue }) {
+  const sdProjects = projects.filter(p => p.serviceDesk);
+  const sdKeys = sdProjects.map(p => p.value);
+  const otherSelected = selected.filter(key => !sdKeys.includes(key));
+
+  function setSelected(next) {
+    setValue(PROJECTS_KEY, next.join(','));
+  }
 
   return (
     <fieldset className="in-section">
       <legend>Проекты с логикой портала</legend>
-      {projects.map(p => (
-        <div key={p.value} className="field-group" style={{ marginBottom: 8 }}>
-          <label>
-            <input
-              type="checkbox"
-              checked={selected.includes(p.value)}
-              onChange={e => toggle(p.value, e.target.checked)}
-              style={{ marginRight: 6 }}
-            />
-            {p.label}
-          </label>
-        </div>
-      ))}
+
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Service Desk</div>
+        {sdProjects.length === 0 && <div style={hintStyle}>Service Desk-проекты не найдены.</div>}
+        {sdProjects.map(p => (
+          <div key={p.value} style={{ marginBottom: 4 }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={selected.includes(p.value)}
+                onChange={e => setSelected(e.target.checked
+                  ? [...selected, p.value]
+                  : selected.filter(k => k !== p.value))}
+                style={{ marginRight: 6 }}
+              />
+              {p.label}
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Остальные проекты</div>
+        <ProjectPicker
+          projects={projects}
+          selected={otherSelected}
+          labels={labels}
+          onAdd={key => setSelected([...selected, key])}
+          onRemove={key => setSelected(selected.filter(k => k !== key))}
+        />
+      </div>
     </fieldset>
   );
 }
 
-const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
+// Закрывающие статусы задаются отдельно для каждого выбранного проекта:
+// в разных workflow закрытие называется по-разному.
+function ClosingStatusesField({ labels, selected, statuses, values, setValue }) {
+  const map = parseClosing(values[CLOSING_KEY]);
 
-// Вкладка действий: для каждого действия — галка «уведомлять» и шаблон текста
-// на каждый канал. Пустой шаблон означает, что по этому каналу ничего не уйдёт,
-// поэтому включённое действие без единого шаблона показывает предупреждение.
-function ActionsPanel({ values, setValue }) {
-  const [actions, setActions] = useState(null);
-  const [error, setError] = useState(null);
+  function toggleStatus(projectKey, statusId, checked) {
+    const current = map[projectKey] || [];
+    const next = checked ? [...current, statusId] : current.filter(id => id !== statusId);
+    setValue(CLOSING_KEY, formatClosing({ ...map, [projectKey]: next }));
+  }
 
-  useEffect(() => {
-    const controller = new AbortController();
-    getActions(controller.signal)
-      .then(setActions)
-      .catch(e => { if (e.name !== 'AbortError') setError(e.message); });
-    return () => controller.abort();
-  }, []);
+  if (selected.length === 0) {
+    return <div style={hintStyle}>Отметьте проекты выше, чтобы выбрать для них закрывающие статусы.</div>;
+  }
 
-  if (error) return <div className="aui-message aui-message-error">{error}</div>;
-  if (!actions) return <div className="in-loading">Загрузка…</div>;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="label">Закрывающие статусы по проектам</div>
+      {selected.map(key => {
+        const chosen = map[key] || [];
+        return (
+          <details key={key} style={{ marginBottom: 6 }}>
+            <summary style={{ cursor: 'pointer' }}>
+              {labels[key] || key}
+              <span style={{ ...hintStyle, marginLeft: 8 }}>
+                {chosen.length ? `выбрано: ${chosen.length}` : 'по категории «Готово»'}
+              </span>
+            </summary>
+            <div style={{ maxHeight: 180, overflowY: 'auto', padding: '6px 0 6px 16px' }}>
+              {statuses.map(s => (
+                <div key={s.value} style={{ marginBottom: 4 }}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={chosen.includes(s.value)}
+                      onChange={e => toggleStatus(key, s.value, e.target.checked)}
+                      style={{ marginRight: 6 }}
+                    />
+                    {s.label}
+                    {s.done && <span style={{ ...hintStyle, marginLeft: 6 }}>категория «Готово»</span>}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </details>
+        );
+      })}
+      <div style={hintStyle}>
+        Если для проекта не выбрано ни одного статуса, закрывающими считаются статусы категории «Готово».
+      </div>
+    </div>
+  );
+}
 
+// Действие: галка «уведомлять» и шаблон текста на каждый канал. Пустой шаблон —
+// по этому каналу ничего не уйдёт, поэтому включённое действие без шаблонов
+// показывает предупреждение.
+function ActionsPanel({ actions, labels, selected, statuses, values, setValue }) {
   return (
     <>
       {actions.map(action => {
@@ -187,6 +332,16 @@ function ActionsPanel({ values, setValue }) {
               </div>
             )}
 
+            {action.key === CLOSED_ACTION && (
+              <ClosingStatusesField
+                labels={labels}
+                selected={selected}
+                statuses={statuses}
+                values={values}
+                setValue={setValue}
+              />
+            )}
+
             {action.channels.map(ch => (
               <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
                 <label className="label" htmlFor={ch.templateKey}>{CHANNEL_TITLES[ch.channel] || ch.channel}</label>
@@ -201,12 +356,39 @@ function ActionsPanel({ values, setValue }) {
               </div>
             ))}
 
-            <div style={{ fontSize: 11, color: '#707070' }}>
+            <div style={hintStyle}>
               Доступные плейсхолдеры: {action.placeholders.map(p => '{' + p + '}').join(', ')}
             </div>
           </fieldset>
         );
       })}
+    </>
+  );
+}
+
+// Вкладка SD-проектов: выбор проектов и настройки действий по ним.
+// Справочники уже в PAGE_DATA, загружать нечего.
+const PROJECT_LABELS = Object.fromEntries(PAGE_DATA.projects.map(p => [p.value, p.label]));
+
+function PortalTab({ values, setValue }) {
+  const selected = parseKeys(values[PROJECTS_KEY]);
+
+  return (
+    <>
+      <ProjectsPanel
+        projects={PAGE_DATA.projects}
+        selected={selected}
+        labels={PROJECT_LABELS}
+        setValue={setValue}
+      />
+      <ActionsPanel
+        actions={PAGE_DATA.actions}
+        labels={PROJECT_LABELS}
+        selected={selected}
+        statuses={PAGE_DATA.statuses}
+        values={values}
+        setValue={setValue}
+      />
     </>
   );
 }
@@ -266,7 +448,7 @@ export default function AdminApp() {
 
       <div className="aui-tabs horizontal-tabs">
         <ul className="tabs-menu">
-          {[['channels', 'Каналы'], ['sd', 'SD-проекты'], ['actions', 'Действия']].map(([id, label]) => (
+          {[['channels', 'Каналы'], ['sd', 'SD-проекты']].map(([id, label]) => (
             <li key={id} className={'menu-item' + (tab === id ? ' active-tab' : '')}>
               <a href="#" onClick={e => { e.preventDefault(); setTab(id); }}>{label}</a>
             </li>
@@ -274,8 +456,7 @@ export default function AdminApp() {
         </ul>
 
         <div className="tabs-pane active-pane">
-          {tab === 'sd' && <SdProjectsPanel values={values} setValue={setValue} />}
-          {tab === 'actions' && <ActionsPanel values={values} setValue={setValue} />}
+          {tab === 'sd' && <PortalTab values={values} setValue={setValue} />}
           {tab === 'channels' && SECTIONS.map(section => (
             <fieldset key={section.title} className="in-section">
               <legend>{section.title}</legend>
