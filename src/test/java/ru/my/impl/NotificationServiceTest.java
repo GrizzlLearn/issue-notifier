@@ -16,6 +16,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
 import ru.my.model.DiffResult;
+import ru.my.model.ActionScope;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
@@ -389,6 +390,48 @@ public class NotificationServiceTest {
         verify(sender, never()).send(any(), any());
     }
 
+    /** Действие с областью «только выбранные» молчит в проекте, которого нет в списке. */
+    @Test
+    public void actionWithSelectedScopeIsSkippedForProjectOutsideList() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setScope(NotificationAction.COMMENT_ADDED, ActionScope.SELECTED);
+        when(adminSettingsService.get(PortalProjects.KEY, "")).thenReturn("OTHER");
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void actionWithSelectedScopeWorksForListedProject() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setScope(NotificationAction.COMMENT_ADDED, ActionScope.SELECTED);
+        when(adminSettingsService.get(PortalProjects.KEY, "")).thenReturn("PROJ,OTHER");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /** Список проектов в настройках получателя относится только к изменениям задач. */
+    @Test
+    public void actionIgnoresRecipientProjectFilter() {
+        enableAction(NotificationAction.MENTION, "Упомянули в {issueKey}");
+        setScope(NotificationAction.MENTION, ActionScope.ALL);
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("OTHER"))
+                        .channels(List.of(NotificationChannel.MATTERMOST)).build());
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+
+        service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(watcher, "Упомянули в PROJ-1");
+    }
+
     // ---- вспомогательные методы ----------------------------------------
 
     /** Включает действие и задаёт ему шаблон для Mattermost — единственного канала в тестах. */
@@ -397,6 +440,11 @@ public class NotificationServiceTest {
         when(adminSettingsService.get(
                 ActionTemplates.templateKey(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+    }
+
+    private void setScope(NotificationAction action, ActionScope scope) {
+        when(adminSettingsService.get(ActionTemplates.scopeKey(action), action.defaultScope().key()))
+                .thenReturn(scope.key());
     }
 
     private void setupStandardWatcher(List<String> projects, List<NotificationChannel> channels) {

@@ -32,19 +32,16 @@ public class ClosingStatusesTest {
     public void usesConfiguredStatusesForProject() {
         String raw = "HELP:10001,3";
 
-        assertTrue(ClosingStatuses.isClosing(raw, "HELP", "10001", false));
-        // статус категории «Done», но для проекта выбран другой — не закрывающий
-        assertFalse(ClosingStatuses.isClosing(raw, "HELP", "10002", true));
+        assertTrue(ClosingStatuses.isClosing(raw, "HELP", "10001"));
+        assertFalse(ClosingStatuses.isClosing(raw, "HELP", "10002"));
     }
 
-    /** Для проектов без своей настройки работает запасное правило по категории статуса. */
+    /** Правила по категории статуса нет: проект без настройки ничего не шлёт. */
     @Test
-    public void fallsBackToStatusCategoryWhenProjectNotConfigured() {
-        String raw = "HELP:10001";
-
-        assertTrue(ClosingStatuses.isClosing(raw, "SUP", "10002", true));
-        assertFalse(ClosingStatuses.isClosing(raw, "SUP", "3", false));
-        assertTrue(ClosingStatuses.isClosing("", "SUP", "10002", true));
+    public void projectWithoutConfiguredStatusesIsNeverClosing() {
+        assertFalse(ClosingStatuses.isClosing("HELP:10001", "SUP", "10002"));
+        assertFalse(ClosingStatuses.isClosing("", "SUP", "10002"));
+        assertFalse(ClosingStatuses.isClosing(null, "SUP", "10002"));
     }
 
     @Test

@@ -327,13 +327,24 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                     ? chosen.map(id => (
                       <span key={id} className="in-chip">{statusNames[id] || id}</span>
                     ))
-                    : 'по умолчанию — статусы категории «Готово»'}
+                    : <span className="in-status-empty">статусы не выбраны — уведомления не отправляются</span>}
                 </span>
                 <span className="in-status-action">{open ? 'Свернуть' : 'Выбрать статусы'}</span>
               </button>
 
               {open && (
                 <div className="in-status-panel">
+                  <button
+                    type="button"
+                    className="aui-button aui-button-link"
+                    style={{ marginBottom: 8, padding: 0 }}
+                    onClick={() => setValue(CLOSING_KEY, formatClosing({
+                      ...map,
+                      [key]: statuses.filter(st => st.done).map(st => st.value),
+                    }))}
+                  >
+                    Отметить статусы категории «Готово»
+                  </button>
                   <div className="in-status-grid">
                     {statuses.map(s => (
                       <label key={s.value}>
@@ -356,7 +367,8 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
       </div>
 
       <div style={hintStyle}>
-        Если для проекта не выбрано ни одного статуса, закрывающими считаются статусы категории «Готово».
+        Закрывающим считается только выбранный здесь статус: в разных workflow закрытие
+        называется по-разному. Проект без выбранных статусов уведомлений о закрытии не шлёт.
       </div>
     </div>
   );
@@ -371,6 +383,8 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
       {actions.map(action => {
         const enabled = values[action.enabledKey] === 'true';
         const noTemplates = action.channels.every(ch => !(values[ch.templateKey] || '').trim());
+        const scope = action.scopeFixed ? action.defaultScope : (values[action.scopeKey] || action.defaultScope);
+        const noProjects = !action.scopeFixed && scope === 'selected' && selected.length === 0;
 
         return (
           <fieldset key={action.key} className="in-section">
@@ -388,9 +402,36 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
               </label>
             </div>
 
+            <div className="field-group" style={{ marginBottom: 12 }}>
+              <div className="label">Область</div>
+              {action.scopeFixed && (
+                <div style={hintStyle}>
+                  Работает в проектах, для которых ниже выбраны закрывающие статусы.
+                </div>
+              )}
+              {!action.scopeFixed && [['all', 'Во всех проектах'], ['selected', 'Только в проектах со вкладки «Проекты»']].map(([value, label]) => (
+                <label key={value} style={{ marginRight: 16 }}>
+                  <input
+                    type="radio"
+                    name={action.scopeKey}
+                    checked={scope === value}
+                    onChange={() => setValue(action.scopeKey, value)}
+                    style={{ marginRight: 6 }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
             {enabled && noTemplates && (
               <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
                 Шаблоны не заданы — уведомления по этому действию отправляться не будут.
+              </div>
+            )}
+
+            {enabled && noProjects && (
+              <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
+                На вкладке «Проекты» не отмечено ни одного проекта — уведомления по этому действию не отправятся.
               </div>
             )}
 
@@ -428,30 +469,32 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
   );
 }
 
-// Вкладка SD-проектов: выбор проектов и настройки действий по ним.
-// Справочники уже в PAGE_DATA, загружать нечего.
+// Справочники уже в PAGE_DATA, загружать на вкладках нечего.
 const PROJECT_LABELS = Object.fromEntries(PAGE_DATA.projects.map(p => [p.value, p.label]));
 
-function PortalTab({ values, setValue }) {
-  const selected = parseKeys(values[PROJECTS_KEY]);
-
+// Вкладка «Проекты»: к каким проектам относятся действия с областью «только в выбранных».
+function ProjectsTab({ values, setValue }) {
   return (
-    <>
-      <ProjectsPanel
-        projects={PAGE_DATA.projects}
-        selected={selected}
-        labels={PROJECT_LABELS}
-        setValue={setValue}
-      />
-      <ActionsPanel
-        actions={PAGE_DATA.actions}
-        labels={PROJECT_LABELS}
-        selected={selected}
-        statuses={PAGE_DATA.statuses}
-        values={values}
-        setValue={setValue}
-      />
-    </>
+    <ProjectsPanel
+      projects={PAGE_DATA.projects}
+      selected={parseKeys(values[PROJECTS_KEY])}
+      labels={PROJECT_LABELS}
+      setValue={setValue}
+    />
+  );
+}
+
+// Вкладка «Действия»: что отправляем, где это работает и каким текстом.
+function ActionsTab({ values, setValue }) {
+  return (
+    <ActionsPanel
+      actions={PAGE_DATA.actions}
+      labels={PROJECT_LABELS}
+      selected={parseKeys(values[PROJECTS_KEY])}
+      statuses={PAGE_DATA.statuses}
+      values={values}
+      setValue={setValue}
+    />
   );
 }
 
@@ -510,7 +553,7 @@ export default function AdminApp() {
 
       <div className="aui-tabs horizontal-tabs">
         <ul className="tabs-menu">
-          {[['channels', 'Каналы'], ['sd', 'SD-проекты']].map(([id, label]) => (
+          {[['channels', 'Каналы'], ['actions', 'Действия'], ['projects', 'Проекты']].map(([id, label]) => (
             <li key={id} className={'menu-item' + (tab === id ? ' active-tab' : '')}>
               <a href="#" onClick={e => { e.preventDefault(); setTab(id); }}>{label}</a>
             </li>
@@ -518,7 +561,8 @@ export default function AdminApp() {
         </ul>
 
         <div className="tabs-pane active-pane">
-          {tab === 'sd' && <PortalTab values={values} setValue={setValue} />}
+          {tab === 'actions' && <ActionsTab values={values} setValue={setValue} />}
+          {tab === 'projects' && <ProjectsTab values={values} setValue={setValue} />}
           {tab === 'channels' && SECTIONS.map(section => (
             <fieldset key={section.title} className="in-section">
               <legend>{section.title}</legend>

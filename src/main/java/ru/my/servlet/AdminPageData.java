@@ -78,6 +78,9 @@ public final class AdminPageData {
                     + "\"key\":" + JsonUtil.jsonString(action.key())
                     + ",\"title\":" + JsonUtil.jsonString(action.title())
                     + ",\"enabledKey\":" + JsonUtil.jsonString(ActionTemplates.enabledKey(action))
+                    + ",\"scopeKey\":" + JsonUtil.jsonString(ActionTemplates.scopeKey(action))
+                    + ",\"defaultScope\":" + JsonUtil.jsonString(action.defaultScope().key())
+                    + ",\"scopeFixed\":" + action.isScopeFixed()
                     + ",\"placeholders\":" + placeholders
                     + ",\"channels\":" + channels
                     + "}");

@@ -157,7 +157,11 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems }) 
       )}
 
       <div className="field-group">
-        <label className="label" htmlFor="in-projects">Проекты</label>
+        <label className="label" htmlFor="in-projects">Проекты — уведомления об изменениях задач</label>
+        <div className="description" style={{ marginBottom: 6 }}>
+          Ограничивает только уведомления об изменениях в задачах, за которыми вы наблюдаете.
+          Упоминания через @ и другие уведомления о действиях приходят независимо от этого списка.
+        </div>
         <label style={{ display: 'block', marginBottom: 6 }}>
           <input
             type="checkbox"

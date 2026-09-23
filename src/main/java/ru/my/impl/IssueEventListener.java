@@ -7,7 +7,6 @@ import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.comments.Comment;
 import com.atlassian.jira.issue.status.Status;
-import com.atlassian.jira.issue.status.category.StatusCategory;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
@@ -179,21 +178,18 @@ public class IssueEventListener {
     }
 
     /**
-     * Закрывающим считается статус, выбранный администратором для проекта задачи
-     * на вкладке «SD-проекты». Если для проекта ничего не выбрано — работает
-     * запасное правило: статус относится к категории «Done», что не зависит
-     * от названий статусов в конкретном workflow.
+     * Закрывающим считается только статус, выбранный администратором для проекта
+     * задачи на вкладке «Действия». Проект без выбранных статусов уведомлений
+     * о закрытии не шлёт — правила по категории статуса нет.
      */
     private boolean isClosingTransition(Issue issue) {
         Status status = issue.getStatus();
         if (status == null) {
             return false;
         }
-        StatusCategory category = status.getStatusCategory();
-        boolean doneByCategory = category != null && StatusCategory.COMPLETE.equals(category.getKey());
         String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : "";
         return ClosingStatuses.isClosing(
-                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, status.getId(), doneByCategory);
+                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, status.getId());
     }
 
     private Map<String, String> placeholders(Issue issue, ApplicationUser author,

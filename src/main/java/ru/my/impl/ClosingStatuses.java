@@ -53,19 +53,17 @@ public final class ClosingStatuses {
 
     /**
      * Считается ли переход в статус закрывающим для проекта.
+     * <p>
+     * Правила по категории статуса нет намеренно: в разных workflow закрытие
+     * называется по-разному, поэтому закрывающим считается только явно выбранный
+     * администратором статус. Проект без выбранных статусов уведомлений не шлёт.
      *
-     * @param raw            значение настройки {@value #KEY}
-     * @param projectKey     ключ проекта задачи
-     * @param statusId       id нового статуса
-     * @param doneByCategory относится ли новый статус к категории «Done»
-     * @return {@code true} если статус выбран для проекта администратором,
-     *         а при отсутствии настройки для проекта — по категории статуса
+     * @param raw        значение настройки {@value #KEY}
+     * @param projectKey ключ проекта задачи
+     * @param statusId   id нового статуса
      */
-    public static boolean isClosing(String raw, String projectKey, String statusId, boolean doneByCategory) {
+    public static boolean isClosing(String raw, String projectKey, String statusId) {
         Set<String> configured = parse(raw).get(projectKey);
-        if (configured == null || configured.isEmpty()) {
-            return doneByCategory;
-        }
-        return configured.contains(statusId);
+        return configured != null && configured.contains(statusId);
     }
 }

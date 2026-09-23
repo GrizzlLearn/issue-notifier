@@ -13,6 +13,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.NotificationService;
 import ru.my.api.UserSettingsService;
+import ru.my.model.ActionScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
@@ -139,7 +140,7 @@ public class NotificationServiceImpl implements NotificationService {
         // admin-флаги читаются один раз на всё событие, а не на каждого получателя
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
-        for (Recipient r : collectRecipients(issue, author, watchers)) {
+        for (Recipient r : collectRecipients(issue, author, watchers, true)) {
             sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
         }
     }
@@ -150,6 +151,9 @@ public class NotificationServiceImpl implements NotificationService {
         if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.enabledKey(action), "false"))) {
             return;
         }
+        if (!isInScope(action, issue)) {
+            return;
+        }
 
         List<ApplicationUser> base = (recipients == null || recipients.isEmpty())
                 ? watcherManager.getWatchers(issue, Locale.ROOT)
@@ -157,7 +161,9 @@ public class NotificationServiceImpl implements NotificationService {
 
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
-        for (Recipient r : collectRecipients(issue, author, base)) {
+        // Пользовательский фильтр проектов здесь не применяется: он относится
+        // к наблюдению за изменениями задач, а область действий задаёт администратор.
+        for (Recipient r : collectRecipients(issue, author, base, false)) {
             // Set защищает от двойной отправки при дублях в List<NotificationChannel>
             for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
                 if (Boolean.TRUE.equals(channelCache.get(channel))) {
@@ -165,6 +171,23 @@ public class NotificationServiceImpl implements NotificationService {
                 }
             }
         }
+    }
+
+    /**
+     * Работает ли действие в проекте задачи: область {@code all} — везде,
+     * {@code selected} — только в проектах, отмеченных на вкладке «Проекты».
+     * Действие с фиксированной областью настройку не читает.
+     */
+    private boolean isInScope(NotificationAction action, Issue issue) {
+        ActionScope scope = action.isScopeFixed()
+                ? action.defaultScope()
+                : ActionScope.byKey(adminSettingsService.get(
+                        ActionTemplates.scopeKey(action), action.defaultScope().key()));
+        if (ActionScope.SELECTED != scope) {
+            return true;
+        }
+        String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : null;
+        return PortalProjects.contains(adminSettingsService.get(PortalProjects.KEY, ""), projectKey);
     }
 
     private void sendAction(NotificationAction action, NotificationChannel channel,
@@ -188,13 +211,18 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     /**
-     * Отбирает итоговых получателей: отсеивает неактивных, автора события,
-     * отключивших уведомления и не следящих за проектом, применяет делегирование
-     * и дедуплицирует — каждый получатель попадает в результат ровно один раз,
-     * даже если на него делегировали несколько наблюдателей.
+     * Отбирает итоговых получателей: отсеивает неактивных, автора события
+     * и отключивших уведомления, применяет делегирование и дедуплицирует —
+     * каждый получатель попадает в результат ровно один раз, даже если на него
+     * делегировали несколько наблюдателей.
+     *
+     * @param applyUserProjectFilter учитывать ли список проектов в настройках
+     *                               получателя; он относится только к уведомлениям
+     *                               об изменениях задач, за которыми тот наблюдает
      */
     private Collection<Recipient> collectRecipients(Issue issue, ApplicationUser author,
-                                                    List<ApplicationUser> candidates) {
+                                                    List<ApplicationUser> candidates,
+                                                    boolean applyUserProjectFilter) {
         Map<String, Recipient> uniqueRecipients = new LinkedHashMap<>();
 
         for (ApplicationUser candidate : candidates) {
@@ -209,7 +237,7 @@ public class NotificationServiceImpl implements NotificationService {
             if (!candidateSettings.isEnabled()) {
                 continue;
             }
-            if (!isProjectIncluded(candidateSettings, issue)) {
+            if (applyUserProjectFilter && !isProjectIncluded(candidateSettings, issue)) {
                 continue;
             }
 

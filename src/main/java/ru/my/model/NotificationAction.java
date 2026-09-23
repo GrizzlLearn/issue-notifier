@@ -14,22 +14,34 @@ import java.util.List;
 public enum NotificationAction {
 
     MENTION("mention", "Упоминание через @",
-            List.of("issueKey", "issueUrl", "summary", "project", "author", "comment")),
+            List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
+            ActionScope.ALL, false),
 
+    /**
+     * Область не настраивается: закрывающие статусы задаются на каждый проект,
+     * поэтому действие работает ровно там, где они выбраны.
+     */
     CLOSED("closed", "Переход в закрывающий статус",
-            List.of("issueKey", "issueUrl", "summary", "project", "author", "status")),
+            List.of("issueKey", "issueUrl", "summary", "project", "author", "status"),
+            ActionScope.SELECTED, true),
 
     COMMENT_ADDED("commentAdded", "Новый комментарий",
-            List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"));
+            List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
+            ActionScope.SELECTED, false);
 
     private final String key;
     private final String title;
     private final List<String> placeholders;
+    private final ActionScope defaultScope;
+    private final boolean scopeFixed;
 
-    NotificationAction(String key, String title, List<String> placeholders) {
+    NotificationAction(String key, String title, List<String> placeholders,
+                       ActionScope defaultScope, boolean scopeFixed) {
         this.key = key;
         this.title = title;
         this.placeholders = List.copyOf(placeholders);
+        this.defaultScope = defaultScope;
+        this.scopeFixed = scopeFixed;
     }
 
     /** Идентификатор действия в ключах настроек, например {@code "mention"}. */
@@ -40,6 +52,20 @@ public enum NotificationAction {
     /** Человекочитаемое название для админ-страницы. */
     public String title() {
         return title;
+    }
+
+    /**
+     * Область по умолчанию, пока администратор её не менял:
+     * упоминание касается человека лично и работает везде, портальные действия —
+     * только в отмеченных проектах.
+     */
+    public ActionScope defaultScope() {
+        return defaultScope;
+    }
+
+    /** {@code true} — область задана самим действием, администратор её не переключает. */
+    public boolean isScopeFixed() {
+        return scopeFixed;
     }
 
     /** Плейсхолдеры, допустимые в шаблоне этого действия (без фигурных скобок). */

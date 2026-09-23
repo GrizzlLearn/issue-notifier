@@ -30,6 +30,25 @@ public final class ActionTemplates {
         return "action." + action.key() + ".enabled";
     }
 
+    /** Ключ области действия, например {@code "action.mention.scope"}. */
+    public static String scopeKey(NotificationAction action) {
+        return "action." + action.key() + ".scope";
+    }
+
+    /**
+     * Возвращает действие, которому принадлежит ключ области.
+     *
+     * @return действие или {@code null}, если ключ не является ключом области
+     */
+    public static NotificationAction actionOfScopeKey(String key) {
+        for (NotificationAction action : NotificationAction.values()) {
+            if (scopeKey(action).equals(key)) {
+                return action;
+            }
+        }
+        return null;
+    }
+
     /** Ключ шаблона канала, например {@code "action.mention.template.mattermost"}. */
     public static String templateKey(NotificationAction action, NotificationChannel channel) {
         return "action." + action.key() + ".template." + channel.name().toLowerCase(Locale.ROOT);

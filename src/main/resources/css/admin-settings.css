@@ -124,3 +124,7 @@
     color: #0747a6;
     text-decoration: none;
 }
+
+.in-status-empty {
+    color: #a54800;
+}

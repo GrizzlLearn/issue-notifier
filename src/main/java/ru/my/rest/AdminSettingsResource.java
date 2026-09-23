@@ -9,6 +9,8 @@ import ru.my.api.AdminSettingsService;
 import ru.my.impl.ActionTemplates;
 import ru.my.impl.ChannelKeys;
 import ru.my.impl.ClosingStatuses;
+import ru.my.impl.PortalProjects;
+import ru.my.model.ActionScope;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
@@ -38,8 +40,8 @@ public class AdminSettingsResource {
      */
     static final String IS_SET_SUFFIX = ".isSet";
 
-    /** Проекты, к которым применяется логика портала (SD и обычные): CSV из project key. */
-    static final String SD_PROJECTS = "sd.projects";
+    /** Проекты, отмеченные на вкладке «Проекты»: CSV из project key. */
+    static final String SD_PROJECTS = PortalProjects.KEY;
 
     /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
     private static final List<NotificationChannel> ACTION_CHANNELS =
@@ -67,6 +69,9 @@ public class AdminSettingsResource {
                 ClosingStatuses.KEY));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
+            if (!action.isScopeFixed()) {
+                keys.add(ActionTemplates.scopeKey(action));
+            }
             for (NotificationChannel channel : ACTION_CHANNELS) {
                 keys.add(ActionTemplates.templateKey(action, channel));
             }
@@ -88,6 +93,9 @@ public class AdminSettingsResource {
                 "email.enabled", "mattermost.enabled", "telegram.enabled"));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
+            if (!action.isScopeFixed()) {
+                keys.add(ActionTemplates.scopeKey(action));
+            }
         }
         return Set.copyOf(keys);
     }
@@ -123,9 +131,7 @@ public class AdminSettingsResource {
                 boolean isSet = !adminSettingsService.get(secretKey, "").isBlank();
                 settings.put(key, String.valueOf(isSet));
             } else {
-                // булев ключ без записи в базе — это выключено, а не «пусто»:
-                // клиент отправляет полученное значение обратно, и "" не прошло бы валидацию PUT
-                settings.put(key, adminSettingsService.get(key, BOOLEAN_KEYS.contains(key) ? "false" : ""));
+                settings.put(key, adminSettingsService.get(key, defaultFor(key)));
             }
         }
         return Response.ok(settings).build();
@@ -161,6 +167,10 @@ public class AdminSettingsResource {
             Response invalidTemplate = validateTemplate(e.getKey(), e.getValue());
             if (invalidTemplate != null) {
                 return invalidTemplate;
+            }
+            Response invalidScope = validateScope(e.getKey(), e.getValue());
+            if (invalidScope != null) {
+                return invalidScope;
             }
         }
 
@@ -199,6 +209,34 @@ public class AdminSettingsResource {
      * старые версии GET, и страница, открытая до обновления плагина, шлёт его обратно.
      * Такой ключ пропускаем молча вместо 400.
      */
+    /**
+     * Значение по умолчанию для ключа, которого нет в базе.
+     * <p>
+     * Булев ключ без записи — это «выключено», а не «пусто»: клиент отправляет
+     * полученное значение обратно, и {@code ""} не прошло бы валидацию PUT.
+     * Ключ области отдаёт область действия по умолчанию — иначе переключатель
+     * на странице не показывал бы реального поведения.
+     */
+    private static String defaultFor(String key) {
+        if (BOOLEAN_KEYS.contains(key)) {
+            return "false";
+        }
+        NotificationAction action = ActionTemplates.actionOfScopeKey(key);
+        return action != null ? action.defaultScope().key() : "";
+    }
+
+    /** Область действия принимает только {@code "all"} или {@code "selected"}. */
+    private static Response validateScope(String key, String value) {
+        if (ActionTemplates.actionOfScopeKey(key) == null || value == null || value.isBlank()) {
+            return null;
+        }
+        if (ActionScope.byKey(value) != null) {
+            return null;
+        }
+        return UserSettingsResource.badRequest(
+                "Недопустимая область для '" + key + "': ожидается 'all' или 'selected'");
+    }
+
     private static boolean isBlankBoolean(String key, String value) {
         return BOOLEAN_KEYS.contains(key) && (value == null || value.isBlank());
     }
