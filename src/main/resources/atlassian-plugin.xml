@@ -56,6 +56,7 @@
     <!-- JS-бандл для admin-страницы (подключается сервлетом напрямую) -->
     <web-resource key="admin-settings-resources" name="Issue Notifier Admin Settings">
         <resource type="download" name="admin-settings.js" location="/js/admin-settings.min.js"/>
+        <resource type="download" name="admin-settings.css" location="/css/admin-settings.css"/>
     </web-resource>
 
     <!-- Общие ресурсы (CSS) -->

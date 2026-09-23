@@ -123,7 +123,9 @@ public class AdminSettingsResource {
                 boolean isSet = !adminSettingsService.get(secretKey, "").isBlank();
                 settings.put(key, String.valueOf(isSet));
             } else {
-                settings.put(key, adminSettingsService.get(key, ""));
+                // булев ключ без записи в базе — это выключено, а не «пусто»:
+                // клиент отправляет полученное значение обратно, и "" не прошло бы валидацию PUT
+                settings.put(key, adminSettingsService.get(key, BOOLEAN_KEYS.contains(key) ? "false" : ""));
             }
         }
         return Response.ok(settings).build();
@@ -148,6 +150,9 @@ public class AdminSettingsResource {
         if (body == null || body.isEmpty()) return UserSettingsResource.badRequest("Тело запроса не задано");
 
         for (Map.Entry<String, String> e : body.entrySet()) {
+            if (isBlankBoolean(e.getKey(), e.getValue())) {
+                continue;
+            }
             if (BOOLEAN_KEYS.contains(e.getKey())
                     && !"true".equals(e.getValue()) && !"false".equals(e.getValue())) {
                 return UserSettingsResource.badRequest(
@@ -161,6 +166,7 @@ public class AdminSettingsResource {
 
         body.entrySet().stream()
                 .filter(e -> KNOWN_KEYS.contains(e.getKey()))
+                .filter(e -> !isBlankBoolean(e.getKey(), e.getValue()))                   // «не задано» — не трогаем
                 .filter(e -> !isIsSetKey(e.getKey()))                                      // read-only
                 .filter(e -> !SECRETS.contains(e.getKey()) || !e.getValue().isBlank())     // пустой секрет — не трогаем
                 .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
@@ -186,6 +192,15 @@ public class AdminSettingsResource {
         return UserSettingsResource.badRequest(
                 "Неизвестные плейсхолдеры в шаблоне '" + key + "': " + String.join(", ", unknown)
                         + ". Допустимые: " + String.join(", ", action.placeholders()));
+    }
+
+    /**
+     * Пустое значение булевого ключа — «настройка не задана»: так его отдавали
+     * старые версии GET, и страница, открытая до обновления плагина, шлёт его обратно.
+     * Такой ключ пропускаем молча вместо 400.
+     */
+    private static boolean isBlankBoolean(String key, String value) {
+        return BOOLEAN_KEYS.contains(key) && (value == null || value.isBlank());
     }
 
     private static boolean isIsSetKey(String key) {

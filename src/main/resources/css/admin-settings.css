@@ -1,0 +1,126 @@
+/* Стили админ-страницы. Отдельный файл от issue-notifier.css: тот грузится
+   на всех страницах Jira через atl.general, а эти правила нужны только здесь. */
+
+/* Список проектов с закрывающими статусами */
+.in-status-list {
+    border: 1px solid #dfe1e6;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+/* Строка проекта — кнопка на всю ширину, чтобы было видно, что она кликабельна */
+.in-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    background: #fff;
+    border: 0;
+    border-bottom: 1px solid #f0f1f3;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.in-status-row:last-child {
+    border-bottom: 0;
+}
+
+.in-status-row:hover,
+.in-status-row[aria-expanded="true"] {
+    background: #f4f5f7;
+}
+
+.in-chevron {
+    color: #6b778c;
+    font-size: 10px;
+    transition: transform .15s ease;
+}
+
+.in-status-row[aria-expanded="true"] .in-chevron {
+    transform: rotate(90deg);
+}
+
+.in-status-name {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Середина строки: чипы выбранных статусов или подсказка про поведение по умолчанию */
+.in-status-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #6b778c;
+    font-size: 12px;
+}
+
+.in-status-action {
+    color: #0052cc;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.in-chip {
+    display: inline-block;
+    background: #e9f2ff;
+    color: #0747a6;
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin: 1px 4px 1px 0;
+    font-size: 12px;
+}
+
+/* Раскрытая панель со статусами */
+.in-status-panel {
+    padding: 10px 12px 12px 32px;
+    background: #fafbfc;
+    border-bottom: 1px solid #f0f1f3;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.in-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 4px 16px;
+}
+
+.in-badge-done {
+    color: #216e4e;
+    font-size: 11px;
+    margin-left: 6px;
+}
+
+/* Выпадающий список пикера проектов */
+.in-suggestions {
+    position: absolute;
+    z-index: 10;
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #dfe1e6;
+    border-radius: 4px;
+    max-height: 220px;
+    overflow-y: auto;
+    box-shadow: 0 4px 8px rgba(9, 30, 66, .15);
+}
+
+.in-suggestion {
+    display: block;
+    padding: 6px 10px;
+    color: #172b4d;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.in-suggestion:hover,
+.in-suggestion.is-active {
+    background: #e9f2ff;
+    color: #0747a6;
+    text-decoration: none;
+}

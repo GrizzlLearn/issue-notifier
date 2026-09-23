@@ -172,7 +172,7 @@ public class AdminSettingsResourceTest {
 
         assertEquals(400, resource.set(Map.of("email.enabled", "yes")).getStatus());
         assertEquals(400, resource.set(Map.of("mattermost.enabled", "1")).getStatus());
-        assertEquals(400, resource.set(Map.of("telegram.enabled", "")).getStatus());
+        // пустая строка — не ошибка, а «не задано»: см. putIgnoresBlankBooleanInsteadOfRejecting
     }
 
     @Test
@@ -268,5 +268,36 @@ public class AdminSettingsResourceTest {
 
         assertEquals(204, response.getStatus());
         verify(adminSettingsService).set(key, "{issueKey} — {summary}");
+    }
+
+    // --- «не задано» у булевых ключей ---
+
+    /** Галка, которой нет в базе, должна приходить как "false": клиент вернёт это значение в PUT. */
+    @Test
+    public void getAsksFalseAsDefaultForBooleanKeys() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.get();
+
+        verify(adminSettingsService).get(ActionTemplates.enabledKey(NotificationAction.MENTION), "false");
+        verify(adminSettingsService).get("mattermost.enabled", "false");
+        verify(adminSettingsService).get(ChannelKeys.MATTERMOST_DOMAIN, "");
+    }
+
+    /** Страница, открытая до обновления плагина, шлёт пустую строку — это не ошибка. */
+    @Test
+    public void putIgnoresBlankBooleanInsteadOfRejecting() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        String enabledKey = ActionTemplates.enabledKey(NotificationAction.MENTION);
+
+        Map<String, String> body = new java.util.LinkedHashMap<>();
+        body.put(enabledKey, "");
+        body.put(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+
+        Response response = resource.set(body);
+
+        assertEquals(204, response.getStatus());
+        verify(adminSettingsService, never()).set(eq(enabledKey), anyString());
+        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
     }
 }

@@ -49,6 +49,7 @@ public class AdminSettingsServlet extends HttpServlet {
         out.println("  <meta name=\"decorator\" content=\"atl.admin\">");
         out.println("  <meta name=\"admin.active.section\" content=\"admin_plugins_menu\">");
         out.println("  <meta name=\"admin.active.tab\" content=\"issue-notifier-admin-link\">");
+        out.println("  <link rel=\"stylesheet\" href=\"" + pluginResourceBase + "/admin-settings.css\">");
         out.println("</head>");
         out.println("<body>");
         out.println("  <div id=\"issue-notifier-admin-root\"></div>");

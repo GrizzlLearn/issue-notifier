@@ -129,20 +129,50 @@ function formatClosing(map) {
 
 // Пикер обычных проектов: их в инстансе могут быть сотни, поэтому список целиком
 // не рисуем — фильтруем по вводу и показываем выбранное чипами.
+// Список подсказок управляется с клавиатуры: ↑/↓ — перебор, Enter — выбрать, Esc — закрыть.
 function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
   const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [closed, setClosed] = useState(false);
 
   const text = query.trim().toLowerCase();
-  const suggestions = text
+  const suggestions = text && !closed
     ? projects
         .filter(p => !selected.includes(p.value)
           && (p.value.toLowerCase().includes(text) || p.label.toLowerCase().includes(text)))
         .slice(0, MAX_SUGGESTIONS)
     : [];
 
+  function changeQuery(value) {
+    setQuery(value);
+    setActive(0);
+    setClosed(false);
+  }
+
   function pick(item) {
     onAdd(item.value);
     setQuery('');
+    setActive(0);
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Escape') {
+      setClosed(true);
+      return;
+    }
+    if (suggestions.length === 0) {
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive(prev => Math.min(prev + 1, suggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive(prev => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      pick(suggestions[active]);
+    }
   }
 
   return (
@@ -167,24 +197,33 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
         className="text"
         type="text"
         value={query}
-        onChange={e => setQuery(e.target.value)}
+        onChange={e => changeQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder="Начните вводить ключ или название проекта"
         style={{ width: '100%' }}
+        role="combobox"
+        aria-expanded={suggestions.length > 0}
+        aria-autocomplete="list"
+        aria-controls="in-project-suggestions"
+        aria-activedescendant={suggestions.length > 0 ? `in-project-option-${active}` : undefined}
       />
 
       {suggestions.length > 0 && (
-        <ul style={{
-          position: 'absolute', zIndex: 10, left: 0, right: 0, margin: 0, padding: 0,
-          listStyle: 'none', background: '#fff', border: '1px solid #dfe1e6',
-          borderRadius: 4, maxHeight: 220, overflowY: 'auto',
-          boxShadow: '0 4px 8px rgba(9,30,66,.15)',
-        }}>
-          {suggestions.map(item => (
-            <li key={item.value}>
+        <ul className="in-suggestions" id="in-project-suggestions" role="listbox">
+          {suggestions.map((item, index) => (
+            <li
+              key={item.value}
+              id={`in-project-option-${index}`}
+              role="option"
+              aria-selected={index === active}
+              // активный пункт держим в зоне видимости при переборе стрелками
+              ref={el => { if (index === active && el) el.scrollIntoView({ block: 'nearest' }); }}
+            >
               <a
                 href="#"
+                className={'in-suggestion' + (index === active ? ' is-active' : '')}
+                onMouseEnter={() => setActive(index)}
                 onClick={e => { e.preventDefault(); pick(item); }}
-                style={{ display: 'block', padding: '6px 10px', textDecoration: 'none', color: '#172b4d' }}
               >
                 {item.label}
                 {item.serviceDesk && <span style={{ ...hintStyle, marginLeft: 6 }}>Service Desk</span>}
@@ -247,9 +286,12 @@ function ProjectsPanel({ projects, selected, labels, setValue }) {
 }
 
 // Закрывающие статусы задаются отдельно для каждого выбранного проекта:
-// в разных workflow закрытие называется по-разному.
+// в разных workflow закрытие называется по-разному. Строка проекта — кнопка:
+// раскрывается список статусов, выбранные видны чипами и без раскрытия.
 function ClosingStatusesField({ labels, selected, statuses, values, setValue }) {
+  const [openProject, setOpenProject] = useState(null);
   const map = parseClosing(values[CLOSING_KEY]);
+  const statusNames = Object.fromEntries(statuses.map(s => [s.value, s.label]));
 
   function toggleStatus(projectKey, statusId, checked) {
     const current = map[projectKey] || [];
@@ -264,35 +306,55 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
   return (
     <div style={{ marginBottom: 12 }}>
       <div className="label">Закрывающие статусы по проектам</div>
-      {selected.map(key => {
-        const chosen = map[key] || [];
-        return (
-          <details key={key} style={{ marginBottom: 6 }}>
-            <summary style={{ cursor: 'pointer' }}>
-              {labels[key] || key}
-              <span style={{ ...hintStyle, marginLeft: 8 }}>
-                {chosen.length ? `выбрано: ${chosen.length}` : 'по категории «Готово»'}
-              </span>
-            </summary>
-            <div style={{ maxHeight: 180, overflowY: 'auto', padding: '6px 0 6px 16px' }}>
-              {statuses.map(s => (
-                <div key={s.value} style={{ marginBottom: 4 }}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={chosen.includes(s.value)}
-                      onChange={e => toggleStatus(key, s.value, e.target.checked)}
-                      style={{ marginRight: 6 }}
-                    />
-                    {s.label}
-                    {s.done && <span style={{ ...hintStyle, marginLeft: 6 }}>категория «Готово»</span>}
-                  </label>
+
+      <div className="in-status-list">
+        {selected.map(key => {
+          const chosen = map[key] || [];
+          const open = openProject === key;
+
+          return (
+            <React.Fragment key={key}>
+              <button
+                type="button"
+                className="in-status-row"
+                aria-expanded={open}
+                onClick={() => setOpenProject(open ? null : key)}
+              >
+                <span className="in-chevron">▶</span>
+                <span className="in-status-name">{labels[key] || key}</span>
+                <span className="in-status-summary">
+                  {chosen.length > 0
+                    ? chosen.map(id => (
+                      <span key={id} className="in-chip">{statusNames[id] || id}</span>
+                    ))
+                    : 'по умолчанию — статусы категории «Готово»'}
+                </span>
+                <span className="in-status-action">{open ? 'Свернуть' : 'Выбрать статусы'}</span>
+              </button>
+
+              {open && (
+                <div className="in-status-panel">
+                  <div className="in-status-grid">
+                    {statuses.map(s => (
+                      <label key={s.value}>
+                        <input
+                          type="checkbox"
+                          checked={chosen.includes(s.value)}
+                          onChange={e => toggleStatus(key, s.value, e.target.checked)}
+                          style={{ marginRight: 6 }}
+                        />
+                        {s.label}
+                        {s.done && <span className="in-badge-done">категория «Готово»</span>}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </details>
-        );
-      })}
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
       <div style={hintStyle}>
         Если для проекта не выбрано ни одного статуса, закрывающими считаются статусы категории «Готово».
       </div>
