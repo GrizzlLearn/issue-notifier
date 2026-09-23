@@ -16,6 +16,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
 import ru.my.model.DiffResult;
+import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
@@ -338,7 +339,65 @@ public class NotificationServiceTest {
         verify(adminSettingsService, times(1)).isChannelEnabled(NotificationChannel.MATTERMOST);
     }
 
+    // ---- уведомления о действиях ----------------------------------------
+
+    @Test
+    public void actionIsSkippedWhenDisabledByAdmin() {
+        when(adminSettingsService.get(ActionTemplates.enabledKey(NotificationAction.MENTION), "false"))
+                .thenReturn("false");
+
+        service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher), Map.of());
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void actionRendersTemplateForExplicitRecipients() {
+        enableAction(NotificationAction.MENTION, "Упомянули в {issueKey}");
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST)).build());
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+
+        service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"));
+
+        // получатели переданы явно — наблюдателей задачи не спрашиваем
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender).send(watcher, "Упомянули в PROJ-1");
+    }
+
+    @Test
+    public void actionFallsBackToWatchersWhenRecipientsEmpty() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    @Test
+    public void actionIsSkippedWhenTemplateIsEmpty() {
+        enableAction(NotificationAction.CLOSED, "");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.CLOSED, List.of(), Map.of());
+
+        verify(sender, never()).send(any(), any());
+    }
+
     // ---- вспомогательные методы ----------------------------------------
+
+    /** Включает действие и задаёт ему шаблон для Mattermost — единственного канала в тестах. */
+    private void enableAction(NotificationAction action, String template) {
+        when(adminSettingsService.get(ActionTemplates.enabledKey(action), "false")).thenReturn("true");
+        when(adminSettingsService.get(
+                ActionTemplates.templateKey(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+    }
 
     private void setupStandardWatcher(List<String> projects, List<NotificationChannel> channels) {
         when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));

@@ -5,18 +5,29 @@ import com.atlassian.event.api.EventPublisher;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.comments.Comment;
+import com.atlassian.jira.issue.status.Status;
+import com.atlassian.jira.issue.status.category.StatusCategory;
 import com.atlassian.jira.user.ApplicationUser;
+import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import com.atlassian.sal.api.ApplicationProperties;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.NotificationService;
+import ru.my.impl.util.MentionParser;
 import ru.my.model.DiffResult;
+import ru.my.model.NotificationAction;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionHandler;
@@ -41,17 +52,26 @@ public class IssueEventListener {
     private static final int CORE_POOL_SIZE = 2;
     private static final int MAX_POOL_SIZE = 4;
 
+    /** ponytail: обрезаем текст комментария; лимит сообщения Telegram — 4096 символов. */
+    private static final int COMMENT_LIMIT = 500;
+
     private final EventPublisher eventPublisher;
     private final ExecutorService executor;
     private final NotificationService notificationService;
+    private final UserManager userManager;
+    private final ApplicationProperties applicationProperties;
 
     @Inject
     public IssueEventListener(
             @ComponentImport EventPublisher eventPublisher,
             @ComponentImport ThreadLocalDelegateExecutorFactory delegateExecutorFactory,
+            @ComponentImport UserManager userManager,
+            @ComponentImport ApplicationProperties applicationProperties,
             NotificationService notificationService) {
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
+        this.userManager = userManager;
+        this.applicationProperties = applicationProperties;
 
         AtomicInteger threadCounter = new AtomicInteger();
         RejectedExecutionHandler discardWithLog = (r, pool) ->
@@ -67,10 +87,13 @@ public class IssueEventListener {
     }
 
     /** Конструктор для unit-тестов — не регистрируется в eventPublisher. */
-    public IssueEventListener(ExecutorService executor, NotificationService notificationService) {
+    public IssueEventListener(ExecutorService executor, NotificationService notificationService,
+                              UserManager userManager, ApplicationProperties applicationProperties) {
         this.eventPublisher = null;
         this.executor = executor;
         this.notificationService = notificationService;
+        this.userManager = userManager;
+        this.applicationProperties = applicationProperties;
     }
 
     @PostConstruct
@@ -82,6 +105,18 @@ public class IssueEventListener {
 
     @EventListener
     public void onIssueEvent(IssueEvent event) {
+        Issue issue = event.getIssue();
+        ApplicationUser author = event.getUser();
+        // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
+        Long typeId = event.getEventTypeId();
+
+        Comment comment = event.getComment();
+        if (comment != null) {
+            // тело комментария читается здесь же, в потоке события
+            String body = comment.getBody();
+            submit(typeId, () -> processComment(issue, author, body));
+        }
+
         if (isIgnoredEvent(event)) {
             return;
         }
@@ -91,14 +126,87 @@ public class IssueEventListener {
         if (diff.isEmpty()) {
             return;
         }
-        Issue issue = event.getIssue();
-        ApplicationUser author = event.getUser();
-        // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
-        Long typeId = event.getEventTypeId();
+        if (isClosingTransition(issue, diff)) {
+            submit(typeId, () -> notificationService.processAction(
+                    issue, author, NotificationAction.CLOSED, List.of(),
+                    placeholders(issue, author, "status", statusName(issue))));
+        }
+        submit(typeId, () -> notificationService.processEvent(issue, author, diff));
+    }
+
+    /**
+     * Комментарий с упоминаниями уходит упомянутым как {@link NotificationAction#MENTION},
+     * без упоминаний — наблюдателям как {@link NotificationAction#COMMENT_ADDED}.
+     * Два уведомления об одном комментарии не отправляются.
+     */
+    private void processComment(Issue issue, ApplicationUser author, String body) {
+        List<ApplicationUser> mentioned = resolveUsers(MentionParser.parse(body));
+        String text = truncate(body);
+        if (!mentioned.isEmpty()) {
+            notificationService.processAction(issue, author, NotificationAction.MENTION,
+                    mentioned, placeholders(issue, author, "comment", text));
+        } else {
+            notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
+                    List.of(), placeholders(issue, author, "comment", text));
+        }
+    }
+
+    /** Резолвит имена из упоминаний в пользователей; неизвестные имена отбрасываются. */
+    private List<ApplicationUser> resolveUsers(List<String> names) {
+        List<ApplicationUser> users = new ArrayList<>();
+        for (String name : names) {
+            ApplicationUser user = userManager.getUserByName(name);
+            if (user != null) {
+                users.add(user);
+            }
+        }
+        return users;
+    }
+
+    /**
+     * Переход считается закрывающим, если менялось поле status и новый статус
+     * задачи относится к категории «Done» — это не зависит от названий статусов
+     * в конкретном workflow.
+     */
+    private boolean isClosingTransition(Issue issue, DiffResult diff) {
+        boolean statusChanged = diff.getChanges().stream()
+                .anyMatch(c -> "status".equalsIgnoreCase(c.fieldName()));
+        if (!statusChanged) {
+            return false;
+        }
+        Status status = issue.getStatus();
+        StatusCategory category = status != null ? status.getStatusCategory() : null;
+        return category != null && StatusCategory.COMPLETE.equals(category.getKey());
+    }
+
+    private Map<String, String> placeholders(Issue issue, ApplicationUser author,
+                                             String extraKey, String extraValue) {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("issueKey", issue.getKey());
+        values.put("issueUrl", applicationProperties.getBaseUrl() + "/browse/" + issue.getKey());
+        values.put("summary", issue.getSummary());
+        values.put("project", issue.getProjectObject() != null ? issue.getProjectObject().getName() : "");
+        values.put("author", author != null ? author.getDisplayName() : "");
+        values.put(extraKey, extraValue);
+        return values;
+    }
+
+    private static String statusName(Issue issue) {
+        return issue.getStatus() != null ? issue.getStatus().getName() : "";
+    }
+
+    private static String truncate(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= COMMENT_LIMIT ? text : text.substring(0, COMMENT_LIMIT) + "…";
+    }
+
+    private void submit(Long typeId, Runnable task) {
         try {
             executor.submit(() -> {
                 try {
-                    notificationService.processEvent(issue, author, diff);
+                    task.run();
                 } catch (Exception e) {
                     log.error("Необработанная ошибка при обработке события {}: {}",
                             typeId, e.getMessage(), e);

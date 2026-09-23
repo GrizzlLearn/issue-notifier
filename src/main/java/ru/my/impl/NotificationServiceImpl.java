@@ -14,13 +14,16 @@ import ru.my.api.NotificationSender;
 import ru.my.api.NotificationService;
 import ru.my.api.UserSettingsService;
 import ru.my.model.DiffResult;
+import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -136,34 +139,88 @@ public class NotificationServiceImpl implements NotificationService {
         // admin-флаги читаются один раз на всё событие, а не на каждого получателя
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
-        // ключ = userKey получателя; putIfAbsent гарантирует отправку ровно один раз
-        // даже если несколько наблюдателей делегировали на одного человека
+        for (Recipient r : collectRecipients(issue, author, watchers)) {
+            sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
+        }
+    }
+
+    @Override
+    public void processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                              List<ApplicationUser> recipients, Map<String, String> placeholders) {
+        if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.enabledKey(action), "false"))) {
+            return;
+        }
+
+        List<ApplicationUser> base = (recipients == null || recipients.isEmpty())
+                ? watcherManager.getWatchers(issue, Locale.ROOT)
+                : recipients;
+
+        Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
+
+        for (Recipient r : collectRecipients(issue, author, base)) {
+            // Set защищает от двойной отправки при дублях в List<NotificationChannel>
+            for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
+                if (Boolean.TRUE.equals(channelCache.get(channel))) {
+                    sendAction(action, channel, r.user(), placeholders);
+                }
+            }
+        }
+    }
+
+    private void sendAction(NotificationAction action, NotificationChannel channel,
+                            ApplicationUser recipient, Map<String, String> placeholders) {
+        String template = adminSettingsService.get(ActionTemplates.templateKey(action, channel), "");
+        if (template.isBlank()) {
+            // шаблон не задан администратором — по этому каналу не шлём
+            return;
+        }
+        NotificationSender sender = senders.get(channel);
+        if (sender == null) {
+            log.debug("Отправщик не найден для канала {}, действие {} пропущено", channel, action);
+            return;
+        }
+        try {
+            sender.send(recipient, ActionTemplates.render(template, placeholders, channel));
+        } catch (Exception e) {
+            log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
+                    action, channel, recipient.getDisplayName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Отбирает итоговых получателей: отсеивает неактивных, автора события,
+     * отключивших уведомления и не следящих за проектом, применяет делегирование
+     * и дедуплицирует — каждый получатель попадает в результат ровно один раз,
+     * даже если на него делегировали несколько наблюдателей.
+     */
+    private Collection<Recipient> collectRecipients(Issue issue, ApplicationUser author,
+                                                    List<ApplicationUser> candidates) {
         Map<String, Recipient> uniqueRecipients = new LinkedHashMap<>();
 
-        for (ApplicationUser watcher : watchers) {
-            if (!watcher.isActive()) {
+        for (ApplicationUser candidate : candidates) {
+            if (!candidate.isActive()) {
                 continue;
             }
-            if (author != null && Objects.equals(watcher.getKey(), author.getKey())) {
-                continue;
-            }
-
-            UserSettings watcherSettings = userSettingsService.getSettings(watcher);
-            if (!watcherSettings.isEnabled()) {
-                continue;
-            }
-            if (!isProjectIncluded(watcherSettings, issue)) {
+            if (author != null && Objects.equals(candidate.getKey(), author.getKey())) {
                 continue;
             }
 
-            for (ApplicationUser recipient : delegationService.getEffectiveRecipients(watcher)) {
+            UserSettings candidateSettings = userSettingsService.getSettings(candidate);
+            if (!candidateSettings.isEnabled()) {
+                continue;
+            }
+            if (!isProjectIncluded(candidateSettings, issue)) {
+                continue;
+            }
+
+            for (ApplicationUser recipient : delegationService.getEffectiveRecipients(candidate)) {
                 if (uniqueRecipients.containsKey(recipient.getKey())) {
                     continue;
                 }
 
-                // переиспользуем настройки наблюдателя, если делегирования нет
-                UserSettings recipientSettings = Objects.equals(recipient.getKey(), watcher.getKey())
-                        ? watcherSettings
+                // переиспользуем настройки кандидата, если делегирования нет
+                UserSettings recipientSettings = Objects.equals(recipient.getKey(), candidate.getKey())
+                        ? candidateSettings
                         : userSettingsService.getSettings(recipient);
 
                 if (!recipientSettings.isEnabled()) {
@@ -173,16 +230,13 @@ public class NotificationServiceImpl implements NotificationService {
                 uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
             }
         }
-
-        for (Recipient r : uniqueRecipients.values()) {
-            sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
-        }
+        return uniqueRecipients.values();
     }
 
     private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
                                  UserSettings settings, Map<NotificationChannel, Boolean> channelCache) {
         // Set защищает от двойной отправки при дублях в List<NotificationChannel>
-        for (NotificationChannel channel : new java.util.LinkedHashSet<>(settings.getChannels())) {
+        for (NotificationChannel channel : new LinkedHashSet<>(settings.getChannels())) {
             if (Boolean.TRUE.equals(channelCache.get(channel))) {
                 sendViaChannel(issue, diff, recipient, channel);
             }

@@ -1,0 +1,106 @@
+package ru.my.impl;
+
+import ru.my.model.NotificationAction;
+import ru.my.model.NotificationChannel;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Ключи настроек и подстановка значений в шаблоны уведомлений о действиях
+ * ({@link NotificationAction}).
+ * <p>
+ * Движка шаблонов нет намеренно: шаблон редактирует администратор, а Velocity
+ * или Freemarker в редактируемом тексте — это выполнение кода. Здесь только
+ * замена плейсхолдеров из белого списка действия.
+ */
+public final class ActionTemplates {
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z0-9_]+)}");
+
+    private ActionTemplates() {
+    }
+
+    /** Ключ флага «уведомлять об этом действии», например {@code "action.mention.enabled"}. */
+    public static String enabledKey(NotificationAction action) {
+        return "action." + action.key() + ".enabled";
+    }
+
+    /** Ключ шаблона канала, например {@code "action.mention.template.mattermost"}. */
+    public static String templateKey(NotificationAction action, NotificationChannel channel) {
+        return "action." + action.key() + ".template." + channel.name().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Возвращает действие, которому принадлежит ключ шаблона.
+     *
+     * @return действие или {@code null}, если ключ не является ключом шаблона
+     */
+    public static NotificationAction actionOfTemplateKey(String key) {
+        for (NotificationAction action : NotificationAction.values()) {
+            for (NotificationChannel channel : NotificationChannel.values()) {
+                if (templateKey(action, channel).equals(key)) {
+                    return action;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Подставляет значения в шаблон.
+     * <p>
+     * Экранируются подставляемые значения, а не сам шаблон: разметку в шаблоне
+     * администратор пишет осознанно, а summary или текст комментария могут
+     * содержать символы, ломающие разметку канала.
+     *
+     * @param template шаблон с плейсхолдерами вида {@code {issueKey}}
+     * @param values   значения плейсхолдеров (без фигурных скобок)
+     * @param channel  канал — определяет правила экранирования
+     * @return готовый текст; неизвестные плейсхолдеры остаются в тексте как есть
+     */
+    public static String render(String template, Map<String, String> values, NotificationChannel channel) {
+        String result = template;
+        for (Map.Entry<String, String> e : values.entrySet()) {
+            result = result.replace("{" + e.getKey() + "}", escape(e.getValue(), channel));
+        }
+        return result;
+    }
+
+    /**
+     * Проверяет шаблон на плейсхолдеры, которых нет у действия — иначе опечатка
+     * вроде {@code {issuekey}} молча уедет в сообщение в сыром виде.
+     *
+     * @return список неизвестных плейсхолдеров без скобок; пустой — шаблон корректен
+     */
+    public static List<String> unknownPlaceholders(String template, NotificationAction action) {
+        List<String> unknown = new ArrayList<>();
+        Matcher matcher = PLACEHOLDER.matcher(template);
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (!action.placeholders().contains(name) && !unknown.contains(name)) {
+                unknown.add(name);
+            }
+        }
+        return unknown;
+    }
+
+    /**
+     * Telegram принимает HTML-разметку, поэтому спецсимволы в значениях экранируются.
+     * Для Mattermost экранирования нет: markdown-спецсимволы в свободном тексте
+     * безвредны, а обратные слэши были бы видны получателю.
+     */
+    private static String escape(String value, NotificationChannel channel) {
+        if (value == null) {
+            return "";
+        }
+        if (channel == NotificationChannel.TELEGRAM) {
+            return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        }
+        return value;
+    }
+}

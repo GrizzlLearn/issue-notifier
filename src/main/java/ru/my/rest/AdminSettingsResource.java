@@ -6,14 +6,19 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.ActionTemplates;
 import ru.my.impl.ChannelKeys;
+import ru.my.model.NotificationAction;
+import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,18 +37,40 @@ public class AdminSettingsResource {
      */
     static final String IS_SET_SUFFIX = ".isSet";
 
-    static final List<String> KNOWN_KEYS = List.of(
-            "email.enabled",
-            "mattermost.enabled",
-            ChannelKeys.MATTERMOST_DOMAIN,
-            ChannelKeys.MATTERMOST_BOT_ID,
-            ChannelKeys.MATTERMOST_TOKEN,
-            ChannelKeys.MATTERMOST_TOKEN + IS_SET_SUFFIX,
-            "telegram.enabled",
-            ChannelKeys.TELEGRAM_BOT_USERNAME,
-            ChannelKeys.TELEGRAM_BOT_TOKEN,
-            ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX
-    );
+    /** Ключи SD-проектов, к которым применяется спец-логика портала: CSV из project key. */
+    static final String SD_PROJECTS = "sd.projects";
+
+    /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
+    private static final List<NotificationChannel> ACTION_CHANNELS =
+            List.of(NotificationChannel.MATTERMOST, NotificationChannel.TELEGRAM);
+
+    static final List<String> KNOWN_KEYS = buildKnownKeys();
+
+    /**
+     * Постоянные ключи плюс ключи каталога действий — они генерируются из
+     * {@link NotificationAction}, чтобы новое действие не требовало правок здесь.
+     */
+    private static List<String> buildKnownKeys() {
+        List<String> keys = new ArrayList<>(List.of(
+                "email.enabled",
+                "mattermost.enabled",
+                ChannelKeys.MATTERMOST_DOMAIN,
+                ChannelKeys.MATTERMOST_BOT_ID,
+                ChannelKeys.MATTERMOST_TOKEN,
+                ChannelKeys.MATTERMOST_TOKEN + IS_SET_SUFFIX,
+                "telegram.enabled",
+                ChannelKeys.TELEGRAM_BOT_USERNAME,
+                ChannelKeys.TELEGRAM_BOT_TOKEN,
+                ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
+                SD_PROJECTS));
+        for (NotificationAction action : NotificationAction.values()) {
+            keys.add(ActionTemplates.enabledKey(action));
+            for (NotificationChannel channel : ACTION_CHANNELS) {
+                keys.add(ActionTemplates.templateKey(action, channel));
+            }
+        }
+        return List.copyOf(keys);
+    }
 
     // секретные ключи — write-only: GET возвращает "", PUT сохраняет только непустое значение
     static final Set<String> SECRETS = Set.of(
@@ -52,9 +79,16 @@ public class AdminSettingsResource {
     );
 
     // ключи с булевой семантикой — принимают только "true" или "false"
-    static final Set<String> BOOLEAN_KEYS = Set.of(
-            "email.enabled", "mattermost.enabled", "telegram.enabled"
-    );
+    static final Set<String> BOOLEAN_KEYS = buildBooleanKeys();
+
+    private static Set<String> buildBooleanKeys() {
+        Set<String> keys = new LinkedHashSet<>(Set.of(
+                "email.enabled", "mattermost.enabled", "telegram.enabled"));
+        for (NotificationAction action : NotificationAction.values()) {
+            keys.add(ActionTemplates.enabledKey(action));
+        }
+        return Set.copyOf(keys);
+    }
 
     private final JiraAuthenticationContext authContext;
     private final GlobalPermissionManager globalPermissionManager;
@@ -117,6 +151,10 @@ public class AdminSettingsResource {
                 return UserSettingsResource.badRequest(
                         "Недопустимое значение для '" + e.getKey() + "': ожидается 'true' или 'false'");
             }
+            Response invalidTemplate = validateTemplate(e.getKey(), e.getValue());
+            if (invalidTemplate != null) {
+                return invalidTemplate;
+            }
         }
 
         body.entrySet().stream()
@@ -126,6 +164,26 @@ public class AdminSettingsResource {
                 .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
 
         return Response.noContent().build();
+    }
+
+    /**
+     * Проверяет шаблон действия на неизвестные плейсхолдеры: опечатка вроде
+     * {@code {issuekey}} иначе молча уйдёт получателю в сыром виде.
+     *
+     * @return ответ 400 при ошибке или {@code null}, если проверять нечего
+     */
+    private static Response validateTemplate(String key, String value) {
+        NotificationAction action = ActionTemplates.actionOfTemplateKey(key);
+        if (action == null || value == null || value.isBlank()) {
+            return null;
+        }
+        List<String> unknown = ActionTemplates.unknownPlaceholders(value, action);
+        if (unknown.isEmpty()) {
+            return null;
+        }
+        return UserSettingsResource.badRequest(
+                "Неизвестные плейсхолдеры в шаблоне '" + key + "': " + String.join(", ", unknown)
+                        + ". Допустимые: " + String.join(", ", action.placeholders()));
     }
 
     private static boolean isIsSetKey(String key) {

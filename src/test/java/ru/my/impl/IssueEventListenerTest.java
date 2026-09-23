@@ -3,7 +3,12 @@ package ru.my.impl;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.comments.Comment;
+import com.atlassian.jira.issue.status.Status;
+import com.atlassian.jira.issue.status.category.StatusCategory;
 import com.atlassian.jira.user.ApplicationUser;
+import com.atlassian.jira.user.util.UserManager;
+import com.atlassian.sal.api.ApplicationProperties;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -12,12 +17,16 @@ import org.mockito.junit.MockitoJUnitRunner;
 import org.ofbiz.core.entity.GenericValue;
 import ru.my.api.NotificationService;
 import ru.my.model.DiffResult;
+import ru.my.model.NotificationAction;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -33,6 +42,8 @@ public class IssueEventListenerTest {
 
     @Mock private ExecutorService executor;
     @Mock private NotificationService notificationService;
+    @Mock private UserManager userManager;
+    @Mock private ApplicationProperties applicationProperties;
 
     private IssueEventListener listener;
 
@@ -44,7 +55,7 @@ public class IssueEventListenerTest {
             return null;
         }).when(executor).submit(any(Runnable.class));
 
-        listener = new IssueEventListener(executor, notificationService);
+        listener = new IssueEventListener(executor, notificationService, userManager, applicationProperties);
     }
 
     @Test
@@ -129,6 +140,54 @@ public class IssueEventListenerTest {
         verify(notificationService, never()).processEvent(any(), any(), any());
     }
 
+    @Test
+    public void commentWithMentionNotifiesMentionedUser() {
+        ApplicationUser mentioned = mock(ApplicationUser.class);
+        org.mockito.Mockito.when(userManager.getUserByName("ipetrov")).thenReturn(mentioned);
+
+        listener.onIssueEvent(commentEvent("[~ipetrov] посмотри пожалуйста"));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap());
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), any(), anyMap());
+    }
+
+    @Test
+    public void commentWithoutMentionNotifiesWatchers() {
+        listener.onIssueEvent(commentEvent("обычный комментарий"));
+
+        // пустой список получателей — сервис рассылает наблюдателям задачи
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap());
+    }
+
+    @Test
+    public void unknownMentionFallsBackToCommentAction() {
+        org.mockito.Mockito.when(userManager.getUserByName("nobody")).thenReturn(null);
+
+        listener.onIssueEvent(commentEvent("[~nobody] ау"));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap());
+    }
+
+    @Test
+    public void statusChangeToDoneCategoryTriggersClosedAction() {
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatusCategory("done")));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
+    }
+
+    @Test
+    public void statusChangeToInProgressCategoryDoesNotTriggerClosedAction() {
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatusCategory("indeterminate")));
+
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
+    }
+
     // ---- вспомогательные методы ----------------------------------------
 
     /** Событие без changelog — для проверки фильтрации по типу или пустого diff. */
@@ -136,8 +195,34 @@ public class IssueEventListenerTest {
         return new IssueEvent(mock(Issue.class), Collections.emptyMap(), null, typeId);
     }
 
+    /** Событие с комментарием — changelog пустой, как у реального ISSUE_COMMENTED. */
+    private IssueEvent commentEvent(String body) {
+        Comment comment = mock(Comment.class);
+        org.mockito.Mockito.when(comment.getBody()).thenReturn(body);
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+
+        return new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
+    }
+
+    /** Задача, статус которой относится к указанной категории. */
+    private Issue issueWithStatusCategory(String categoryKey) {
+        StatusCategory category = mock(StatusCategory.class);
+        org.mockito.Mockito.when(category.getKey()).thenReturn(categoryKey);
+        Status status = mock(Status.class);
+        org.mockito.Mockito.when(status.getStatusCategory()).thenReturn(category);
+        Issue issue = mock(Issue.class);
+        org.mockito.Mockito.when(issue.getStatus()).thenReturn(status);
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+        return issue;
+    }
+
     /** Событие с одним изменённым полем — DiffFormatter вернёт непустой DiffResult. */
     private IssueEvent eventWithChanges(Long typeId) {
+        return eventWithChanges(typeId, mock(Issue.class));
+    }
+
+    private IssueEvent eventWithChanges(Long typeId, Issue issue) {
         GenericValue item = mock(GenericValue.class);
         org.mockito.Mockito.when(item.getString("field")).thenReturn("Status");
         org.mockito.Mockito.when(item.getString("oldstring")).thenReturn("Open");
@@ -150,7 +235,7 @@ public class IssueEventListenerTest {
             throw new RuntimeException(e);
         }
 
-        return new IssueEvent(mock(Issue.class), null, null, null, changeLog,
+        return new IssueEvent(issue, null, null, null, changeLog,
                 Collections.emptyMap(), typeId);
     }
 }

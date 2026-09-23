@@ -10,7 +10,10 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.ActionTemplates;
 import ru.my.impl.ChannelKeys;
+import ru.my.model.NotificationAction;
+import ru.my.model.NotificationChannel;
 
 import javax.ws.rs.core.Response;
 import java.util.Map;
@@ -241,5 +244,29 @@ public class AdminSettingsResourceTest {
         resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, ""));
 
         verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "");
+    }
+
+    // --- шаблоны действий ---
+
+    @Test
+    public void rejectsTemplateWithUnknownPlaceholder() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        String key = ActionTemplates.templateKey(NotificationAction.MENTION, NotificationChannel.TELEGRAM);
+
+        Response response = resource.set(Map.of(key, "{issuekey} в {summary}"));
+
+        assertEquals(400, response.getStatus());
+        verify(adminSettingsService, never()).set(anyString(), anyString());
+    }
+
+    @Test
+    public void acceptsTemplateWithKnownPlaceholders() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        String key = ActionTemplates.templateKey(NotificationAction.MENTION, NotificationChannel.TELEGRAM);
+
+        Response response = resource.set(Map.of(key, "{issueKey} — {summary}"));
+
+        assertEquals(204, response.getStatus());
+        verify(adminSettingsService).set(key, "{issueKey} — {summary}");
     }
 }
