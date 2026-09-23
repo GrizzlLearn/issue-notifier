@@ -23,6 +23,8 @@ public class UserSettingsDto {
     private String telegramChatId;
     @JsonProperty
     private String telegramBotUsername; // read-only: из AdminSettings, не сохраняется
+    @JsonProperty
+    private List<String> enabledChannels; // read-only: каналы, включённые в админке
 
     public UserSettingsDto() {}
 
@@ -35,13 +37,15 @@ public class UserSettingsDto {
         this.telegramBotUsername = telegramBotUsername;
     }
 
-    public static UserSettingsDto from(UserSettings settings, String telegramBotUsername) {
-        return new UserSettingsDto(
+    public static UserSettingsDto from(UserSettings settings, String telegramBotUsername, List<String> enabledChannels) {
+        UserSettingsDto dto = new UserSettingsDto(
                 settings.isEnabled(),
                 settings.getProjects(),
                 settings.getChannels().stream().map(NotificationChannel::name).collect(Collectors.toList()),
                 settings.getTelegramChatId(),
                 telegramBotUsername);
+        dto.enabledChannels = enabledChannels;
+        return dto;
     }
 
     public UserSettings toModel() {
@@ -78,4 +82,7 @@ public class UserSettingsDto {
 
     public String getTelegramBotUsername() { return telegramBotUsername; }
     public void setTelegramBotUsername(String telegramBotUsername) { this.telegramBotUsername = telegramBotUsername; }
+
+    public List<String> getEnabledChannels() { return enabledChannels; }
+    public void setEnabledChannels(List<String> enabledChannels) { this.enabledChannels = enabledChannels; }
 }

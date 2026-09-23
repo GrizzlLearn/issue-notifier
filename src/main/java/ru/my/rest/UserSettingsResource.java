@@ -6,13 +6,17 @@ import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
 import ru.my.impl.ChannelKeys;
+import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Named
 @Path("/user/settings")
@@ -39,7 +43,11 @@ public class UserSettingsResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return unauthorized();
         String botUsername = adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_USERNAME, "");
-        return Response.ok(UserSettingsDto.from(userSettingsService.getSettings(user), botUsername)).build();
+        List<String> enabledChannels = Arrays.stream(NotificationChannel.values())
+                .filter(adminSettingsService::isChannelEnabled)
+                .map(NotificationChannel::name)
+                .collect(Collectors.toList());
+        return Response.ok(UserSettingsDto.from(userSettingsService.getSettings(user), botUsername, enabledChannels)).build();
     }
 
     @PUT

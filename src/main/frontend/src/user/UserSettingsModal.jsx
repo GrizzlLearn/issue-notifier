@@ -60,6 +60,10 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems }) 
   const projects = settings.projects ?? ['*'];
   const channels = settings.channels ?? [];
   const allProjects = projects.length === 1 && projects[0] === '*';
+  // Каналы, выключенные администратором, не показываем — выбрать их всё равно нельзя,
+  // уведомления по ним не уйдут (см. AdminSettingsService.isChannelEnabled)
+  const enabledChannels = settings.enabledChannels ?? CHANNELS.map(ch => ch.id);
+  const visibleChannels = CHANNELS.filter(ch => enabledChannels.includes(ch.id));
 
   // Конкретный список проектов храним отдельно от settings.projects — пока включено
   // "Все проекты", settings.projects равен ['*'], и при выключении чекбокса без этого
@@ -118,7 +122,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems }) 
 
       <div className="field-group">
         <label className="label">Каналы доставки</label>
-        {CHANNELS.map(ch => (
+        {visibleChannels.map(ch => (
           <label key={ch.id} style={{ display: 'block', marginBottom: 4 }}>
             <input
               type="checkbox"
