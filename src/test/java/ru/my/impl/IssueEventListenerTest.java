@@ -68,7 +68,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(event);
 
         verify(executor, never()).submit(any(Runnable.class));
-        verify(notificationService, never()).processEvent(any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any());
     }
 
     @Test
@@ -78,7 +78,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(event);
 
         verify(executor, never()).submit(any(Runnable.class));
-        verify(notificationService, never()).processEvent(any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any());
     }
 
     @Test
@@ -97,7 +97,7 @@ public class IssueEventListenerTest {
 
         listener.onIssueEvent(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class));
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
     }
 
     @Test
@@ -106,7 +106,7 @@ public class IssueEventListenerTest {
 
         listener.onIssueEvent(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class));
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
     }
 
     @Test
@@ -115,19 +115,19 @@ public class IssueEventListenerTest {
 
         listener.onIssueEvent(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class));
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
     }
 
     @Test
     public void continuesAfterNotificationServiceThrows() {
         IssueEvent event = eventWithChanges(EventType.ISSUE_UPDATED_ID);
         org.mockito.Mockito.doThrow(new RuntimeException("ошибка"))
-                .when(notificationService).processEvent(any(), any(), any());
+                .when(notificationService).processEvent(any(), any(), any(), any());
 
         listener.onIssueEvent(event);
 
         // сервис был вызван (исключение внутри — не повод не попробовать)
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class));
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
     }
 
     @Test
@@ -140,7 +140,7 @@ public class IssueEventListenerTest {
 
         listener.onIssueEvent(event);
 
-        verify(notificationService, never()).processEvent(any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any());
     }
 
     @Test
@@ -228,6 +228,22 @@ public class IssueEventListenerTest {
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
+    }
+
+    /** Назначенный получает одно сообщение: про назначение, а не ещё и про изменение полей. */
+    @Test
+    public void assigneeIsExcludedFromFieldChangeMail() {
+        ApplicationUser assignee = mock(ApplicationUser.class);
+        Issue issue = issueWithStatus("10001", "PROJ");
+        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+        org.mockito.Mockito.when(notificationService.processAction(
+                        any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
+                .thenReturn(List.of(assignee));
+
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+
+        verify(notificationService).processEvent(
+                any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)));
     }
 
     @Test

@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -342,6 +344,17 @@ public class NotificationServiceTest {
         verify(adminSettingsService, times(1)).isChannelEnabled(NotificationChannel.MATTERMOST);
     }
 
+    /** Получателю уведомления о действии второе сообщение об изменении полей не уходит. */
+    @Test
+    public void excludedRecipientGetsNoFieldChangeMail() {
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF, List.of(watcher));
+
+        verify(sender, never()).send(any(), any());
+    }
+
     // ---- уведомления о действиях ----------------------------------------
 
     @Test
@@ -380,6 +393,25 @@ public class NotificationServiceTest {
                 Map.of("issueKey", "PROJ-1"));
 
         verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /** Список получателей нужен слушателю, чтобы не слать им второе уведомление. */
+    @Test
+    public void actionReturnsRecipientsItReached() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        assertEquals(List.of(watcher), service.processAction(issue, null,
+                NotificationAction.COMMENT_ADDED, List.of(), Map.of()));
+    }
+
+    /** Без шаблона сообщение не ушло — значит получателя в результате нет. */
+    @Test
+    public void actionWithoutTemplateReturnsNobody() {
+        enableAction(NotificationAction.CLOSED, "");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        assertTrue(service.processAction(issue, null, NotificationAction.CLOSED, List.of(), Map.of()).isEmpty());
     }
 
     @Test

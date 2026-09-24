@@ -5,6 +5,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
@@ -25,7 +26,18 @@ public interface NotificationService {
      * @param author пользователь, инициировавший изменение; может быть null
      * @param diff   распарсенный набор изменений
      */
-    void processEvent(Issue issue, ApplicationUser author, DiffResult diff);
+    default void processEvent(Issue issue, ApplicationUser author, DiffResult diff) {
+        processEvent(issue, author, diff, List.of());
+    }
+
+    /**
+     * То же, но без тех, кому по этому же событию уже ушло уведомление
+     * о действии: одно изменение задачи — одно сообщение получателю.
+     *
+     * @param exclude получатели, которых нужно пропустить
+     */
+    void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
+                      Collection<ApplicationUser> exclude);
 
     /**
      * Рассылает уведомление о действии в задаче по шаблону из настроек плагина.
@@ -41,7 +53,9 @@ public interface NotificationService {
      * @param recipients   явные получатели (например, упомянутые пользователи);
      *                     пустой список или null — рассылка наблюдателям задачи
      * @param placeholders значения плейсхолдеров шаблона без фигурных скобок
+     * @return те, кому сообщение действительно ушло — пустой список, если действие
+     *         выключено, вне области, без шаблонов или без подходящих получателей
      */
-    void processAction(Issue issue, ApplicationUser author, NotificationAction action,
-                       List<ApplicationUser> recipients, Map<String, String> placeholders);
+    List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                                        List<ApplicationUser> recipients, Map<String, String> placeholders);
 }

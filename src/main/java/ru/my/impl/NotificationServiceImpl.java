@@ -22,6 +22,7 @@ import ru.my.model.UserSettings;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -30,6 +31,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Оркестратор уведомлений.
@@ -131,7 +134,8 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
-    public void processEvent(Issue issue, ApplicationUser author, DiffResult diff) {
+    public void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
+                             Collection<ApplicationUser> exclude) {
         if (diff.isEmpty()) {
             return;
         }
@@ -146,19 +150,26 @@ public class NotificationServiceImpl implements NotificationService {
         // admin-флаги читаются один раз на всё событие, а не на каждого получателя
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
+        Set<String> excludedKeys = exclude.stream().map(ApplicationUser::getKey).collect(Collectors.toSet());
+
         for (Recipient r : collectRecipients(issue, author, watchers, true)) {
+            // тому, кому по этому событию уже ушло уведомление о действии,
+            // второе сообщение об изменении полей не отправляем
+            if (excludedKeys.contains(r.user().getKey())) {
+                continue;
+            }
             sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
         }
     }
 
     @Override
-    public void processAction(Issue issue, ApplicationUser author, NotificationAction action,
-                              List<ApplicationUser> recipients, Map<String, String> placeholders) {
+    public List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                                               List<ApplicationUser> recipients, Map<String, String> placeholders) {
         if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.enabledKey(action), "false"))) {
-            return;
+            return List.of();
         }
         if (!isInScope(action, issue)) {
-            return;
+            return List.of();
         }
 
         // явный список получателей (например, упомянутые в комментарии) имеет
@@ -171,16 +182,23 @@ public class NotificationServiceImpl implements NotificationService {
 
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
+        List<ApplicationUser> notified = new ArrayList<>();
+
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
         for (Recipient r : collectRecipients(issue, author, base, false)) {
+            boolean sent = false;
             // Set защищает от двойной отправки при дублях в List<NotificationChannel>
             for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
                 if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                    sendAction(action, channel, r.user(), placeholders);
+                    sent |= sendAction(action, channel, r.user(), placeholders);
                 }
             }
+            if (sent) {
+                notified.add(r.user());
+            }
         }
+        return List.copyOf(notified);
     }
 
     /**
@@ -205,23 +223,26 @@ public class NotificationServiceImpl implements NotificationService {
                 category != null ? category.getId() : null);
     }
 
-    private void sendAction(NotificationAction action, NotificationChannel channel,
-                            ApplicationUser recipient, Map<String, String> placeholders) {
+    /** @return {@code true} — сообщение ушло; иначе шаблон пуст, канала нет или отправка упала. */
+    private boolean sendAction(NotificationAction action, NotificationChannel channel,
+                               ApplicationUser recipient, Map<String, String> placeholders) {
         String template = adminSettingsService.get(ActionTemplates.templateKey(action, channel), "");
         if (template.isBlank()) {
             // шаблон не задан администратором — по этому каналу не шлём
-            return;
+            return false;
         }
         NotificationSender sender = senders.get(channel);
         if (sender == null) {
             log.debug("Отправщик не найден для канала {}, действие {} пропущено", channel, action);
-            return;
+            return false;
         }
         try {
             sender.send(recipient, ActionTemplates.render(template, placeholders, channel));
+            return true;
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
                     action, channel, recipient.getDisplayName(), e.getMessage());
+            return false;
         }
     }
 

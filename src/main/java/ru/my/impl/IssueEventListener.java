@@ -131,22 +131,21 @@ public class IssueEventListener {
         if (diff.isEmpty()) {
             return;
         }
-        if (hasChange(diff, "assignee")) {
-            // исполнителя резолвим в рабочем потоке — в потоке Jira-события
-            // обращений к БД быть не должно
-            submit(typeId, () -> notifyAssigned(issue, author));
-        }
-        if (hasChange(diff, "status")) {
-            // настройка закрывающих статусов читается в рабочем потоке — в потоке
-            // Jira-события обращений к БД быть не должно
-            submit(typeId, () -> {
-                if (isClosingTransition(issue)) {
-                    notificationService.processAction(issue, author, NotificationAction.CLOSED,
-                            List.of(), placeholders(issue, author, "status", statusName(issue)));
-                }
-            });
-        }
-        submit(typeId, () -> notificationService.processEvent(issue, author, diff));
+        // одна задача на событие: сначала уведомления о действиях, затем рассылка
+        // об изменении полей — без тех, кому уже ушло. Настройки и исполнитель
+        // читаются здесь же, в рабочем потоке: в потоке Jira-события обращений
+        // к БД быть не должно.
+        submit(typeId, () -> {
+            List<ApplicationUser> notified = new ArrayList<>();
+            if (hasChange(diff, "assignee")) {
+                notified.addAll(notifyAssigned(issue, author));
+            }
+            if (hasChange(diff, "status") && isClosingTransition(issue)) {
+                notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
+                        List.of(), placeholders(issue, author, "status", statusName(issue))));
+            }
+            notificationService.processEvent(issue, author, diff, notified);
+        });
     }
 
     /**
@@ -186,13 +185,15 @@ public class IssueEventListener {
      * Назначение исполнителем: уведомление уходит тому, кого назначили.
      * Снятие исполнителя получателя не даёт, а назначивший себя сам отсеивается
      * дальше по конвейеру как автор события.
+     *
+     * @return кому сообщение реально ушло — им не нужна вторая рассылка об изменении полей
      */
-    private void notifyAssigned(Issue issue, ApplicationUser author) {
+    private List<ApplicationUser> notifyAssigned(Issue issue, ApplicationUser author) {
         ApplicationUser assignee = issue.getAssignee();
         if (assignee == null) {
-            return;
+            return List.of();
         }
-        notificationService.processAction(issue, author, NotificationAction.ASSIGNED,
+        return notificationService.processAction(issue, author, NotificationAction.ASSIGNED,
                 List.of(assignee), placeholders(issue, author, "assignee", assignee.getDisplayName()));
     }
 
