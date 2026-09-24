@@ -157,15 +157,35 @@
     margin-top: 2px;
 }
 
-/* Вкладки — кнопки, а не ссылки на "#": не дёргают hash и доступны с клавиатуры */
-.in-tab-button {
+/* Вкладки — кнопки, а не ссылки на "#": не дёргают hash и доступны с клавиатуры.
+   Раскладку задаём сами: стили AUI написаны под .menu-item > a */
+.in-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid #dfe1e6;
+    margin-bottom: 20px;
+}
+
+.in-tab {
     background: none;
     border: 0;
-    padding: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 8px 12px;
     font: inherit;
-    color: inherit;
+    font-weight: 500;
+    color: #5e6c84;
     cursor: pointer;
 }
+
+.in-tab:hover { color: #172b4d; }
+
+.in-tab.in-active {
+    color: #0052cc;
+    border-bottom-color: #0052cc;
+}
+
+.in-tab-panel { padding-top: 4px; }
 
 /* Крестик чипа проекта */
 .in-chip-remove {

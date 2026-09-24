@@ -802,25 +802,26 @@ export default function AdminApp() {
     <div className="in-admin-wrap">
       <h2>Настройки Issue Notifier</h2>
 
-      <div className="aui-tabs horizontal-tabs">
-        <ul className="tabs-menu" role="tablist">
+      {/* своя раскладка вкладок: AUI стилизует .menu-item a, а ссылка на "#"
+          дёргала hash страницы и не давала доступной кнопки */}
+      <div>
+        <div className="in-tabs" role="tablist">
           {tabs.map(([id, label]) => (
-            <li key={id} className={'menu-item' + (tab === id ? ' active-tab' : '')}>
-              <button
-                type="button"
-                role="tab"
-                id={`in-admin-tab-${id}`}
-                aria-selected={tab === id}
-                aria-controls={`in-admin-panel-${id}`}
-                className="in-tab-button"
-                onClick={() => setTab(id)}
-              >{label}</button>
-            </li>
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`in-admin-tab-${id}`}
+              aria-selected={tab === id}
+              aria-controls={`in-admin-panel-${id}`}
+              className={'in-tab' + (tab === id ? ' in-active' : '')}
+              onClick={() => setTab(id)}
+            >{label}</button>
           ))}
-        </ul>
+        </div>
 
         <div
-          className="tabs-pane active-pane"
+          className="in-tab-panel"
           role="tabpanel"
           id={`in-admin-panel-${tab}`}
           aria-labelledby={`in-admin-tab-${tab}`}
