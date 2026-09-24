@@ -104,6 +104,9 @@ const PROJECTS_KEY = 'sd.projects';
 const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
+
+// Ключ флага канала — как в AdminSettingsServiceImpl: имя канала в нижнем регистре + ".enabled".
+const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enabled'] === 'true';
 const hintStyle = { fontSize: 11, color: '#707070' };
 
 const parseKeys = raw => (raw || '').split(',').filter(Boolean);
@@ -382,7 +385,8 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
     <>
       {actions.map(action => {
         const enabled = values[action.enabledKey] === 'true';
-        const noTemplates = action.channels.every(ch => !(values[ch.templateKey] || '').trim());
+        const liveChannels = action.channels.filter(ch => isChannelOn(values, ch.channel));
+        const noTemplates = liveChannels.every(ch => !(values[ch.templateKey] || '').trim());
         const scope = action.scopeFixed ? action.defaultScope : (values[action.scopeKey] || action.defaultScope);
         const noProjects = !action.scopeFixed && scope === 'selected' && selected.length === 0;
 
@@ -425,7 +429,9 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
 
             {enabled && noTemplates && (
               <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
-                Шаблоны не заданы — уведомления по этому действию отправляться не будут.
+                {liveChannels.length === 0
+                  ? 'Все каналы отключены на вкладке «Каналы» — уведомления по этому действию отправляться не будут.'
+                  : 'Шаблоны не заданы — уведомления по этому действию отправляться не будут.'}
               </div>
             )}
 
@@ -445,19 +451,27 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
               />
             )}
 
-            {action.channels.map(ch => (
-              <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
-                <label className="label" htmlFor={ch.templateKey}>{CHANNEL_TITLES[ch.channel] || ch.channel}</label>
-                <textarea
-                  id={ch.templateKey}
-                  className="textarea"
-                  rows={3}
-                  value={values[ch.templateKey] || ''}
-                  onChange={e => setValue(ch.templateKey, e.target.value)}
-                  style={{ width: '100%' }}
-                />
-              </div>
-            ))}
+            {action.channels.map(ch => {
+              const channelOff = !isChannelOn(values, ch.channel);
+
+              return (
+                <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
+                  <label className="label" htmlFor={ch.templateKey}>
+                    {CHANNEL_TITLES[ch.channel] || ch.channel}
+                    {channelOff && <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal' }}>канал отключён</span>}
+                  </label>
+                  <textarea
+                    id={ch.templateKey}
+                    className="textarea"
+                    rows={3}
+                    value={values[ch.templateKey] || ''}
+                    readOnly={channelOff}
+                    onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
+                    style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                  />
+                </div>
+              );
+            })}
 
             <div style={hintStyle}>
               Доступные плейсхолдеры: {action.placeholders.map(p => '{' + p + '}').join(', ')}
