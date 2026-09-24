@@ -32,7 +32,7 @@ public enum NotificationAction {
 
     COMMENT_ADDED("commentAdded", "Новый комментарий",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
-            ActionScope.SELECTED, false, false);
+            ActionScope.SELECTED, false, true);
 
     private final String key;
     private final String title;
@@ -83,6 +83,14 @@ public enum NotificationAction {
      */
     public boolean isRecipientsConfigurable() {
         return recipientsConfigurable;
+    }
+
+    /**
+     * {@code true} — в шаблоне действия есть текст комментария, поэтому у него
+     * два шаблона на канал: обычный и на случай, когда текст отправлять нельзя.
+     */
+    public boolean carriesCommentText() {
+        return placeholders.contains("comment");
     }
 
     /** Плейсхолдеры, допустимые в шаблоне этого действия (без фигурных скобок). */

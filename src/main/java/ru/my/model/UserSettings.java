@@ -12,12 +12,14 @@ public class UserSettings {
     private final List<String> projects;
     private final List<NotificationChannel> channels;
     private final String telegramChatId;
+    private final boolean commentTextHidden;
 
     private UserSettings(Builder builder) {
         this.enabled = builder.enabled;
         this.projects = List.copyOf(builder.projects);
         this.channels = List.copyOf(builder.channels);
         this.telegramChatId = builder.telegramChatId;
+        this.commentTextHidden = builder.commentTextHidden;
     }
 
     /**
@@ -63,6 +65,15 @@ public class UserSettings {
         return telegramChatId;
     }
 
+    /**
+     * {@code true} — пользователь не хочет видеть текст комментария в уведомлении.
+     * Флаг инвертирован: у существующих записей в БД значения нет, а текст
+     * до появления настройки отправлялся.
+     */
+    public boolean isCommentTextHidden() {
+        return commentTextHidden;
+    }
+
     /** Билдер {@link UserSettings}. */
     public static class Builder {
 
@@ -70,6 +81,7 @@ public class UserSettings {
         private List<String> projects = List.of("*");
         private List<NotificationChannel> channels = List.of();
         private String telegramChatId;
+        private boolean commentTextHidden;
 
         /** @see UserSettings#isEnabled() */
         public Builder enabled(boolean enabled) {
@@ -92,6 +104,12 @@ public class UserSettings {
         /** @see UserSettings#getTelegramChatId() */
         public Builder telegramChatId(String telegramChatId) {
             this.telegramChatId = telegramChatId;
+            return this;
+        }
+
+        /** @see UserSettings#isCommentTextHidden() */
+        public Builder commentTextHidden(boolean commentTextHidden) {
+            this.commentTextHidden = commentTextHidden;
             return this;
         }
 

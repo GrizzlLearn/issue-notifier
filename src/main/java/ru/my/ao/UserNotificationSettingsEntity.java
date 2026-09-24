@@ -45,4 +45,14 @@ public interface UserNotificationSettingsEntity extends Entity {
      */
     String getTelegramChatId();
     void setTelegramChatId(String telegramChatId);
+
+    /**
+     * {@code true} — не показывать текст комментария в уведомлениях.
+     * <p>
+     * Флаг инвертирован намеренно: Active Objects добавляет новую колонку
+     * со значением {@code false}, поэтому у всех существующих пользователей
+     * текст продолжит отправляться, как и до появления настройки.
+     */
+    boolean isCommentTextHidden();
+    void setCommentTextHidden(boolean commentTextHidden);
 }

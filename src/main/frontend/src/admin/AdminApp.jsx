@@ -102,6 +102,7 @@ function SecretField({ field, values, setValue }) {
 
 const PROJECTS_KEY = 'sd.projects';
 const CATEGORIES_KEY = 'sd.categories';
+const HIDE_COMMENT_TEXT_KEY = 'comment.hideText';
 const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
@@ -546,7 +547,11 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
                   Работает в проектах, для которых ниже выбраны закрывающие статусы.
                 </div>
               )}
-              {!action.scopeFixed && [['all', 'Во всех проектах'], ['selected', 'Только в проектах со вкладки «Проекты»']].map(([value, label]) => (
+              {!action.scopeFixed && [
+                ['all', 'Во всех проектах'],
+                ['selected', 'Только в проектах со вкладки «Проекты»'],
+                ['service_desk', 'Только в Service Desk-проектах'],
+              ].map(([value, label]) => (
                 <label key={value} style={{ marginRight: 16 }}>
                   <input
                     type="radio"
@@ -616,6 +621,28 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
                     onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
                     style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
                   />
+
+                  {ch.templateKeyNoText && (
+                    <>
+                      <label className="label" htmlFor={ch.templateKeyNoText} style={{ marginTop: 8 }}>
+                        {(CHANNEL_TITLES[ch.channel] || ch.channel) + ' — без текста комментария'}
+                      </label>
+                      <textarea
+                        id={ch.templateKeyNoText}
+                        className="textarea"
+                        rows={2}
+                        value={values[ch.templateKeyNoText] || ''}
+                        readOnly={channelOff}
+                        onChange={channelOff ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
+                        style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                      />
+                      <div style={hintStyle}>
+                        Уходит, когда текст отправлять нельзя: запрет в настройках ниже,
+                        личная настройка получателя или комментарий с ограничением по группе или роли.
+                        Плейсхолдер {'{comment}'} в нём остаётся пустым.
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -648,14 +675,33 @@ function ProjectsTab({ values, setValue }) {
 // Вкладка «Действия»: что отправляем, где это работает и каким текстом.
 function ActionsTab({ values, setValue }) {
   return (
-    <ActionsPanel
-      actions={PAGE_DATA.actions}
-      labels={PROJECT_LABELS}
-      selected={scopedProjects(values)}
-      statuses={PAGE_DATA.statuses}
-      values={values}
-      setValue={setValue}
-    />
+    <>
+      <fieldset className="in-section">
+        <legend>Комментарии</legend>
+        <label>
+          <input
+            type="checkbox"
+            checked={values[HIDE_COMMENT_TEXT_KEY] !== 'true'}
+            onChange={e => setValue(HIDE_COMMENT_TEXT_KEY, e.target.checked ? 'false' : 'true')}
+            style={{ marginRight: 6 }}
+          />
+          Отправлять текст комментария в уведомлениях
+        </label>
+        <div style={hintStyle}>
+          Запрет действует на все действия с текстом комментария. Каждый пользователь
+          может дополнительно отключить текст у себя; включить вопреки этой настройке — нет.
+        </div>
+      </fieldset>
+
+      <ActionsPanel
+        actions={PAGE_DATA.actions}
+        labels={PROJECT_LABELS}
+        selected={scopedProjects(values)}
+        statuses={PAGE_DATA.statuses}
+        values={values}
+        setValue={setValue}
+      />
+    </>
   );
 }
 

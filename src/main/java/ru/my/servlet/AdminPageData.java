@@ -85,6 +85,9 @@ public final class AdminPageData {
                 channels.add("{"
                         + "\"channel\":" + JsonUtil.jsonString(channel.name())
                         + ",\"templateKey\":" + JsonUtil.jsonString(ActionTemplates.templateKey(action, channel))
+                        + ",\"templateKeyNoText\":" + (action.carriesCommentText()
+                                ? JsonUtil.jsonString(ActionTemplates.templateKeyNoText(action, channel))
+                                : "null")
                         + "}");
             }
 

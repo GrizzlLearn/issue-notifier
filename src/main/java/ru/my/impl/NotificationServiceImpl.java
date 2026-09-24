@@ -62,6 +62,9 @@ public class NotificationServiceImpl implements NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
+    /** Ключ типа проектов, которые создаёт Jira Service Desk. */
+    private static final String SERVICE_DESK = "service_desk";
+
     private final WatcherManager watcherManager;
     private final CustomFieldManager customFieldManager;
     private final UserSettingsService userSettingsService;
@@ -164,7 +167,8 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     public List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
-                                               List<ApplicationUser> recipients, Map<String, String> placeholders) {
+                                               List<ApplicationUser> recipients, Map<String, String> placeholders,
+                                               Collection<ApplicationUser> exclude) {
         if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.enabledKey(action), "false"))) {
             return List.of();
         }
@@ -183,15 +187,27 @@ public class NotificationServiceImpl implements NotificationService {
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();
 
         List<ApplicationUser> notified = new ArrayList<>();
+        Set<String> excludedKeys = exclude.stream().map(ApplicationUser::getKey).collect(Collectors.toSet());
+
+        // текст комментария запрещён администратором — или его нет в значениях,
+        // например у комментария с ограничением по группе или роли
+        boolean textAllowed = placeholders.containsKey("comment")
+                && !Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
 
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
         for (Recipient r : collectRecipients(issue, author, base, false)) {
+            if (excludedKeys.contains(r.user().getKey())) {
+                continue;
+            }
+            boolean withText = textAllowed && !r.settings().isCommentTextHidden();
+            Map<String, String> values = withText ? placeholders : withoutCommentText(placeholders);
+
             boolean sent = false;
             // Set защищает от двойной отправки при дублях в List<NotificationChannel>
             for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
                 if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                    sent |= sendAction(action, channel, r.user(), placeholders);
+                    sent |= sendAction(action, channel, r.user(), values, withText);
                 }
             }
             if (sent) {
@@ -211,10 +227,14 @@ public class NotificationServiceImpl implements NotificationService {
                 ? action.defaultScope()
                 : ActionScope.byKey(adminSettingsService.get(
                         ActionTemplates.scopeKey(action), action.defaultScope().key()));
+        var project = issue.getProjectObject();
+        if (ActionScope.SERVICE_DESK == scope) {
+            return project != null && project.getProjectTypeKey() != null
+                    && SERVICE_DESK.equals(project.getProjectTypeKey().getKey());
+        }
         if (ActionScope.SELECTED != scope) {
             return true;
         }
-        var project = issue.getProjectObject();
         var category = project != null ? project.getProjectCategoryObject() : null;
         return PortalProjects.contains(
                 adminSettingsService.get(PortalProjects.KEY, ""),
@@ -223,10 +243,27 @@ public class NotificationServiceImpl implements NotificationService {
                 category != null ? category.getId() : null);
     }
 
+    /**
+     * Текст комментария не должен уехать через шаблон «без текста», даже если
+     * администратор по ошибке оставил там {@code {comment}}.
+     */
+    private static Map<String, String> withoutCommentText(Map<String, String> placeholders) {
+        if (!placeholders.containsKey("comment")) {
+            return placeholders;
+        }
+        Map<String, String> copy = new LinkedHashMap<>(placeholders);
+        copy.put("comment", "");
+        return copy;
+    }
+
     /** @return {@code true} — сообщение ушло; иначе шаблон пуст, канала нет или отправка упала. */
     private boolean sendAction(NotificationAction action, NotificationChannel channel,
-                               ApplicationUser recipient, Map<String, String> placeholders) {
-        String template = adminSettingsService.get(ActionTemplates.templateKey(action, channel), "");
+                               ApplicationUser recipient, Map<String, String> placeholders,
+                               boolean withText) {
+        String templateKey = action.carriesCommentText() && !withText
+                ? ActionTemplates.templateKeyNoText(action, channel)
+                : ActionTemplates.templateKey(action, channel);
+        String template = adminSettingsService.get(templateKey, "");
         if (template.isBlank()) {
             // шаблон не задан администратором — по этому каналу не шлём
             return false;

@@ -1,5 +1,7 @@
 package ru.my.impl;
 
+import com.atlassian.jira.entity.property.EntityProperty;
+import com.atlassian.jira.entity.property.JsonEntityPropertyManager;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
@@ -12,6 +14,7 @@ import com.atlassian.sal.api.ApplicationProperties;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.ofbiz.core.entity.GenericValue;
@@ -25,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
+import static org.junit.Assert.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
@@ -46,6 +50,7 @@ public class IssueEventListenerTest {
     @Mock private UserManager userManager;
     @Mock private AdminSettingsService adminSettingsService;
     @Mock private ApplicationProperties applicationProperties;
+    @Mock private JsonEntityPropertyManager entityProperties;
 
     private IssueEventListener listener;
 
@@ -58,7 +63,7 @@ public class IssueEventListenerTest {
         }).when(executor).submit(any(Runnable.class));
 
         listener = new IssueEventListener(executor, notificationService, userManager,
-                applicationProperties, adminSettingsService);
+                applicationProperties, adminSettingsService, entityProperties);
     }
 
     @Test
@@ -148,21 +153,27 @@ public class IssueEventListenerTest {
         ApplicationUser mentioned = mock(ApplicationUser.class);
         org.mockito.Mockito.when(userManager.getUserByName("ipetrov")).thenReturn(mentioned);
 
+        org.mockito.Mockito.when(notificationService.processAction(
+                        any(), any(), eq(NotificationAction.MENTION), any(), anyMap()))
+                .thenReturn(List.of(mentioned));
+
         listener.onIssueEvent(commentEvent("[~ipetrov] посмотри пожалуйста"));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap());
-        verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), any(), anyMap());
+        // упомянутый уже уведомлён — в рассылке о комментарии он исключён
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(),
+                eq(List.of(mentioned)));
     }
 
     @Test
     public void commentWithoutMentionNotifiesWatchers() {
         listener.onIssueEvent(commentEvent("обычный комментарий"));
 
-        // пустой список получателей — сервис рассылает наблюдателям задачи
+        // пустой список получателей — сервис берёт их из настройки действия
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()));
     }
 
     @Test
@@ -172,7 +183,53 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(commentEvent("[~nobody] ау"));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()));
+    }
+
+    /** Внутренний комментарий Service Desk виден только команде — уведомляем исполнителя. */
+    @Test
+    public void serviceDeskInternalCommentNotifiesAssigneeOnly() {
+        ApplicationUser assignee = mock(ApplicationUser.class);
+        EntityProperty property = mock(EntityProperty.class);
+        org.mockito.Mockito.when(property.getValue()).thenReturn("{\"internal\": true}");
+        org.mockito.Mockito.when(entityProperties.get("CommentProperty", 42L, "sd.public.comment"))
+                .thenReturn(property);
+
+        listener.onIssueEvent(commentEvent("внутренняя заметка", 42L, assignee));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)), anyMap());
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), any());
+    }
+
+    /** Комментарий с ограничением по группе уходит всем, но без текста. */
+    @Test
+    public void commentRestrictedByGroupGoesWithoutText() {
+        Comment comment = mock(Comment.class);
+        org.mockito.Mockito.when(comment.getBody()).thenReturn("секрет");
+        org.mockito.Mockito.when(comment.getGroupLevel()).thenReturn("jira-developers");
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+
+        listener.onIssueEvent(new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID));
+
+        ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any());
+        assertFalse(values.getValue().containsKey("comment"));
+    }
+
+    /** Исправленная опечатка не должна уходить как новый комментарий. */
+    @Test
+    public void editedCommentIsIgnored() {
+        Comment comment = mock(Comment.class);
+
+        listener.onIssueEvent(new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENT_EDITED_ID));
+
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap());
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any());
     }
 
     /** Закрывающим считается только статус, выбранный для этого проекта. */
@@ -263,11 +320,22 @@ public class IssueEventListenerTest {
 
     /** Событие с комментарием — changelog пустой, как у реального ISSUE_COMMENTED. */
     private IssueEvent commentEvent(String body) {
+        return commentEvent(body, null, null);
+    }
+
+    private IssueEvent commentEvent(String body, Long commentId, ApplicationUser assignee) {
         Comment comment = mock(Comment.class);
         org.mockito.Mockito.when(comment.getBody()).thenReturn(body);
+        if (commentId != null) {
+            org.mockito.Mockito.when(comment.getId()).thenReturn(commentId);
+        }
+        Issue issue = mock(Issue.class);
+        if (assignee != null) {
+            org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+        }
         org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
 
-        return new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
+        return new IssueEvent(issue, mock(ApplicationUser.class), comment, null, null,
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
     }
 

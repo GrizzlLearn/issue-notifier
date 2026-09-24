@@ -79,6 +79,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                     .map(NotificationChannel::name)
                     .collect(Collectors.joining(",")));
             entity.setTelegramChatId(settings.getTelegramChatId());
+            entity.setCommentTextHidden(settings.isCommentTextHidden());
             entity.save();
             return null;
         });
@@ -99,6 +100,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                 .projects(parseList(entity.getProjectsRaw()))
                 .channels(parseChannels(entity.getChannelsRaw()))
                 .telegramChatId(entity.getTelegramChatId())
+                .commentTextHidden(entity.isCommentTextHidden())
                 .build();
     }
 

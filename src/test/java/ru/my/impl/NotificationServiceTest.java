@@ -31,6 +31,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -395,6 +396,58 @@ public class NotificationServiceTest {
         verify(sender).send(watcher, "Комментарий в PROJ-1");
     }
 
+    /** Запрет администратора переключает сообщение на шаблон без текста комментария. */
+    @Test
+    public void adminBanOnCommentTextSwitchesTemplate() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий: {comment}");
+        when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(NotificationAction.COMMENT_ADDED, NotificationChannel.MATTERMOST), ""))
+                .thenReturn("Новый комментарий в {issueKey}");
+        when(adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).thenReturn("true");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1", "comment", "секрет"));
+
+        verify(sender).send(watcher, "Новый комментарий в PROJ-1");
+    }
+
+    /** Личная настройка получателя действует, даже если администратор текст разрешил. */
+    @Test
+    public void userCanHideCommentTextForThemselves() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий: {comment}");
+        when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(NotificationAction.COMMENT_ADDED, NotificationChannel.MATTERMOST), ""))
+                .thenReturn("Комментарий в {issueKey}");
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST))
+                        .commentTextHidden(true).build());
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1", "comment", "секрет"));
+
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /** Текст не должен уехать через шаблон «без текста», даже если в нём оставили {comment}. */
+    @Test
+    public void noTextTemplateNeverCarriesCommentBody() {
+        enableAction(NotificationAction.COMMENT_ADDED, "неважно");
+        when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(NotificationAction.COMMENT_ADDED, NotificationChannel.MATTERMOST), ""))
+                .thenReturn("Комментарий: {comment}");
+        when(adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).thenReturn("true");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("comment", "секрет"));
+
+        verify(sender).send(watcher, "Комментарий: ");
+    }
+
     /** Список получателей нужен слушателю, чтобы не слать им второе уведомление. */
     @Test
     public void actionReturnsRecipientsItReached() {
@@ -468,11 +521,16 @@ public class NotificationServiceTest {
 
     // ---- вспомогательные методы ----------------------------------------
 
-    /** Включает действие и задаёт ему шаблон для Mattermost — единственного канала в тестах. */
+    /**
+     * Включает действие и задаёт оба шаблона Mattermost — единственного канала в тестах:
+     * обычный и на случай, когда текст комментария отправлять нельзя.
+     */
     private void enableAction(NotificationAction action, String template) {
         when(adminSettingsService.get(ActionTemplates.enabledKey(action), "false")).thenReturn("true");
-        when(adminSettingsService.get(
+        lenient().when(adminSettingsService.get(
                 ActionTemplates.templateKey(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
+        lenient().when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
     }
 

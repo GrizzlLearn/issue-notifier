@@ -25,6 +25,10 @@ public class UserSettingsDto {
     private String telegramBotUsername; // read-only: из AdminSettings, не сохраняется
     @JsonProperty
     private List<String> enabledChannels; // read-only: каналы, включённые в админке
+    @JsonProperty
+    private boolean commentTextHidden;
+    @JsonProperty
+    private boolean commentTextAllowed; // read-only: разрешён ли текст комментария в админке
 
     public UserSettingsDto() {}
 
@@ -37,7 +41,8 @@ public class UserSettingsDto {
         this.telegramBotUsername = telegramBotUsername;
     }
 
-    public static UserSettingsDto from(UserSettings settings, String telegramBotUsername, List<String> enabledChannels) {
+    public static UserSettingsDto from(UserSettings settings, String telegramBotUsername,
+                                       List<String> enabledChannels, boolean commentTextAllowed) {
         UserSettingsDto dto = new UserSettingsDto(
                 settings.isEnabled(),
                 settings.getProjects(),
@@ -45,6 +50,8 @@ public class UserSettingsDto {
                 settings.getTelegramChatId(),
                 telegramBotUsername);
         dto.enabledChannels = enabledChannels;
+        dto.commentTextHidden = settings.isCommentTextHidden();
+        dto.commentTextAllowed = commentTextAllowed;
         return dto;
     }
 
@@ -65,6 +72,7 @@ public class UserSettingsDto {
                 .projects(projects != null ? projects : List.of("*"))
                 .channels(parsedChannels)
                 .telegramChatId(telegramChatId)
+                .commentTextHidden(commentTextHidden)
                 .build();
     }
 
@@ -85,4 +93,10 @@ public class UserSettingsDto {
 
     public List<String> getEnabledChannels() { return enabledChannels; }
     public void setEnabledChannels(List<String> enabledChannels) { this.enabledChannels = enabledChannels; }
+
+    public boolean isCommentTextHidden() { return commentTextHidden; }
+    public void setCommentTextHidden(boolean commentTextHidden) { this.commentTextHidden = commentTextHidden; }
+
+    public boolean isCommentTextAllowed() { return commentTextAllowed; }
+    public void setCommentTextAllowed(boolean commentTextAllowed) { this.commentTextAllowed = commentTextAllowed; }
 }

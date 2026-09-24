@@ -2,6 +2,7 @@ package ru.my.impl;
 
 import com.atlassian.event.api.EventListener;
 import com.atlassian.event.api.EventPublisher;
+import com.atlassian.jira.entity.property.JsonEntityPropertyManager;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
@@ -61,6 +62,7 @@ public class IssueEventListener {
     private final UserManager userManager;
     private final ApplicationProperties applicationProperties;
     private final AdminSettingsService adminSettingsService;
+    private final JsonEntityPropertyManager entityProperties;
 
     @Inject
     public IssueEventListener(
@@ -68,9 +70,11 @@ public class IssueEventListener {
             @ComponentImport ThreadLocalDelegateExecutorFactory delegateExecutorFactory,
             @ComponentImport UserManager userManager,
             @ComponentImport ApplicationProperties applicationProperties,
+            @ComponentImport JsonEntityPropertyManager entityProperties,
             NotificationService notificationService,
             AdminSettingsService adminSettingsService) {
         this.eventPublisher = eventPublisher;
+        this.entityProperties = entityProperties;
         this.notificationService = notificationService;
         this.userManager = userManager;
         this.applicationProperties = applicationProperties;
@@ -92,8 +96,10 @@ public class IssueEventListener {
     /** Конструктор для unit-тестов — не регистрируется в eventPublisher. */
     public IssueEventListener(ExecutorService executor, NotificationService notificationService,
                               UserManager userManager, ApplicationProperties applicationProperties,
-                              AdminSettingsService adminSettingsService) {
+                              AdminSettingsService adminSettingsService,
+                              JsonEntityPropertyManager entityProperties) {
         this.eventPublisher = null;
+        this.entityProperties = entityProperties;
         this.executor = executor;
         this.notificationService = notificationService;
         this.userManager = userManager;
@@ -116,10 +122,14 @@ public class IssueEventListener {
         Long typeId = event.getEventTypeId();
 
         Comment comment = event.getComment();
-        if (comment != null) {
-            // тело комментария читается здесь же, в потоке события
+        if (comment != null && EventType.ISSUE_COMMENTED_ID.equals(typeId)) {
+            // тело комментария и его ограничения читаются здесь же, в потоке события;
+            // правка комментария уведомлений не порождает — иначе исправленная
+            // опечатка уходила бы как новый комментарий
             String body = comment.getBody();
-            submit(typeId, () -> processComment(issue, author, body));
+            Long commentId = comment.getId();
+            boolean restrictedByLevel = CommentVisibility.isRestrictedByLevel(comment);
+            submit(typeId, () -> processComment(issue, author, body, commentId, restrictedByLevel));
         }
 
         if (isIgnoredEvent(event)) {
@@ -149,20 +159,44 @@ public class IssueEventListener {
     }
 
     /**
-     * Комментарий с упоминаниями уходит упомянутым как {@link NotificationAction#MENTION},
-     * без упоминаний — наблюдателям как {@link NotificationAction#COMMENT_ADDED}.
-     * Два уведомления об одном комментарии не отправляются.
+     * Упомянутые получают {@link NotificationAction#MENTION}, остальные —
+     * {@link NotificationAction#COMMENT_ADDED}. Упоминание приоритетнее: тому,
+     * кому уже ушло сообщение об упоминании, второе как исполнителю не отправляется.
+     * <p>
+     * Ограничения видимости: внутренний комментарий Service Desk уходит только
+     * исполнителю задачи, комментарий с ограничением по группе или роли —
+     * всем получателям, но без текста (для этого текст не попадает в значения
+     * плейсхолдеров, и сервис берёт шаблон «без текста комментария»).
      */
-    private void processComment(Issue issue, ApplicationUser author, String body) {
-        List<ApplicationUser> mentioned = resolveUsers(MentionParser.parse(body));
-        String text = truncate(body);
-        if (!mentioned.isEmpty()) {
-            notificationService.processAction(issue, author, NotificationAction.MENTION,
-                    mentioned, placeholders(issue, author, "comment", text));
-        } else {
-            notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
-                    List.of(), placeholders(issue, author, "comment", text));
+    private void processComment(Issue issue, ApplicationUser author, String body,
+                                Long commentId, boolean restrictedByLevel) {
+        // свойство комментария — запрос в БД, поэтому читается в рабочем потоке
+        if (CommentVisibility.isServiceDeskInternal(commentId, entityProperties)) {
+            notifyAssigneeOnly(issue, author, body);
+            return;
         }
+
+        Map<String, String> values = restrictedByLevel
+                ? placeholders(issue, author)
+                : placeholders(issue, author, "comment", truncate(body));
+
+        List<ApplicationUser> mentioned = resolveUsers(MentionParser.parse(body));
+        List<ApplicationUser> notified = mentioned.isEmpty()
+                ? List.of()
+                : notificationService.processAction(issue, author, NotificationAction.MENTION, mentioned, values);
+
+        notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
+                List.of(), values, notified);
+    }
+
+    /** Внутренний комментарий Service Desk виден только команде — уведомляем исполнителя. */
+    private void notifyAssigneeOnly(Issue issue, ApplicationUser author, String body) {
+        ApplicationUser assignee = issue.getAssignee();
+        if (assignee == null) {
+            return;
+        }
+        notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
+                List.of(assignee), placeholders(issue, author, "comment", truncate(body)));
     }
 
     /** Резолвит имена из упоминаний в пользователей; неизвестные имена отбрасываются. */
@@ -214,13 +248,18 @@ public class IssueEventListener {
 
     private Map<String, String> placeholders(Issue issue, ApplicationUser author,
                                              String extraKey, String extraValue) {
+        Map<String, String> values = placeholders(issue, author);
+        values.put(extraKey, extraValue);
+        return values;
+    }
+
+    private Map<String, String> placeholders(Issue issue, ApplicationUser author) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("issueKey", issue.getKey());
         values.put("issueUrl", applicationProperties.getBaseUrl() + "/browse/" + issue.getKey());
         values.put("summary", issue.getSummary());
         values.put("project", issue.getProjectObject() != null ? issue.getProjectObject().getName() : "");
         values.put("author", author != null ? author.getDisplayName() : "");
-        values.put(extraKey, extraValue);
         return values;
     }
 

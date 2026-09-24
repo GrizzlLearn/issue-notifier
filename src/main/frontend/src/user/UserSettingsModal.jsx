@@ -135,6 +135,20 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems }) 
         ))}
       </div>
 
+      {settings.commentTextAllowed !== false && (
+        <div className="field-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={!settings.commentTextHidden}
+              onChange={e => onChange({ ...settings, commentTextHidden: !e.target.checked })}
+              style={{ marginRight: 6 }}
+            />
+            Показывать текст комментария в уведомлениях
+          </label>
+        </div>
+      )}
+
       {channels.includes('TELEGRAM') && (
         <div className="field-group">
           <label className="label" htmlFor="in-telegram-chat-id">Telegram Chat ID</label>

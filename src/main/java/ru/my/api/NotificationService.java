@@ -56,6 +56,18 @@ public interface NotificationService {
      * @return те, кому сообщение действительно ушло — пустой список, если действие
      *         выключено, вне области, без шаблонов или без подходящих получателей
      */
+    default List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                                                List<ApplicationUser> recipients, Map<String, String> placeholders) {
+        return processAction(issue, author, action, recipients, placeholders, List.of());
+    }
+
+    /**
+     * То же, но без тех, кому по этому же событию уже ушло другое уведомление:
+     * упомянутый в комментарии не должен получить второе сообщение как исполнитель.
+     *
+     * @param exclude получатели, которых нужно пропустить
+     */
     List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
-                                        List<ApplicationUser> recipients, Map<String, String> placeholders);
+                                        List<ApplicationUser> recipients, Map<String, String> placeholders,
+                                        Collection<ApplicationUser> exclude);
 }

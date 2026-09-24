@@ -9,9 +9,12 @@ public enum ActionScope {
     ALL,
 
     /** Только в проектах, отмеченных администратором на вкладке «Проекты». */
-    SELECTED;
+    SELECTED,
 
-    /** Значение, в котором область хранится в настройках: {@code "all"} / {@code "selected"}. */
+    /** Только в проектах Service Desk — список вести не нужно, тип проекта известен Jira. */
+    SERVICE_DESK;
+
+    /** Значение, в котором область хранится в настройках: {@code "all"}, {@code "selected"}, {@code "service_desk"}. */
     public String key() {
         return name().toLowerCase(Locale.ROOT);
     }

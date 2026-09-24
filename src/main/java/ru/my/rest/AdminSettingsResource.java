@@ -67,7 +67,8 @@ public class AdminSettingsResource {
                 ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
                 SD_PROJECTS,
                 PortalProjects.CATEGORIES_KEY,
-                ClosingStatuses.KEY));
+                ClosingStatuses.KEY,
+                ActionTemplates.HIDE_COMMENT_TEXT_KEY));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
             if (!action.isScopeFixed()) {
@@ -78,6 +79,9 @@ public class AdminSettingsResource {
             }
             for (NotificationChannel channel : ACTION_CHANNELS) {
                 keys.add(ActionTemplates.templateKey(action, channel));
+                if (action.carriesCommentText()) {
+                    keys.add(ActionTemplates.templateKeyNoText(action, channel));
+                }
             }
         }
         return List.copyOf(keys);
@@ -94,7 +98,8 @@ public class AdminSettingsResource {
 
     private static Set<String> buildBooleanKeys() {
         Set<String> keys = new LinkedHashSet<>(Set.of(
-                "email.enabled", "mattermost.enabled", "telegram.enabled"));
+                "email.enabled", "mattermost.enabled", "telegram.enabled",
+                ActionTemplates.HIDE_COMMENT_TEXT_KEY));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
             if (!action.isScopeFixed()) {
@@ -229,7 +234,7 @@ public class AdminSettingsResource {
         return action != null ? action.defaultScope().key() : "";
     }
 
-    /** Область действия принимает только {@code "all"} или {@code "selected"}. */
+    /** Область действия принимает только значения {@link ActionScope}. */
     private static Response validateScope(String key, String value) {
         if (ActionTemplates.actionOfScopeKey(key) == null || value == null || value.isBlank()) {
             return null;
@@ -238,7 +243,7 @@ public class AdminSettingsResource {
             return null;
         }
         return UserSettingsResource.badRequest(
-                "Недопустимая область для '" + key + "': ожидается 'all' или 'selected'");
+                "Недопустимая область для '" + key + "': ожидается 'all', 'selected' или 'service_desk'");
     }
 
     private static boolean isBlankBoolean(String key, String value) {

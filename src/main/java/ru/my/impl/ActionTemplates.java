@@ -22,6 +22,15 @@ public final class ActionTemplates {
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z0-9_]+)}");
 
+    private static final String NO_TEXT_SUFFIX = ".notext";
+
+    /**
+     * Ключ настройки «не отправлять текст комментария» — общий для всех действий
+     * с плейсхолдером {@code {comment}}. Хранится инвертированным: отсутствие
+     * записи означает «текст отправляем», как плагин вёл себя раньше.
+     */
+    public static final String HIDE_COMMENT_TEXT_KEY = "comment.hideText";
+
     private ActionTemplates() {
     }
 
@@ -60,14 +69,29 @@ public final class ActionTemplates {
     }
 
     /**
-     * Возвращает действие, которому принадлежит ключ шаблона.
+     * Ключ шаблона для случая, когда текст комментария отправлять нельзя,
+     * например {@code "action.commentAdded.template.mattermost.notext"}.
+     * <p>
+     * Отдельный шаблон вместо заглушки вместо {@code {comment}}: текст «Комментарий:»
+     * перед пустым местом выглядит сбоем, а формулировка без текста обычно другая.
+     */
+    public static String templateKeyNoText(NotificationAction action, NotificationChannel channel) {
+        return templateKey(action, channel) + NO_TEXT_SUFFIX;
+    }
+
+    /**
+     * Возвращает действие, которому принадлежит ключ шаблона — обычного или
+     * без текста комментария.
      *
      * @return действие или {@code null}, если ключ не является ключом шаблона
      */
     public static NotificationAction actionOfTemplateKey(String key) {
+        String plain = key.endsWith(NO_TEXT_SUFFIX)
+                ? key.substring(0, key.length() - NO_TEXT_SUFFIX.length())
+                : key;
         for (NotificationAction action : NotificationAction.values()) {
             for (NotificationChannel channel : NotificationChannel.values()) {
-                if (templateKey(action, channel).equals(key)) {
+                if (templateKey(action, channel).equals(plain)) {
                     return action;
                 }
             }

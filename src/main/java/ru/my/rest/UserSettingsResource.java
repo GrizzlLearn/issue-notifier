@@ -5,6 +5,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
+import ru.my.impl.ActionTemplates;
 import ru.my.impl.ChannelKeys;
 import ru.my.model.NotificationChannel;
 
@@ -47,7 +48,10 @@ public class UserSettingsResource {
                 .filter(adminSettingsService::isChannelEnabled)
                 .map(NotificationChannel::name)
                 .collect(Collectors.toList());
-        return Response.ok(UserSettingsDto.from(userSettingsService.getSettings(user), botUsername, enabledChannels)).build();
+        boolean commentTextAllowed = !Boolean.parseBoolean(
+                adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
+        return Response.ok(UserSettingsDto.from(
+                userSettingsService.getSettings(user), botUsername, enabledChannels, commentTextAllowed)).build();
     }
 
     @PUT
