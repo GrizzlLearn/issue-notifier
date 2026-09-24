@@ -33,73 +33,6 @@ const SECTIONS = [
   },
 ];
 
-// Перед отправкой убираем read-only .isSet ключи и пустые секреты.
-function buildPayload(values) {
-  return Object.fromEntries(
-    Object.entries(values).filter(([key, val]) => {
-      if (key.endsWith('.isSet')) return false;
-      return !((key + '.isSet') in values && !val);
-
-    })
-  );
-}
-
-// Поле ввода секрета: если токен установлен — показывает ••••••••,
-// при фокусе очищается для ввода нового значения, Esc или уход без ввода — откат.
-function SecretField({ field, values, setValue }) {
-  const isSet = values[field.isSetKey] === 'true';
-  const [editing, setEditing] = useState(false);
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
-
-  function startEdit() {
-    setValue(field.key, '');
-    setEditing(true);
-  }
-
-  function cancelEdit() {
-    setValue(field.key, '');
-    setEditing(false);
-  }
-
-  const showPlaceholder = isSet && !editing;
-
-  return (
-    <>
-      <label className="label" htmlFor={field.key}>
-        {field.label}
-        {isSet && !editing && (
-          <span style={{ marginLeft: 8, fontSize: 11, color: '#14892c', fontWeight: 'normal' }}>● Установлен</span>
-        )}
-        {isSet && editing && (
-          <span style={{ marginLeft: 8, fontSize: 11, color: '#707070', fontWeight: 'normal' }}>Esc — отмена</span>
-        )}
-        {!isSet && (
-          <span style={{ marginLeft: 8, fontSize: 11, color: '#707070', fontWeight: 'normal' }}>○ Не задан</span>
-        )}
-      </label>
-      <input
-        ref={inputRef}
-        id={field.key}
-        className="text"
-        type="password"
-        value={showPlaceholder ? '••••••••' : (values[field.key] || '')}
-        readOnly={showPlaceholder}
-        placeholder={!isSet ? field.placeholder : ''}
-        onChange={showPlaceholder ? undefined : e => setValue(field.key, e.target.value)}
-        onFocus={showPlaceholder ? startEdit : undefined}
-        onKeyDown={editing ? e => { if (e.key === 'Escape') cancelEdit(); } : undefined}
-        onBlur={editing ? () => { if (!values[field.key]) cancelEdit(); } : undefined}
-        style={{ width: '100%', cursor: showPlaceholder ? 'pointer' : 'text' }}
-        autoComplete="new-password"
-      />
-    </>
-  );
-}
-
 const PROJECTS_KEY = 'sd.projects';
 const CATEGORIES_KEY = 'sd.categories';
 const HIDE_COMMENT_TEXT_KEY = 'comment.hideText';
@@ -110,6 +43,70 @@ const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
 // Ключ флага канала — как в AdminSettingsServiceImpl: имя канала в нижнем регистре + ".enabled".
 const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enabled'] === 'true';
 const hintStyle = { fontSize: 11, color: '#707070' };
+
+// Проверяем шаблоны до отправки: сервер отвечает 400 с именем ключа вроде
+// action.closed.template.mattermost, а поле при этом может быть на другой вкладке.
+function templateErrors(values) {
+  const errors = {};
+  (PAGE_DATA.actions || []).forEach(action => {
+    (action.channels || []).forEach(ch => {
+      [ch.templateKey, ch.templateKeyNoText].filter(Boolean).forEach(key => {
+        const unknown = [...new Set([...(values[key] || '').matchAll(/\{([a-zA-Z0-9_]+)}/g)].map(m => m[1]))]
+          .filter(name => !action.placeholders.includes(name));
+        if (unknown.length) {
+          errors[key] = 'Неизвестные плейсхолдеры: ' + unknown.map(n => '{' + n + '}').join(', ');
+        }
+      });
+    });
+  });
+  return errors;
+}
+
+// Перед отправкой убираем read-only .isSet ключи и пустые секреты
+// (пустое значение секрета означает «не менять», см. AdminSettingsResource).
+function buildPayload(values, saved) {
+  return Object.fromEntries(
+    Object.entries(values).filter(([key, val]) => {
+      if (key.endsWith('.isSet')) return false;
+      if ((key + '.isSet') in values && !val) return false;
+      // ключ, которого админ не касался, не отправляем: иначе параллельная
+      // правка другого администратора затиралась бы этим снимком
+      return saved[key] !== val;
+    })
+  );
+}
+
+// Поле секрета: значение с сервера не приходит, поэтому пустое поле означает
+// «оставить прежний токен». Отдельного режима редактирования нет — админ просто
+// вводит новое значение поверх пустого поля.
+function SecretField({ field, values, setValue }) {
+  const isSet = values[field.isSetKey] === 'true';
+  const typed = values[field.key] || '';
+
+  return (
+    <>
+      <label className="label" htmlFor={field.key}>
+        {field.label}
+        <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal', color: isSet ? '#14892c' : '#707070' }}>
+          {isSet ? '● Установлен' : '○ Не задан'}
+        </span>
+      </label>
+      <input
+        id={field.key}
+        className="text"
+        type="password"
+        value={typed}
+        placeholder={isSet ? 'Оставьте пустым, чтобы не менять' : field.placeholder}
+        onChange={e => setValue(field.key, e.target.value)}
+        style={{ width: '100%' }}
+        autoComplete="new-password"
+      />
+      {isSet && typed && (
+        <div style={hintStyle}>Новое значение заменит сохранённый токен после сохранения.</div>
+      )}
+    </>
+  );
+}
 
 const parseKeys = raw => (raw || '').split(',').filter(Boolean);
 
@@ -150,6 +147,13 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [closed, setClosed] = useState(false);
+  const listRef = useRef(null);
+
+  // активный пункт держим в зоне видимости только при переборе стрелками —
+  // в ref-колбэке это срабатывало на каждый рендер и дёргало список при вводе
+  useEffect(() => {
+    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
 
   const text = query.trim().toLowerCase();
   const suggestions = text && !closed
@@ -198,12 +202,12 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
           {selected.map(key => (
             <span key={key} className="aui-label" style={{ marginRight: 6, display: 'inline-block' }}>
               {labels[key] || key}
-              <a
-                href="#"
-                onClick={e => { e.preventDefault(); onRemove(key); }}
-                style={{ marginLeft: 6, textDecoration: 'none' }}
-                title="Убрать проект"
-              >×</a>
+              <button
+                type="button"
+                className="in-chip-remove"
+                onClick={() => onRemove(key)}
+                aria-label={'Убрать ' + (labels[key] || key)}
+              >×</button>
             </span>
           ))}
         </div>
@@ -225,28 +229,31 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
       />
 
       {suggestions.length > 0 && (
-        <ul className="in-suggestions" id="in-project-suggestions" role="listbox">
+        <ul className="in-suggestions" id="in-project-suggestions" role="listbox" ref={listRef}>
           {suggestions.map((item, index) => (
             <li
               key={item.value}
               id={`in-project-option-${index}`}
               role="option"
               aria-selected={index === active}
-              // активный пункт держим в зоне видимости при переборе стрелками
-              ref={el => { if (index === active && el) el.scrollIntoView({ block: 'nearest' }); }}
+              className={'in-suggestion' + (index === active ? ' is-active' : '')}
+              onMouseEnter={() => setActive(index)}
+              onClick={() => pick(item)}
             >
-              <a
-                href="#"
-                className={'in-suggestion' + (index === active ? ' is-active' : '')}
-                onMouseEnter={() => setActive(index)}
-                onClick={e => { e.preventDefault(); pick(item); }}
-              >
-                {item.label}
-                {item.serviceDesk && <span style={{ ...hintStyle, marginLeft: 6 }}>Service Desk</span>}
-              </a>
+              {item.label}
+              {item.serviceDesk && <span style={{ ...hintStyle, marginLeft: 6 }}>Service Desk</span>}
             </li>
           ))}
         </ul>
+      )}
+
+      {text && suggestions.length === 0 && !closed && (
+        <div style={{ ...hintStyle, marginTop: 4 }}>
+          {projects.some(p => selected.includes(p.value)
+            && (p.value.toLowerCase().includes(text) || p.label.toLowerCase().includes(text)))
+            ? 'Проект уже выбран.'
+            : 'Ничего не найдено.'}
+        </div>
       )}
     </div>
   );
@@ -400,7 +407,8 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                     style={{ marginBottom: 8, padding: 0 }}
                     onClick={() => setValue(CLOSING_KEY, formatClosing({
                       ...map,
-                      [key]: statuses.filter(st => st.done).map(st => st.value),
+                      // дополняем: статус, отмеченный вручную, терять нельзя
+                      [key]: [...new Set([...chosen, ...statuses.filter(st => st.done).map(st => st.value)])],
                     }))}
                   >
                     Отметить статусы категории «Готово»
@@ -512,7 +520,7 @@ function RecipientsField({ recipientsKey, values, setValue }) {
 // Действие: галка «уведомлять» и шаблон текста на каждый канал. Пустой шаблон —
 // по этому каналу ничего не уйдёт, поэтому включённое действие без шаблонов
 // показывает предупреждение.
-function ActionsPanel({ actions, labels, selected, statuses, values, setValue }) {
+function ActionsPanel({ actions, labels, selected, statuses, values, setValue, errors }) {
   return (
     <>
       {actions.map(action => {
@@ -619,8 +627,12 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
                     value={values[ch.templateKey] || ''}
                     readOnly={channelOff}
                     onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
+                    aria-invalid={Boolean(errors[ch.templateKey])}
                     style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
                   />
+                  {errors[ch.templateKey] && (
+                    <div className="in-field-error">{errors[ch.templateKey]}</div>
+                  )}
 
                   {ch.templateKeyNoText && (
                     <>
@@ -634,8 +646,12 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
                         value={values[ch.templateKeyNoText] || ''}
                         readOnly={channelOff}
                         onChange={channelOff ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
+                        aria-invalid={Boolean(errors[ch.templateKeyNoText])}
                         style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
                       />
+                      {errors[ch.templateKeyNoText] && (
+                        <div className="in-field-error">{errors[ch.templateKeyNoText]}</div>
+                      )}
                       <div style={hintStyle}>
                         Уходит, когда текст отправлять нельзя: запрет в настройках ниже,
                         личная настройка получателя или комментарий с ограничением по группе или роли.
@@ -673,7 +689,7 @@ function ProjectsTab({ values, setValue }) {
 }
 
 // Вкладка «Действия»: что отправляем, где это работает и каким текстом.
-function ActionsTab({ values, setValue }) {
+function ActionsTab({ values, setValue, errors }) {
   return (
     <>
       <fieldset className="in-section">
@@ -700,6 +716,7 @@ function ActionsTab({ values, setValue }) {
         statuses={PAGE_DATA.statuses}
         values={values}
         setValue={setValue}
+        errors={errors}
       />
     </>
   );
@@ -712,13 +729,15 @@ export default function AdminApp() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
-  const isSavingRef = useRef(false);
   const successTimerRef = useRef(null);
+  // снимок сохранённых значений: по нему считаем, что менять на сервере и
+  // предупреждать ли об уходе со страницы
+  const [saved, setSaved] = useState({});
 
   useEffect(() => {
     const controller = new AbortController();
     getAdminSettings(controller.signal)
-      .then(data => { setValues(data); setLoading(false); })
+      .then(data => { setValues(data); setSaved(data); setLoading(false); })
       .catch(e => {
         if (e.name !== 'AbortError') { setError(e.message); setLoading(false); }
       });
@@ -728,12 +747,36 @@ export default function AdminApp() {
     };
   }, []);
 
+  const payload = buildPayload(values, saved);
+  const dirty = Object.keys(payload).length > 0;
+  const errors = templateErrors(values);
+  const errorKeys = Object.keys(errors);
+
+  // Форма длинная, уход по F5 или меню Jira унёс бы её молча
+  useEffect(() => {
+    if (!dirty) return undefined;
+    function warn(e) { e.preventDefault(); e.returnValue = ''; }
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
   async function handleSave() {
-    if (isSavingRef.current) return;
-    isSavingRef.current = true;
+    if (errorKeys.length > 0) {
+      setError('Исправьте плейсхолдеры в шаблонах — они отмечены под полями.');
+      return;
+    }
     setSaving(true); setError(null); setSuccess(false);
     try {
-      await saveAdminSettings(buildPayload(values));
+      await saveAdminSettings(payload);
+      // секреты сервер обратно не отдаёт: помечаем их установленными и чистим поля,
+      // иначе введённый токен ушёл бы ещё раз при следующем сохранении
+      const next = { ...values };
+      Object.keys(values).filter(k => k.endsWith('.isSet')).forEach(isSetKey => {
+        const secretKey = isSetKey.slice(0, -'.isSet'.length);
+        if (values[secretKey]) { next[isSetKey] = 'true'; next[secretKey] = ''; }
+      });
+      setValues(next);
+      setSaved(next);
       setSuccess(true);
       clearTimeout(successTimerRef.current);
       successTimerRef.current = setTimeout(() => setSuccess(false), 2500);
@@ -741,7 +784,6 @@ export default function AdminApp() {
       setError(e.message);
     } finally {
       setSaving(false);
-      isSavingRef.current = false;
     }
   }
 
@@ -751,24 +793,36 @@ export default function AdminApp() {
 
   if (loading) return <div className="in-loading">Загрузка…</div>;
 
+  const tabs = [['channels', 'Каналы'], ['actions', 'Действия'], ['projects', 'Проекты']];
+
   return (
     <div className="in-admin-wrap">
       <h2>Настройки Issue Notifier</h2>
 
-      {error && <div className="aui-message aui-message-error" style={{ marginBottom: 16 }}>{error}</div>}
-      {success && <div className="aui-message aui-message-success" style={{ marginBottom: 16 }}>Сохранено</div>}
-
       <div className="aui-tabs horizontal-tabs">
-        <ul className="tabs-menu">
-          {[['channels', 'Каналы'], ['actions', 'Действия'], ['projects', 'Проекты']].map(([id, label]) => (
+        <ul className="tabs-menu" role="tablist">
+          {tabs.map(([id, label]) => (
             <li key={id} className={'menu-item' + (tab === id ? ' active-tab' : '')}>
-              <a href="#" onClick={e => { e.preventDefault(); setTab(id); }}>{label}</a>
+              <button
+                type="button"
+                role="tab"
+                id={`in-admin-tab-${id}`}
+                aria-selected={tab === id}
+                aria-controls={`in-admin-panel-${id}`}
+                className="in-tab-button"
+                onClick={() => setTab(id)}
+              >{label}</button>
             </li>
           ))}
         </ul>
 
-        <div className="tabs-pane active-pane">
-          {tab === 'actions' && <ActionsTab values={values} setValue={setValue} />}
+        <div
+          className="tabs-pane active-pane"
+          role="tabpanel"
+          id={`in-admin-panel-${tab}`}
+          aria-labelledby={`in-admin-tab-${tab}`}
+        >
+          {tab === 'actions' && <ActionsTab values={values} setValue={setValue} errors={errors} />}
           {tab === 'projects' && <ProjectsTab values={values} setValue={setValue} />}
           {tab === 'channels' && SECTIONS.map(section => (
             <fieldset key={section.title} className="in-section">
@@ -809,10 +863,19 @@ export default function AdminApp() {
         </div>
       </div>
 
-      <div style={{ marginTop: 8 }}>
-        <button type="button" className="aui-button aui-button-primary" onClick={handleSave} disabled={saving}>
+      {/* строка действий липнет к низу: страница длинная, иначе баннер и кнопка
+          оказываются в разных концах экрана */}
+      <div className="in-admin-actions">
+        <button type="button" className="aui-button aui-button-primary" onClick={handleSave}
+                disabled={saving || !dirty}>
           {saving ? 'Сохранение…' : 'Сохранить'}
         </button>
+        {error && <span className="in-admin-status is-error">{error}</span>}
+        {!error && success && <span className="in-admin-status is-success">Сохранено</span>}
+        {!error && !success && !dirty && <span className="in-admin-status">Изменений нет</span>}
+        {!error && !success && dirty && errorKeys.length > 0 && (
+          <span className="in-admin-status is-error">Шаблоны с ошибками: {errorKeys.length}</span>
+        )}
       </div>
     </div>
   );

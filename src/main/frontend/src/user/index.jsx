@@ -13,9 +13,12 @@ function patchNavLink() {
 }
 
 if (!patchNavLink()) {
-  // В Jira 9.x nav-бар рендерится React-ом асинхронно — ждём появления элемента
+  // В Jira 9.x nav-бар рендерится React-ом асинхронно — ждём появления элемента.
+  // Наблюдение за всем документом дорогое, а ссылки может не быть вовсе
+  // (нет прав, другая тема) — поэтому снимаем наблюдатель по таймауту.
   const obs = new MutationObserver(() => { if (patchNavLink()) obs.disconnect(); });
   obs.observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(() => obs.disconnect(), 15000);
 }
 
 function App() {

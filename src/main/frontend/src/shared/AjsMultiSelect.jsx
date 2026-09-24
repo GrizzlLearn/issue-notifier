@@ -6,7 +6,7 @@ import React, { useEffect, useRef } from 'react';
  * Собственного UI/CSS не пишем — виджет тянет свою разметку и стили, "<select>" остаётся
  * источником истины во время редактирования, мы только слушаем его native "change".
  */
-export default function AjsMultiSelect({ id, initialItems, url, onChange }) {
+export default function AjsMultiSelect({ id, initialItems, url, onChange, ariaLabel }) {
   const selectRef = useRef(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -28,8 +28,7 @@ export default function AjsMultiSelect({ id, initialItems, url, onChange }) {
 
         jQuery(selectRef.current).on('change', handleChange);
 
-        // eslint-disable-next-line no-new
-        new MultiSelect({
+        const widget = new MultiSelect({
           element: jQuery(selectRef.current),
           itemAttrDisplayed: 'label',
           showDropdownButton: false,
@@ -49,6 +48,14 @@ export default function AjsMultiSelect({ id, initialItems, url, onChange }) {
             },
           },
         });
+
+        // <select> скрыт, поэтому htmlFor лейбла не доходит до реального поля ввода:
+        // имя проставляем на input, который создал виджет
+        if (ariaLabel) {
+          const field = widget.$field
+            || jQuery(selectRef.current).closest('.jira-multi-select').find('input').first();
+          field?.attr?.('aria-label', ariaLabel);
+        }
       }
     );
 

@@ -114,6 +114,17 @@
 
 .in-actions-end { margin-left: auto; }
 
+/* Статус сохранения рядом с кнопкой — тело модалки скроллится, и баннер
+   наверху пользователь бы не увидел */
+.in-status-text {
+    font-size: 12px;
+    color: #5e6c84;
+    margin-right: 12px;
+}
+
+.in-status-text.is-error { color: #ae2a19; }
+.in-status-text.is-success { color: #216e4e; }
+
 /* Вспомогательный текст */
 .in-hint {
     color: #5e6c84;

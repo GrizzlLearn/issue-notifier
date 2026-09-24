@@ -128,3 +128,53 @@
 .in-status-empty {
     color: #a54800;
 }
+
+/* Строка сохранения — липкая: страница длинная, кнопка и статус должны быть
+   на виду, где бы админ ни находился */
+.in-admin-actions {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    margin-top: 8px;
+    background: #fff;
+    border-top: 1px solid #dfe1e6;
+}
+
+.in-admin-status {
+    font-size: 12px;
+    color: #6b778c;
+}
+
+.in-admin-status.is-error { color: #ae2a19; }
+.in-admin-status.is-success { color: #216e4e; }
+
+.in-field-error {
+    color: #ae2a19;
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+/* Вкладки — кнопки, а не ссылки на "#": не дёргают hash и доступны с клавиатуры */
+.in-tab-button {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+/* Крестик чипа проекта */
+.in-chip-remove {
+    background: none;
+    border: 0;
+    margin-left: 6px;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+}
