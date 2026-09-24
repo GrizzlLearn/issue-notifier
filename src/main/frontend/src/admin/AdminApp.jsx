@@ -294,17 +294,18 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории проектов</div>
         {categories.length === 0 && <div style={hintStyle}>Категорий проектов в инстансе нет.</div>}
-        {categories.map(c => (
-          <label key={c.value} style={{ marginRight: 16 }}>
-            <input
-              type="checkbox"
-              checked={chosenCategories.includes(c.value)}
-              onChange={e => toggleCategory(c.value, e.target.checked)}
-              style={{ marginRight: 6 }}
-            />
-            {c.label}
-          </label>
-        ))}
+        <div className="in-check-grid">
+          {categories.map(c => (
+            <label key={c.value} className="in-check">
+              <input
+                type="checkbox"
+                checked={chosenCategories.includes(c.value)}
+                onChange={e => toggleCategory(c.value, e.target.checked)}
+              />
+              <span>{c.label}</span>
+            </label>
+          ))}
+        </div>
         <div style={hintStyle}>
           Проект, добавленный в отмеченную категорию позже, попадёт в область сам —
           но закрывающие статусы для него всё равно нужно выбрать на вкладке «Действия».
@@ -314,9 +315,9 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Service Desk</div>
         {sdProjects.length === 0 && <div style={hintStyle}>Service Desk-проекты не найдены.</div>}
-        {sdProjects.map(p => (
-          <div key={p.value} style={{ marginBottom: 4 }}>
-            <label>
+        <div className="in-check-grid">
+          {sdProjects.map(p => (
+            <label key={p.value} className="in-check">
               <input
                 type="checkbox"
                 checked={selected.includes(p.value) || viaCategory.has(p.value)}
@@ -324,13 +325,14 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
                 onChange={e => setSelected(e.target.checked
                   ? [...selected, p.value]
                   : selected.filter(k => k !== p.value))}
-                style={{ marginRight: 6 }}
               />
-              {p.label}
-              {viaCategory.has(p.value) && <span style={{ ...hintStyle, marginLeft: 6 }}>через категорию</span>}
+              <span>
+                {p.label}
+                {viaCategory.has(p.value) && <span className="in-check-note"> через категорию</span>}
+              </span>
             </label>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       <div>
@@ -415,15 +417,16 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                   </button>
                   <div className="in-status-grid">
                     {statuses.map(s => (
-                      <label key={s.value}>
+                      <label key={s.value} className="in-check">
                         <input
                           type="checkbox"
                           checked={chosen.includes(s.value)}
                           onChange={e => toggleStatus(key, s.value, e.target.checked)}
-                          style={{ marginRight: 6 }}
                         />
-                        {s.label}
-                        {s.done && <span className="in-badge-done">категория «Готово»</span>}
+                        <span>
+                          {s.label}
+                          {s.done && <span className="in-badge-done">категория «Готово»</span>}
+                        </span>
                       </label>
                     ))}
                   </div>
@@ -478,35 +481,34 @@ function RecipientsField({ recipientsKey, values, setValue }) {
     <div className="field-group" style={{ marginBottom: 12 }}>
       <div className="label">Кому отправлять</div>
 
-      {BUILT_IN_RECIPIENTS.map(([value, label]) => (
-        <label key={value} style={{ marginRight: 16 }}>
-          <input
-            type="checkbox"
-            checked={selected.includes(value)}
-            onChange={e => toggle(value, e.target.checked)}
-            style={{ marginRight: 6 }}
-          />
-          {label}
-        </label>
-      ))}
+      <div className="in-check-grid">
+        {BUILT_IN_RECIPIENTS.map(([value, label]) => (
+          <label key={value} className="in-check">
+            <input
+              type="checkbox"
+              checked={selected.includes(value)}
+              onChange={e => toggle(value, e.target.checked)}
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
 
       <div style={{ marginTop: 8 }}>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Поля с пользователями</div>
         {userFields.length === 0 && <div style={hintStyle}>Полей типа «user picker» в инстансе нет.</div>}
-        {userFields.map(field => (
-          <div key={field.value}>
-            <label>
+        <div className="in-check-grid">
+          {userFields.map(field => (
+            <label key={field.value} className="in-check">
               <input
                 type="checkbox"
                 checked={selected.includes(field.value)}
                 onChange={e => toggle(field.value, e.target.checked)}
-                style={{ marginRight: 6 }}
               />
-              {field.label}
-              <span style={{ ...hintStyle, marginLeft: 6 }}>{field.scope}</span>
+              <span>{field.label} <span className="in-check-note">{field.scope}</span></span>
             </label>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       <div style={hintStyle}>
@@ -537,14 +539,13 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
             <legend>{action.title}</legend>
 
             <div className="field-group" style={{ marginBottom: 12 }}>
-              <label>
+              <label className="in-check">
                 <input
                   type="checkbox"
                   checked={enabled}
                   onChange={e => setValue(action.enabledKey, e.target.checked ? 'true' : 'false')}
-                  style={{ marginRight: 6 }}
                 />
-                Уведомлять
+                <span>Уведомлять</span>
               </label>
             </div>
 
@@ -555,22 +556,25 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                   Работает в проектах, для которых ниже выбраны закрывающие статусы.
                 </div>
               )}
-              {!action.scopeFixed && [
-                ['all', 'Во всех проектах'],
-                ['selected', 'Только в проектах со вкладки «Проекты»'],
-                ['service_desk', 'Только в Service Desk-проектах'],
-              ].map(([value, label]) => (
-                <label key={value} style={{ marginRight: 16 }}>
-                  <input
-                    type="radio"
-                    name={action.scopeKey}
-                    checked={scope === value}
-                    onChange={() => setValue(action.scopeKey, value)}
-                    style={{ marginRight: 6 }}
-                  />
-                  {label}
-                </label>
-              ))}
+              {!action.scopeFixed && (
+                <div className="in-radio-row">
+                  {[
+                    ['all', 'Во всех проектах'],
+                    ['selected', 'Только в проектах со вкладки «Проекты»'],
+                    ['service_desk', 'Только в Service Desk-проектах'],
+                  ].map(([value, label]) => (
+                    <label key={value} className="in-check">
+                      <input
+                        type="radio"
+                        name={action.scopeKey}
+                        checked={scope === value}
+                        onChange={() => setValue(action.scopeKey, value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
 
             {enabled && noTemplates && (
@@ -694,14 +698,13 @@ function ActionsTab({ values, setValue, errors }) {
     <>
       <fieldset className="in-section">
         <legend>Комментарии</legend>
-        <label>
+        <label className="in-check">
           <input
             type="checkbox"
             checked={values[HIDE_COMMENT_TEXT_KEY] !== 'true'}
             onChange={e => setValue(HIDE_COMMENT_TEXT_KEY, e.target.checked ? 'false' : 'true')}
-            style={{ marginRight: 6 }}
           />
-          Отправлять текст комментария в уведомлениях
+          <span>Отправлять текст комментария в уведомлениях</span>
         </label>
         <div style={hintStyle}>
           Запрет действует на все действия с текстом комментария. Каждый пользователь
@@ -831,14 +834,13 @@ export default function AdminApp() {
               {section.fields.map(field => (
                 <div key={field.key} className="field-group" style={{ marginBottom: 12 }}>
                   {field.type === 'checkbox' ? (
-                    <label>
+                    <label className="in-check">
                       <input
                         type="checkbox"
                         checked={values[field.key] === 'true'}
                         onChange={e => setValue(field.key, e.target.checked ? 'true' : 'false')}
-                        style={{ marginRight: 6 }}
                       />
-                      {field.label}
+                      <span>{field.label}</span>
                     </label>
                   ) : field.isSetKey ? (
                     <SecretField field={field} values={values} setValue={setValue} />

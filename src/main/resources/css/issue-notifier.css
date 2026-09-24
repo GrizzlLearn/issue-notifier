@@ -138,8 +138,9 @@
     color: #5e6c84;
 }
 
-/* Admin-страница */
-.in-admin-wrap { max-width: 600px; }
+/* Admin-страница: ширины хватает на два-три столбца чекбоксов —
+   в 600px группы получателей и проектов рвались на середине подписи */
+.in-admin-wrap { max-width: 960px; }
 
 .in-section {
     border: 1px solid #dfe1e6;
@@ -152,4 +153,40 @@
     font-weight: 600;
     padding: 0 8px;
     color: #172b4d;
+}
+
+/* Чекбокс с подписью: перенос идёт по тексту, а не под сам квадратик.
+   Используется и на админ-странице, и в модалке пользователя */
+.in-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    line-height: 1.4;
+    min-width: 0;
+}
+
+.in-check input {
+    flex: none;
+    margin: 3px 0 0;
+}
+
+.in-check-note {
+    color: #707070;
+    font-size: 11px;
+}
+
+/* Группы чекбоксов раскладываем в колонки: длинные названия проектов, полей
+   и категорий иначе рвутся посреди подписи */
+.in-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 4px 16px;
+    margin-bottom: 6px;
+}
+
+/* Переключатели области — в строку с переносом, без ручных отступов */
+.in-radio-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
 }

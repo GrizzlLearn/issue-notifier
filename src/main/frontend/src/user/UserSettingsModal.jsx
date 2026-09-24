@@ -121,14 +121,13 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
       )}
 
       <div className="field-group">
-        <label>
+        <label className="in-check">
           <input
             type="checkbox"
             checked={settings.enabled}
             onChange={e => onChange({ ...settings, enabled: e.target.checked })}
-            style={{ marginRight: 6 }}
           />
-          Получать уведомления
+          <span>Получать уведомления</span>
         </label>
       </div>
 
@@ -138,28 +137,26 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
           <div className="description">Все каналы отключены администратором.</div>
         )}
         {visibleChannels.map(ch => (
-          <label key={ch.id} style={{ display: 'block', marginBottom: 4 }}>
+          <label key={ch.id} className="in-check" style={{ marginBottom: 4 }}>
             <input
               type="checkbox"
               checked={channels.includes(ch.id)}
               onChange={() => toggleChannel(ch.id)}
-              style={{ marginRight: 6 }}
             />
-            {ch.label}
+            <span>{ch.label}</span>
           </label>
         ))}
       </div>
 
       {settings.commentTextAllowed !== false && (
         <div className="field-group">
-          <label>
+          <label className="in-check">
             <input
               type="checkbox"
               checked={!settings.commentTextHidden}
               onChange={e => onChange({ ...settings, commentTextHidden: !e.target.checked })}
-              style={{ marginRight: 6 }}
             />
-            Показывать текст комментария в уведомлениях
+            <span>Показывать текст комментария в уведомлениях</span>
           </label>
         </div>
       )}
@@ -198,14 +195,13 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
           Ограничивает только уведомления об изменениях в задачах, за которыми вы наблюдаете.
           Упоминания через @ и другие уведомления о действиях приходят независимо от этого списка.
         </div>
-        <label style={{ display: 'block', marginBottom: 6 }}>
+        <label className="in-check" style={{ marginBottom: 6 }}>
           <input
             type="checkbox"
             checked={allProjects}
             onChange={e => toggleAllProjects(e.target.checked)}
-            style={{ marginRight: 6 }}
           />
-          Все проекты
+          <span>Все проекты</span>
         </label>
         {/* смонтирован всегда (даже под "Все проекты" скрыт через CSS) — чтобы не терять
             уже введённый набор проектов при переключении чекбокса туда-обратно */}
