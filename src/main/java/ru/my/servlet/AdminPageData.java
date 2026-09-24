@@ -1,5 +1,6 @@
 package ru.my.servlet;
 
+import com.atlassian.jira.issue.fields.CustomField;
 import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.project.type.ProjectTypeKey;
@@ -27,6 +28,13 @@ public final class AdminPageData {
     /** Тип проекта, который создаёт плагин Jira Service Desk. */
     static final ProjectTypeKey SERVICE_DESK = new ProjectTypeKey("service_desk");
 
+    /**
+     * Тип кастомного поля с пользователем. Проверяем вхождение, а не полное совпадение:
+     * ключи вида {@code ...:userpicker}, {@code ...:multiuserpicker} и searcher-варианты
+     * все содержат эту подстроку, а перечислять их поимённо пришлось бы поддерживать.
+     */
+    static final String USER_PICKER_TYPE = "userpicker";
+
     /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
     private static final List<NotificationChannel> ACTION_CHANNELS =
             List.of(NotificationChannel.MATTERMOST, NotificationChannel.TELEGRAM);
@@ -41,7 +49,8 @@ public final class AdminPageData {
      * @param statuses статусы инстанса
      * @return строка JSON, пригодная для вставки в {@code <script>} — см. {@link #embed(String)}
      */
-    public static String toJson(Collection<Project> projects, Collection<Status> statuses) {
+    public static String toJson(Collection<Project> projects, Collection<Status> statuses,
+                                Collection<CustomField> customFields) {
         StringJoiner projectsJson = new StringJoiner(",", "[", "]");
         projects.stream()
                 .sorted(Comparator.comparing(Project::getName, String.CASE_INSENSITIVE_ORDER))
@@ -75,7 +84,9 @@ public final class AdminPageData {
             }
 
             actionsJson.add("{"
-                    + "\"key\":" + JsonUtil.jsonString(action.key())
+                    + "\"recipientsKey\":" + (action.isRecipientsConfigurable()
+                            ? JsonUtil.jsonString(ActionTemplates.recipientsKey(action)) : "null")
+                    + ",\"key\":" + JsonUtil.jsonString(action.key())
                     + ",\"title\":" + JsonUtil.jsonString(action.title())
                     + ",\"enabledKey\":" + JsonUtil.jsonString(ActionTemplates.enabledKey(action))
                     + ",\"scopeKey\":" + JsonUtil.jsonString(ActionTemplates.scopeKey(action))
@@ -86,9 +97,36 @@ public final class AdminPageData {
                     + "}");
         }
 
+        StringJoiner userFieldsJson = new StringJoiner(",", "[", "]");
+        customFields.stream()
+                .filter(cf -> cf.getCustomFieldType() != null
+                        && cf.getCustomFieldType().getKey().contains(USER_PICKER_TYPE))
+                .sorted(Comparator.comparing(CustomField::getName, String.CASE_INSENSITIVE_ORDER))
+                .forEach(cf -> userFieldsJson.add("{"
+                        + "\"value\":" + JsonUtil.jsonString(cf.getId())
+                        + ",\"label\":" + JsonUtil.jsonString(cf.getName())
+                        + ",\"scope\":" + JsonUtil.jsonString(fieldScope(cf))
+                        + "}"));
+
         return "{\"projects\":" + projectsJson
                 + ",\"statuses\":" + statusesJson
+                + ",\"userFields\":" + userFieldsJson
                 + ",\"actions\":" + actionsJson + "}";
+    }
+
+    /**
+     * Где поле доступно: одноимённые поля из разных схем — это разные id,
+     * поэтому без области их в списке не различить. Пустой список связанных
+     * проектов означает глобальный контекст.
+     */
+    private static String fieldScope(CustomField field) {
+        List<Project> associated = field.getAssociatedProjectObjects();
+        if (associated == null || associated.isEmpty()) {
+            return "все проекты";
+        }
+        StringJoiner keys = new StringJoiner(", ");
+        associated.forEach(p -> keys.add(p.getKey()));
+        return keys.toString();
     }
 
     /**

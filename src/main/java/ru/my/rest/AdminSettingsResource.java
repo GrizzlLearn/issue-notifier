@@ -72,6 +72,9 @@ public class AdminSettingsResource {
             if (!action.isScopeFixed()) {
                 keys.add(ActionTemplates.scopeKey(action));
             }
+            if (action.isRecipientsConfigurable()) {
+                keys.add(ActionTemplates.recipientsKey(action));
+            }
             for (NotificationChannel channel : ACTION_CHANNELS) {
                 keys.add(ActionTemplates.templateKey(action, channel));
             }

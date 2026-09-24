@@ -15,7 +15,7 @@ public enum NotificationAction {
 
     MENTION("mention", "Упоминание через @",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
-            ActionScope.ALL, false),
+            ActionScope.ALL, false, false),
 
     /**
      * Область не настраивается: закрывающие статусы задаются на каждый проект,
@@ -23,25 +23,28 @@ public enum NotificationAction {
      */
     CLOSED("closed", "Переход в закрывающий статус",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "status"),
-            ActionScope.SELECTED, true),
+            ActionScope.SELECTED, true, true),
 
     COMMENT_ADDED("commentAdded", "Новый комментарий",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
-            ActionScope.SELECTED, false);
+            ActionScope.SELECTED, false, false);
 
     private final String key;
     private final String title;
     private final List<String> placeholders;
     private final ActionScope defaultScope;
     private final boolean scopeFixed;
+    private final boolean recipientsConfigurable;
 
     NotificationAction(String key, String title, List<String> placeholders,
-                       ActionScope defaultScope, boolean scopeFixed) {
+                       ActionScope defaultScope, boolean scopeFixed,
+                       boolean recipientsConfigurable) {
         this.key = key;
         this.title = title;
         this.placeholders = List.copyOf(placeholders);
         this.defaultScope = defaultScope;
         this.scopeFixed = scopeFixed;
+        this.recipientsConfigurable = recipientsConfigurable;
     }
 
     /** Идентификатор действия в ключах настроек, например {@code "mention"}. */
@@ -66,6 +69,15 @@ public enum NotificationAction {
     /** {@code true} — область задана самим действием, администратор её не переключает. */
     public boolean isScopeFixed() {
         return scopeFixed;
+    }
+
+    /**
+     * {@code true} — администратор выбирает получателей полями задачи
+     * (см. {@link ru.my.impl.IssueRecipients}); {@code false} — уведомление
+     * уходит наблюдателям или явному списку от вызывающего кода.
+     */
+    public boolean isRecipientsConfigurable() {
+        return recipientsConfigurable;
     }
 
     /** Плейсхолдеры, допустимые в шаблоне этого действия (без фигурных скобок). */

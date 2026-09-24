@@ -1,5 +1,8 @@
 package ru.my.servlet;
 
+import com.atlassian.jira.action.issue.customfields.MockCustomFieldType;
+import com.atlassian.jira.issue.fields.CustomField;
+import com.atlassian.jira.issue.fields.MockCustomField;
 import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.issue.status.category.StatusCategory;
 import com.atlassian.jira.project.MockProject;
@@ -30,12 +33,18 @@ public class AdminPageDataTest {
         return status;
     }
 
+    private static CustomField customField(String id, String name, String typeKey, List<Project> projects) {
+        MockCustomFieldType type = new MockCustomFieldType();
+        type.setKey(typeKey);
+        return new MockCustomField(id, name, type).setAssociatedProjectObjects(projects);
+    }
+
     @Test
     public void jsonContainsProjectsWithServiceDeskFlag() {
         String json = AdminPageData.toJson(
                 List.of(project(1L, "SUP", "Поддержка", "service_desk"),
                         project(2L, "DEV", "Разработка", "software")),
-                List.of());
+                List.of(), List.of());
 
         assertTrue(json.contains("{\"value\":\"SUP\",\"label\":\"Поддержка (SUP)\",\"serviceDesk\":true}"));
         assertTrue(json.contains("{\"value\":\"DEV\",\"label\":\"Разработка (DEV)\",\"serviceDesk\":false}"));
@@ -46,7 +55,8 @@ public class AdminPageDataTest {
     @Test
     public void jsonMarksStatusesOfDoneCategory() {
         String json = AdminPageData.toJson(List.of(),
-                List.of(status("3", "В работе", "indeterminate"), status("10001", "Готово", "done")));
+                List.of(status("3", "В работе", "indeterminate"), status("10001", "Готово", "done")),
+                List.of());
 
         assertTrue(json.contains("{\"value\":\"3\",\"label\":\"В работе\",\"done\":false}"));
         assertTrue(json.contains("{\"value\":\"10001\",\"label\":\"Готово\",\"done\":true}"));
@@ -54,7 +64,7 @@ public class AdminPageDataTest {
 
     @Test
     public void jsonContainsActionCatalog() {
-        String json = AdminPageData.toJson(List.of(), List.of());
+        String json = AdminPageData.toJson(List.of(), List.of(), List.of());
 
         assertTrue(json.contains("\"key\":\"mention\""));
         assertTrue(json.contains("\"enabledKey\":\"action.mention.enabled\""));
@@ -62,11 +72,43 @@ public class AdminPageDataTest {
         assertTrue(json.contains("\"placeholders\":[\"issueKey\",\"issueUrl\",\"summary\",\"project\",\"author\",\"status\"]"));
     }
 
+    /** В списке получателей нужны только поля с пользователями. */
+    @Test
+    public void jsonContainsOnlyUserPickerFields() {
+        String json = AdminPageData.toJson(List.of(), List.of(), List.of(
+                customField("customfield_10100", "Согласующий",
+                        "com.atlassian.jira.plugin.system.customfieldtypes:userpicker",
+                        List.of(project(1L, "SUP", "Поддержка", "service_desk"))),
+                customField("customfield_10200", "Срок",
+                        "com.atlassian.jira.plugin.system.customfieldtypes:datepicker", List.of())));
+
+        assertTrue(json.contains("{\"value\":\"customfield_10100\",\"label\":\"Согласующий\",\"scope\":\"SUP\"}"));
+        assertFalse(json.contains("customfield_10200"));
+    }
+
+    /** Поле без привязки к проектам доступно везде. */
+    @Test
+    public void globalUserPickerFieldIsMarkedAsAllProjects() {
+        String json = AdminPageData.toJson(List.of(), List.of(), List.of(
+                customField("customfield_10300", "Ответственный",
+                        "com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker", List.of())));
+
+        assertTrue(json.contains("\"scope\":\"все проекты\""));
+    }
+
+    @Test
+    public void jsonExposesRecipientsKeyOnlyForConfigurableAction() {
+        String json = AdminPageData.toJson(List.of(), List.of(), List.of());
+
+        assertTrue(json.contains("\"recipientsKey\":\"action.closed.recipients\""));
+        assertTrue(json.contains("\"recipientsKey\":null"));
+    }
+
     /** Название проекта не должно уметь закрыть script-тег страницы. */
     @Test
     public void embedEscapesClosingTagSequence() {
         String json = AdminPageData.toJson(
-                List.of(project(1L, "XSS", "</script><img src=x>", "software")), List.of());
+                List.of(project(1L, "XSS", "</script><img src=x>", "software")), List.of(), List.of());
 
         String embedded = AdminPageData.embed(json);
 

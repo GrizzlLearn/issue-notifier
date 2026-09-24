@@ -30,6 +30,11 @@ public final class ActionTemplates {
         return "action." + action.key() + ".enabled";
     }
 
+    /** Ключ списка получателей, например {@code "action.closed.recipients"}. */
+    public static String recipientsKey(NotificationAction action) {
+        return "action." + action.key() + ".recipients";
+    }
+
     /** Ключ области действия, например {@code "action.mention.scope"}. */
     public static String scopeKey(NotificationAction action) {
         return "action." + action.key() + ".scope";

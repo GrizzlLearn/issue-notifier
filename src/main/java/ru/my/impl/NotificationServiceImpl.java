@@ -1,5 +1,6 @@
 package ru.my.impl;
 
+import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.user.ApplicationUser;
@@ -59,6 +60,7 @@ public class NotificationServiceImpl implements NotificationService {
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
     private final WatcherManager watcherManager;
+    private final CustomFieldManager customFieldManager;
     private final UserSettingsService userSettingsService;
     private final DelegationService delegationService;
     private final AdminSettingsService adminSettingsService;
@@ -69,12 +71,14 @@ public class NotificationServiceImpl implements NotificationService {
     @Inject
     public NotificationServiceImpl(
             @ComponentImport WatcherManager watcherManager,
+            @ComponentImport CustomFieldManager customFieldManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
             List<MessageFormatter> formatters,
             List<NotificationSender> senders) {
         this.watcherManager = watcherManager;
+        this.customFieldManager = customFieldManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -87,12 +91,14 @@ public class NotificationServiceImpl implements NotificationService {
     /** Конструктор для unit-тестов — принимает готовые карты, обходя Spring-инжекцию. */
     public NotificationServiceImpl(
             WatcherManager watcherManager,
+            CustomFieldManager customFieldManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
             Map<NotificationChannel, MessageFormatter> formatters,
             Map<NotificationChannel, NotificationSender> senders) {
         this.watcherManager = watcherManager;
+        this.customFieldManager = customFieldManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -155,8 +161,12 @@ public class NotificationServiceImpl implements NotificationService {
             return;
         }
 
+        // явный список получателей (например, упомянутые в комментарии) имеет
+        // приоритет над настройкой — он относится к конкретному событию
         List<ApplicationUser> base = (recipients == null || recipients.isEmpty())
-                ? watcherManager.getWatchers(issue, Locale.ROOT)
+                ? IssueRecipients.resolve(
+                        adminSettingsService.get(ActionTemplates.recipientsKey(action), ""),
+                        issue, watcherManager, customFieldManager)
                 : recipients;
 
         Map<NotificationChannel, Boolean> channelCache = buildChannelCache();

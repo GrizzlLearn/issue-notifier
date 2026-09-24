@@ -4,7 +4,7 @@ import { getAdminSettings, saveAdminSettings } from '../api';
 // Справочники страницы (проекты, статусы, каталог действий) сервлет кладёт прямо
 // в HTML — см. AdminPageData. Поэтому поиск проектов идёт по массиву в памяти
 // браузера, без запросов на каждое нажатие клавиши.
-const PAGE_DATA = window.ISSUE_NOTIFIER_DATA || { projects: [], statuses: [], actions: [] };
+const PAGE_DATA = window.ISSUE_NOTIFIER_DATA || { projects: [], statuses: [], actions: [], userFields: [] };
 const MAX_SUGGESTIONS = 20;
 
 const SECTIONS = [
@@ -377,6 +377,81 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
   );
 }
 
+// Значения совпадают с константами IssueRecipients на бэкенде.
+const BUILT_IN_RECIPIENTS = [
+  ['reporter', 'Автор задачи'],
+  ['creator', 'Создатель задачи'],
+  ['assignee', 'Исполнитель'],
+  ['watchers', 'Наблюдатели'],
+];
+
+// Значение «ни одного получателя»: пустая настройка на бэкенде означает
+// наблюдателей (так действие работало до появления выбора), поэтому снятые
+// галки сохраняются отдельным значением — см. IssueRecipients.NONE.
+const NO_RECIPIENTS = 'none';
+
+// Выбранные получатели действия; пустая настройка — наблюдатели, как на бэкенде.
+function selectedRecipients(values, recipientsKey) {
+  const chosen = parseKeys(values[recipientsKey]);
+  if (chosen.length === 0) {
+    return ['watchers'];
+  }
+  return chosen.filter(v => v !== NO_RECIPIENTS);
+}
+
+// Кому уходит уведомление: встроенные поля задачи плюс кастомные user picker-поля.
+function RecipientsField({ recipientsKey, values, setValue }) {
+  const userFields = PAGE_DATA.userFields || [];
+  const selected = selectedRecipients(values, recipientsKey);
+
+  function toggle(value, checked) {
+    const next = checked ? [...selected, value] : selected.filter(v => v !== value);
+    setValue(recipientsKey, (next.length ? next : [NO_RECIPIENTS]).join(','));
+  }
+
+  return (
+    <div className="field-group" style={{ marginBottom: 12 }}>
+      <div className="label">Кому отправлять</div>
+
+      {BUILT_IN_RECIPIENTS.map(([value, label]) => (
+        <label key={value} style={{ marginRight: 16 }}>
+          <input
+            type="checkbox"
+            checked={selected.includes(value)}
+            onChange={e => toggle(value, e.target.checked)}
+            style={{ marginRight: 6 }}
+          />
+          {label}
+        </label>
+      ))}
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Поля с пользователями</div>
+        {userFields.length === 0 && <div style={hintStyle}>Полей типа «user picker» в инстансе нет.</div>}
+        {userFields.map(field => (
+          <div key={field.value}>
+            <label>
+              <input
+                type="checkbox"
+                checked={selected.includes(field.value)}
+                onChange={e => toggle(field.value, e.target.checked)}
+                style={{ marginRight: 6 }}
+              />
+              {field.label}
+              <span style={{ ...hintStyle, marginLeft: 6 }}>{field.scope}</span>
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <div style={hintStyle}>
+        Поле, которого нет в схеме экрана конкретной задачи, получателя не даёт —
+        выбирать поля отдельно на каждый тип задачи не нужно.
+      </div>
+    </div>
+  );
+}
+
 // Действие: галка «уведомлять» и шаблон текста на каждый канал. Пустой шаблон —
 // по этому каналу ничего не уйдёт, поэтому включённое действие без шаблонов
 // показывает предупреждение.
@@ -389,6 +464,8 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
         const noTemplates = liveChannels.every(ch => !(values[ch.templateKey] || '').trim());
         const scope = action.scopeFixed ? action.defaultScope : (values[action.scopeKey] || action.defaultScope);
         const noProjects = !action.scopeFixed && scope === 'selected' && selected.length === 0;
+        const noRecipients = action.recipientsKey
+          && selectedRecipients(values, action.recipientsKey).length === 0;
 
         return (
           <fieldset key={action.key} className="in-section">
@@ -435,10 +512,24 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue })
               </div>
             )}
 
+            {enabled && noRecipients && (
+              <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
+                Получатели не выбраны — уведомления по этому действию отправляться не будут.
+              </div>
+            )}
+
             {enabled && noProjects && (
               <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
                 На вкладке «Проекты» не отмечено ни одного проекта — уведомления по этому действию не отправятся.
               </div>
+            )}
+
+            {action.recipientsKey && (
+              <RecipientsField
+                recipientsKey={action.recipientsKey}
+                values={values}
+                setValue={setValue}
+              />
             )}
 
             {action.key === CLOSED_ACTION && (

@@ -2,6 +2,7 @@ package ru.my.servlet;
 
 import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.config.ConstantsManager;
+import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
 import com.atlassian.jira.project.ProjectManager;
 import com.atlassian.jira.security.GlobalPermissionManager;
@@ -35,7 +36,8 @@ public class AdminSettingsServlet extends HttpServlet {
         // процессе Jira, ходить за ними из браузера незачем
         String pageData = AdminPageData.toJson(
                 ComponentAccessor.getComponent(ProjectManager.class).getProjectObjects(),
-                ComponentAccessor.getComponent(ConstantsManager.class).getStatuses());
+                ComponentAccessor.getComponent(ConstantsManager.class).getStatuses(),
+                ComponentAccessor.getComponent(CustomFieldManager.class).getCustomFieldObjects());
 
         String pluginResourceBase = req.getContextPath()
                 + "/download/resources/ru.my.issue-notifier:admin-settings-resources";

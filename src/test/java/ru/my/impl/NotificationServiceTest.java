@@ -1,6 +1,7 @@
 package ru.my.impl;
 
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
@@ -42,6 +43,7 @@ import static org.mockito.Mockito.when;
 public class NotificationServiceTest {
 
     @Mock private WatcherManager watcherManager;
+    @Mock private CustomFieldManager customFieldManager;
     @Mock private UserSettingsService userSettingsService;
     @Mock private DelegationService delegationService;
     @Mock private AdminSettingsService adminSettingsService;
@@ -65,7 +67,7 @@ public class NotificationServiceTest {
         senders.put(NotificationChannel.MATTERMOST, sender);
 
         service = new NotificationServiceImpl(
-                watcherManager, userSettingsService, delegationService,
+                watcherManager, customFieldManager, userSettingsService, delegationService,
                 adminSettingsService, formatters, senders);
 
         watcher = new MockApplicationUser("alice", "Alice", "alice@example.com");
@@ -87,8 +89,8 @@ public class NotificationServiceTest {
     public void skipsWhenNoFormattersRegistered() {
         // Пустые карты — гонка инициализации или незарегистрированные каналы
         NotificationServiceImpl emptyService = new NotificationServiceImpl(
-                watcherManager, userSettingsService, delegationService, adminSettingsService,
-                Map.of(), Map.of());
+                watcherManager, customFieldManager, userSettingsService, delegationService,
+                adminSettingsService, Map.of(), Map.of());
 
         emptyService.processEvent(issue, null, NON_EMPTY_DIFF);
 
