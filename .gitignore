@@ -153,7 +153,6 @@ replay_pid*
 # Frontend build artifacts
 src/main/frontend/node/
 src/main/frontend/node_modules/
-src/main/resources/js/user-settings.min.js
-src/main/resources/js/admin-settings.min.js
+src/main/resources/js/*.min.js
 src/main/resources/js/*.LICENSE.txt
 /pics/

@@ -1,6 +1,9 @@
 package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
+import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheManager;
+import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
@@ -23,6 +26,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -53,12 +57,32 @@ public class DelegationServiceImpl implements DelegationService {
     private final ActiveObjects ao;
     private final UserManager userManager;
 
+    /**
+     * Кеш делегаций: {@link #getEffectiveRecipients} вызывается на каждого
+     * наблюдателя задачи, и без кеша задача с полусотней наблюдателей давала
+     * полсотни запросов в БД на одно изменение поля. {@link Optional} в значении
+     * кешируется тоже — «делегации нет» это самый частый ответ.
+     * <p>
+     * Кеш кластерный: делегирование настраивают на одной ноде, а рассылку ведёт
+     * та, что взяла событие.
+     */
+    private final Cache<String, Optional<DelegationInfo>> cache;
+
     @Inject
     public DelegationServiceImpl(
             @ComponentImport ActiveObjects ao,
-            @ComponentImport UserManager userManager) {
+            @ComponentImport UserManager userManager,
+            @ComponentImport CacheManager cacheManager) {
         this.ao = ao;
         this.userManager = userManager;
+        this.cache = cacheManager.getCache(
+                DelegationServiceImpl.class.getName() + ".delegations",
+                null,
+                new CacheSettingsBuilder()
+                        .maxEntries(10_000)
+                        .expireAfterWrite(5, TimeUnit.MINUTES)
+                        .replicateViaInvalidation()
+                        .build());
     }
 
     @Override
@@ -119,6 +143,7 @@ public class DelegationServiceImpl implements DelegationService {
             entity.save();
             return null;
         });
+        cache.remove(from.getKey());
     }
 
     @Override
@@ -132,19 +157,30 @@ public class DelegationServiceImpl implements DelegationService {
             }
             return null;
         });
+        cache.remove(from.getKey());
     }
 
     @Override
     public Optional<DelegationInfo> getDelegation(ApplicationUser from) {
+        Optional<DelegationInfo> cached = cache.get(from.getKey());
+        if (cached != null) {
+            return cached;
+        }
         NotificationDelegationEntity[] rows;
         try {
             rows = ao.find(NotificationDelegationEntity.class,
                     Query.select().where("FROM_USER_KEY = ?", from.getKey()));
         } catch (IllegalStateException e) {
+            // AO ещё не поднялся — ответ не кешируем, иначе он застрянет на пять минут
             log.warn("AO ещё не инициализирован, getDelegation возвращает пустой результат");
             return Optional.empty();
         }
+        Optional<DelegationInfo> loaded = toInfo(rows);
+        cache.put(from.getKey(), loaded);
+        return loaded;
+    }
 
+    private static Optional<DelegationInfo> toInfo(NotificationDelegationEntity[] rows) {
         if (rows.length == 0) {
             return Optional.empty();
         }

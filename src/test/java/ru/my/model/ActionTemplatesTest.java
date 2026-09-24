@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.model;
 
 import org.junit.Test;
 import ru.my.model.NotificationAction;

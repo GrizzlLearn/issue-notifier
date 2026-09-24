@@ -31,8 +31,8 @@ public class MattermostMessageFormatter implements MessageFormatter {
     public String format(Issue issue, DiffResult diff) {
         StringBuilder sb = new StringBuilder();
         String issueUrl = applicationProperties.getBaseUrl() + "/browse/" + issue.getKey();
-        sb.append("В задаче **[").append(issue.getKey()).append("](").append(issueUrl).append(")** — ")
-          .append(issue.getSummary()).append(" произошли следующие изменения:\n\n");
+        sb.append("В задаче **[").append(mdEsc(issue.getKey())).append("](").append(issueUrl).append(")** — ")
+          .append(mdEsc(issue.getSummary())).append(" произошли следующие изменения:\n\n");
 
         List<DiffResult.FieldChange> shortChanges = ChangeSplitter.shortChanges(diff.getChanges(), DIFF_THRESHOLD);
         List<DiffResult.FieldChange> longChanges = ChangeSplitter.longChanges(diff.getChanges(), DIFF_THRESHOLD);
@@ -64,8 +64,17 @@ public class MattermostMessageFormatter implements MessageFormatter {
     }
 
     /** Экранирует спецсимволы Markdown внутри ячейки таблицы. */
+    /**
+     * Экранирует то, что ломает вёрстку Mattermost: {@code |} рвёт строку таблицы,
+     * а квадратные скобки в заголовке задачи превращаются в ссылку-обрубок рядом
+     * с настоящей ссылкой на задачу.
+     */
     private static String mdEsc(String s) {
         if (s == null) return "";
-        return s.replace("|", "\\|").replace("\n", " ").replace("\r", "");
+        return s.replace("|", "\\|")
+                .replace("[", "\\[")
+                .replace("]", "\\]")
+                .replace("\n", " ")
+                .replace("\r", "");
     }
 }

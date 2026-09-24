@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.model;
 
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;

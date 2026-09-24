@@ -1,4 +1,4 @@
-package ru.my.impl.util;
+package ru.my.model;
 
 import org.junit.Test;
 

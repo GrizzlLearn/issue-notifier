@@ -1,5 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+
 /**
  * Обёртка над нативным виджетом Jira AJS.MultiSelect (AMD-модуль jira/ajs/select/multi-select) —
  * тем же компонентом, что рендерит поля Fix Versions/Components/User Picker в самой Jira.
@@ -42,7 +46,13 @@ export default function AjsMultiSelect({ id, initialItems, url, onChange, ariaLa
             formatResponse(items) {
               const group = new GroupDescriptor({ weight: 0 });
               (items || []).forEach(item => {
-                group.addItem(new ItemDescriptor({ value: item.value, label: item.label, html: item.label }));
+                // html рендерится виджетом как разметка: имя проекта или пользователя
+                // с '<' иначе выполнилось бы в выпадающем списке
+                group.addItem(new ItemDescriptor({
+                  value: item.value,
+                  label: item.label,
+                  html: escapeHtml(item.label),
+                }));
               });
               return [group];
             },

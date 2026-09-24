@@ -22,12 +22,26 @@ public final class TextDiff {
     }
 
     /**
+     * Предел строк на сторону. LCS требует матрицы {@code m×n}: правка description
+     * на пару тысяч строк дала бы десятки мегабайт на одно событие, а в сообщение
+     * такой diff всё равно не помещается.
+     */
+    static final int MAX_LINES = 400;
+
+    /**
      * Возвращает список строк с маркерами: ' ' — контекст, '+' — добавлено, '-' — удалено.
      * null трактуется как пустая строка.
+     * <p>
+     * Поле длиннее {@link #MAX_LINES} строк не диффится: обе версии возвращаются
+     * целиком как удалённая и добавленная — построчное сравнение такого объёма
+     * читателю всё равно ничего не даёт.
      */
     public static List<Line> diff(String from, String to) {
         String[] a = splitLines(from);
         String[] b = splitLines(to);
+        if (a.length > MAX_LINES || b.length > MAX_LINES) {
+            return tooBig(a, b);
+        }
         int m = a.length, n = b.length;
 
         // LCS[i][j] = длина LCS для a[i..m-1] и b[j..n-1]
@@ -51,6 +65,18 @@ public final class TextDiff {
             } else {
                 result.add(new Line('+', b[j++]));
             }
+        }
+        return result;
+    }
+
+    /** Обе версии целиком, без построчного сравнения. */
+    private static List<Line> tooBig(String[] a, String[] b) {
+        List<Line> result = new ArrayList<>(a.length + b.length);
+        for (String line : a) {
+            result.add(new Line('-', line));
+        }
+        for (String line : b) {
+            result.add(new Line('+', line));
         }
         return result;
     }

@@ -28,20 +28,36 @@ public class DiffResult {
         return changes.isEmpty();
     }
 
-    /** Одно изменённое поле задачи. */
+    /**
+     * Одно изменённое поле задачи.
+     * <p>
+     * Кроме отображаемых значений хранится {@link #toId()} — сырое {@code newvalue}
+     * из changelog: для исполнителя это ключ пользователя, для статуса — id статуса.
+     * Логика действий должна смотреть именно туда, а не в текущее состояние задачи:
+     * между событием и рассылкой задачу могли переназначить ещё раз.
+     */
     public static final class FieldChange {
         private final String fieldName;
         private final String fromValue; // null — поле было пустым
         private final String toValue;   // null — поле очищено
+        private final String toId;      // newvalue из changelog; null — поле очищено
 
         public FieldChange(String fieldName, String fromValue, String toValue) {
+            this(fieldName, fromValue, toValue, null);
+        }
+
+        public FieldChange(String fieldName, String fromValue, String toValue, String toId) {
             this.fieldName = fieldName;
             this.fromValue = fromValue;
             this.toValue = toValue;
+            this.toId = toId;
         }
 
         public String fieldName()  { return fieldName; }
         public String fromValue()  { return fromValue; }
         public String toValue()    { return toValue; }
+
+        /** Идентификатор нового значения из changelog; {@code null} — поле очищено. */
+        public String toId()       { return toId; }
     }
 }

@@ -6,10 +6,10 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
-import ru.my.impl.ActionTemplates;
-import ru.my.impl.ChannelKeys;
-import ru.my.impl.ClosingStatuses;
-import ru.my.impl.PortalProjects;
+import ru.my.model.ActionTemplates;
+import ru.my.model.ChannelKeys;
+import ru.my.model.ClosingStatuses;
+import ru.my.model.PortalProjects;
 import ru.my.model.ActionScope;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
@@ -25,6 +25,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Named
 @Path("/admin/settings")
@@ -40,12 +41,11 @@ public class AdminSettingsResource {
      */
     static final String IS_SET_SUFFIX = ".isSet";
 
+    /** Абсолютный URL без завершающего слэша — к нему клиент дописывает {@code /api/v4/...}. */
+    private static final Pattern DOMAIN = Pattern.compile("https?://[^\\s/]+(/[^\\s]*[^\\s/])?");
+
     /** Проекты, отмеченные на вкладке «Проекты»: CSV из project key. */
     static final String SD_PROJECTS = PortalProjects.KEY;
-
-    /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
-    private static final List<NotificationChannel> ACTION_CHANNELS =
-            List.of(NotificationChannel.MATTERMOST, NotificationChannel.TELEGRAM);
 
     static final List<String> KNOWN_KEYS = buildKnownKeys();
 
@@ -55,13 +55,10 @@ public class AdminSettingsResource {
      */
     private static List<String> buildKnownKeys() {
         List<String> keys = new ArrayList<>(List.of(
-                "email.enabled",
-                "mattermost.enabled",
                 ChannelKeys.MATTERMOST_DOMAIN,
                 ChannelKeys.MATTERMOST_BOT_ID,
                 ChannelKeys.MATTERMOST_TOKEN,
                 ChannelKeys.MATTERMOST_TOKEN + IS_SET_SUFFIX,
-                "telegram.enabled",
                 ChannelKeys.TELEGRAM_BOT_USERNAME,
                 ChannelKeys.TELEGRAM_BOT_TOKEN,
                 ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
@@ -69,6 +66,9 @@ public class AdminSettingsResource {
                 PortalProjects.CATEGORIES_KEY,
                 ClosingStatuses.KEY,
                 ActionTemplates.HIDE_COMMENT_TEXT_KEY));
+        for (NotificationChannel channel : NotificationChannel.values()) {
+            keys.add(channel.enabledKey());
+        }
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
             if (!action.isScopeFixed()) {
@@ -77,7 +77,7 @@ public class AdminSettingsResource {
             if (action.isRecipientsConfigurable()) {
                 keys.add(ActionTemplates.recipientsKey(action));
             }
-            for (NotificationChannel channel : ACTION_CHANNELS) {
+            for (NotificationChannel channel : NotificationChannel.actionChannels()) {
                 keys.add(ActionTemplates.templateKey(action, channel));
                 if (action.carriesCommentText()) {
                     keys.add(ActionTemplates.templateKeyNoText(action, channel));
@@ -97,9 +97,10 @@ public class AdminSettingsResource {
     static final Set<String> BOOLEAN_KEYS = buildBooleanKeys();
 
     private static Set<String> buildBooleanKeys() {
-        Set<String> keys = new LinkedHashSet<>(Set.of(
-                "email.enabled", "mattermost.enabled", "telegram.enabled",
-                ActionTemplates.HIDE_COMMENT_TEXT_KEY));
+        Set<String> keys = new LinkedHashSet<>(Set.of(ActionTemplates.HIDE_COMMENT_TEXT_KEY));
+        for (NotificationChannel channel : NotificationChannel.values()) {
+            keys.add(channel.enabledKey());
+        }
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));
             if (!action.isScopeFixed()) {
@@ -181,6 +182,10 @@ public class AdminSettingsResource {
             if (invalidScope != null) {
                 return invalidScope;
             }
+            Response invalidDomain = validateDomain(e.getKey(), e.getValue());
+            if (invalidDomain != null) {
+                return invalidDomain;
+            }
         }
 
         body.entrySet().stream()
@@ -232,6 +237,22 @@ public class AdminSettingsResource {
         }
         NotificationAction action = ActionTemplates.actionOfScopeKey(key);
         return action != null ? action.defaultScope().key() : "";
+    }
+
+    /**
+     * Домен Mattermost должен быть абсолютным URL: {@code URI.create(domain + path)}
+     * на пустом или относительном значении бросает {@link IllegalArgumentException},
+     * и в логе отправки это выглядит как «неизвестная ошибка» вместо внятной причины.
+     */
+    private static Response validateDomain(String key, String value) {
+        if (!ChannelKeys.MATTERMOST_DOMAIN.equals(key) || value == null || value.isBlank()) {
+            return null;
+        }
+        if (DOMAIN.matcher(value.trim()).matches()) {
+            return null;
+        }
+        return UserSettingsResource.badRequest(
+                "Домен Mattermost должен начинаться с http:// или https:// и не содержать пробелов");
     }
 
     /** Область действия принимает только значения {@link ActionScope}. */

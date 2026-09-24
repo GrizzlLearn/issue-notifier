@@ -3,6 +3,8 @@ package ru.my.impl;
 import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.watchers.WatcherManager;
+import com.atlassian.jira.permission.ProjectPermissions;
+import com.atlassian.jira.security.PermissionManager;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
@@ -33,6 +35,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import ru.my.model.ActionTemplates;
+import ru.my.model.PortalProjects;
 
 /**
  * Оркестратор уведомлений.
@@ -52,9 +56,12 @@ import java.util.stream.Collectors;
  * </ol>
  * <p>
  * Форматтеры ({@link MessageFormatter}) и отправщики ({@link NotificationSender})
- * инжектируются Spring-ом как {@code List<>} через конструктор; Spring собирает все бины
- * нужного типа из контекста плагина, при отсутствии — передаёт пустой список.
- * Карты строятся в конструкторе и после этого неизменяемы.
+ * инжектируются Spring-ом как {@code List<>} через конструктор: Spring собирает все
+ * бины нужного типа из контекста плагина. Если их не окажется ни одного, контекст
+ * не поднимется вовсе — обязательная зависимость на пустую коллекцию бросает
+ * {@code NoSuchBeanDefinitionException}, так что через Spring карты пустыми не бывают.
+ * Проверка на пустоту в {@link #processEvent} остаётся страховкой для тестового
+ * конструктора. Карты строятся в конструкторе и после этого неизменяемы.
  */
 @Named
 @ExportAsService(NotificationService.class)
@@ -67,6 +74,7 @@ public class NotificationServiceImpl implements NotificationService {
 
     private final WatcherManager watcherManager;
     private final CustomFieldManager customFieldManager;
+    private final PermissionManager permissionManager;
     private final UserSettingsService userSettingsService;
     private final DelegationService delegationService;
     private final AdminSettingsService adminSettingsService;
@@ -78,6 +86,7 @@ public class NotificationServiceImpl implements NotificationService {
     public NotificationServiceImpl(
             @ComponentImport WatcherManager watcherManager,
             @ComponentImport CustomFieldManager customFieldManager,
+            @ComponentImport PermissionManager permissionManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
@@ -85,6 +94,7 @@ public class NotificationServiceImpl implements NotificationService {
             List<NotificationSender> senders) {
         this.watcherManager = watcherManager;
         this.customFieldManager = customFieldManager;
+        this.permissionManager = permissionManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -98,6 +108,7 @@ public class NotificationServiceImpl implements NotificationService {
     public NotificationServiceImpl(
             WatcherManager watcherManager,
             CustomFieldManager customFieldManager,
+            PermissionManager permissionManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
@@ -105,6 +116,7 @@ public class NotificationServiceImpl implements NotificationService {
             Map<NotificationChannel, NotificationSender> senders) {
         this.watcherManager = watcherManager;
         this.customFieldManager = customFieldManager;
+        this.permissionManager = permissionManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -143,8 +155,8 @@ public class NotificationServiceImpl implements NotificationService {
             return;
         }
         if (formatters.isEmpty()) {
-            log.warn("Нет зарегистрированных каналов доставки — уведомление по задаче {} пропущено. " +
-                    "Возможна гонка инициализации или не зарегистрированы MessageFormatter", issue.getKey());
+            log.warn("Нет зарегистрированных каналов доставки — уведомление по задаче {} пропущено",
+                    issue.getKey());
             return;
         }
 
@@ -288,6 +300,11 @@ public class NotificationServiceImpl implements NotificationService {
      * и отключивших уведомления, применяет делегирование и дедуплицирует —
      * каждый получатель попадает в результат ровно один раз, даже если на него
      * делегировали несколько наблюдателей.
+     * <p>
+     * Итоговый получатель проверяется на право видеть задачу. Наблюдатель его
+     * имеет по определению, а делегат, упомянутый через {@code [~user]} и
+     * пользователь из кастомного поля — нет, и без проверки содержимое закрытой
+     * задачи ушло бы человеку без доступа к проекту.
      *
      * @param applyUserProjectFilter учитывать ли список проектов в настройках
      *                               получателя; он относится только к уведомлениям
@@ -316,6 +333,17 @@ public class NotificationServiceImpl implements NotificationService {
 
             for (ApplicationUser recipient : delegationService.getEffectiveRecipients(candidate)) {
                 if (uniqueRecipients.containsKey(recipient.getKey())) {
+                    continue;
+                }
+                // делегат мог быть уволен уже после настройки делегирования
+                if (!recipient.isActive()) {
+                    continue;
+                }
+                // содержимое задачи уходит только тому, кто и так может её открыть:
+                // делегат и упомянутый в комментарии наблюдателями не являются
+                if (!permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, issue, recipient)) {
+                    log.debug("У {} нет прав на задачу {}, уведомление не отправляем",
+                            recipient.getKey(), issue.getKey());
                     continue;
                 }
 

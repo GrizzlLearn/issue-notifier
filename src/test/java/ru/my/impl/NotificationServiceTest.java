@@ -3,6 +3,8 @@ package ru.my.impl;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.issue.watchers.WatcherManager;
+import com.atlassian.jira.permission.ProjectPermissions;
+import com.atlassian.jira.security.PermissionManager;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.MockApplicationUser;
@@ -30,6 +32,7 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -37,6 +40,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import ru.my.model.ActionTemplates;
+import ru.my.model.PortalProjects;
 
 /**
  * Проверяет оркестрацию: фильтрацию наблюдателей, делегирование,
@@ -47,6 +52,7 @@ public class NotificationServiceTest {
 
     @Mock private WatcherManager watcherManager;
     @Mock private CustomFieldManager customFieldManager;
+    @Mock private PermissionManager permissionManager;
     @Mock private UserSettingsService userSettingsService;
     @Mock private DelegationService delegationService;
     @Mock private AdminSettingsService adminSettingsService;
@@ -69,9 +75,14 @@ public class NotificationServiceTest {
         Map<NotificationChannel, NotificationSender> senders = new EnumMap<>(NotificationChannel.class);
         senders.put(NotificationChannel.MATTERMOST, sender);
 
+        // право видеть задачу есть у всех, кроме отдельно оговорённых тестов
+        lenient().when(permissionManager.hasPermission(
+                eq(ProjectPermissions.BROWSE_PROJECTS), any(Issue.class), any(ApplicationUser.class)))
+                .thenReturn(true);
+
         service = new NotificationServiceImpl(
-                watcherManager, customFieldManager, userSettingsService, delegationService,
-                adminSettingsService, formatters, senders);
+                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                delegationService, adminSettingsService, formatters, senders);
 
         watcher = new MockApplicationUser("alice", "Alice", "alice@example.com");
 
@@ -92,8 +103,8 @@ public class NotificationServiceTest {
     public void skipsWhenNoFormattersRegistered() {
         // Пустые карты — гонка инициализации или незарегистрированные каналы
         NotificationServiceImpl emptyService = new NotificationServiceImpl(
-                watcherManager, customFieldManager, userSettingsService, delegationService,
-                adminSettingsService, Map.of(), Map.of());
+                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                delegationService, adminSettingsService, Map.of(), Map.of());
 
         emptyService.processEvent(issue, null, NON_EMPTY_DIFF);
 
@@ -458,6 +469,44 @@ public class NotificationServiceTest {
                 NotificationAction.COMMENT_ADDED, List.of(), Map.of()));
     }
 
+    /** Сбой одного канала не должен глушить остальные. */
+    @Test
+    public void actionContinuesOnOtherChannelWhenOneFails() {
+        NotificationSender telegramSender = mock(NotificationSender.class);
+        NotificationServiceImpl twoChannels = serviceWithSenders(Map.of(
+                NotificationChannel.MATTERMOST, sender,
+                NotificationChannel.TELEGRAM, telegramSender));
+
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.TELEGRAM)).thenReturn(true);
+        setupWatcherWithChannels(List.of(NotificationChannel.TELEGRAM, NotificationChannel.MATTERMOST));
+        org.mockito.Mockito.doThrow(new RuntimeException("Telegram недоступен"))
+                .when(telegramSender).send(eq(watcher), anyString());
+
+        List<ApplicationUser> notified = twoChannels.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
+
+        verify(sender).send(eq(watcher), anyString());
+        assertEquals(List.of(watcher), notified);
+    }
+
+    /**
+     * Упали все каналы — получатель не считается уведомлённым, иначе слушатель
+     * исключит его и из рассылки об изменении полей, и он не получит ничего.
+     */
+    @Test
+    public void actionDoesNotMarkRecipientNotifiedWhenDeliveryFails() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupWatcherWithChannels(List.of(NotificationChannel.MATTERMOST));
+        org.mockito.Mockito.doThrow(new RuntimeException("Mattermost недоступен"))
+                .when(sender).send(eq(watcher), anyString());
+
+        List<ApplicationUser> notified = service.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
+
+        assertTrue(notified.isEmpty());
+    }
+
     /** Без шаблона сообщение не ушло — значит получателя в результате нет. */
     @Test
     public void actionWithoutTemplateReturnsNobody() {
@@ -527,16 +576,60 @@ public class NotificationServiceTest {
      */
     private void enableAction(NotificationAction action, String template) {
         when(adminSettingsService.get(ActionTemplates.enabledKey(action), "false")).thenReturn("true");
-        lenient().when(adminSettingsService.get(
-                ActionTemplates.templateKey(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
-        lenient().when(adminSettingsService.get(
-                ActionTemplates.templateKeyNoText(action, NotificationChannel.MATTERMOST), "")).thenReturn(template);
+        for (NotificationChannel channel : NotificationChannel.actionChannels()) {
+            lenient().when(adminSettingsService.get(
+                    ActionTemplates.templateKey(action, channel), "")).thenReturn(template);
+            lenient().when(adminSettingsService.get(
+                    ActionTemplates.templateKeyNoText(action, channel), "")).thenReturn(template);
+        }
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
     }
 
     private void setScope(NotificationAction action, ActionScope scope) {
         when(adminSettingsService.get(ActionTemplates.scopeKey(action), action.defaultScope().key()))
                 .thenReturn(scope.key());
+    }
+
+    /**
+     * Делегат прав на задачу не имеет: наблюдателем он не является, а содержимое
+     * закрытой задачи иначе уехало бы человеку без доступа к проекту.
+     */
+    @Test
+    public void skipsDelegateWithoutBrowsePermission() {
+        MockApplicationUser delegate = new MockApplicationUser("bob", "Bob", "bob@example.com");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(delegate));
+        when(permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, issue, delegate))
+                .thenReturn(false);
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(sender, never()).send(any(), any());
+    }
+
+    /** Делегирование пережило увольнение делегата. */
+    @Test
+    public void skipsInactiveDelegate() {
+        MockApplicationUser delegate = new MockApplicationUser("bob", "Bob", "bob@example.com");
+        delegate.setActive(false);
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(delegate));
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(sender, never()).send(any(), any());
+    }
+
+    private NotificationServiceImpl serviceWithSenders(Map<NotificationChannel, NotificationSender> senders) {
+        Map<NotificationChannel, MessageFormatter> formatters = new EnumMap<>(NotificationChannel.class);
+        formatters.put(NotificationChannel.MATTERMOST, formatter);
+        return new NotificationServiceImpl(
+                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                delegationService, adminSettingsService, formatters, senders);
+    }
+
+    private void setupWatcherWithChannels(List<NotificationChannel> channels) {
+        setupStandardWatcher(List.of("*"), channels);
     }
 
     private void setupStandardWatcher(List<String> projects, List<NotificationChannel> channels) {

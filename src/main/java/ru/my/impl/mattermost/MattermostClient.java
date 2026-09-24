@@ -1,11 +1,14 @@
 package ru.my.impl.mattermost;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
-import ru.my.impl.ChannelKeys;
-import ru.my.impl.util.JsonUtil;
+import ru.my.model.ChannelKeys;
+import ru.my.model.JsonUtil;
 
+import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.io.IOException;
@@ -16,7 +19,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,11 +40,37 @@ public class MattermostClient {
 
     private final AdminSettingsService adminSettings;
     private final HttpClient http;
+    private final ExecutorService executor;
+
+    /**
+     * Кеш {@code email → channelId}. Direct-канал бот↔пользователь создаётся один раз
+     * и не меняется, а без кеша каждое сообщение каждому получателю стоило двух
+     * синхронных HTTP-запросов: на двадцать получателей — сорок вызовов по 10 секунд
+     * таймаута на пуле из 2–4 потоков.
+     * <p>
+     * Кеш локальный, а не кластерный: это запоминание неизменного факта из
+     * Mattermost, инвалидировать его между нодами нечем и незачем.
+     */
+    private final Cache<String, String> channelIds = CacheBuilder.newBuilder()
+            .maximumSize(10_000)
+            .expireAfterWrite(12, TimeUnit.HOURS)
+            .build();
 
     @Inject
     public MattermostClient(AdminSettingsService adminSettings) {
         this.adminSettings = adminSettings;
-        this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+        // свой executor, чтобы погасить потоки при выгрузке бандла: в Java 17
+        // у HttpClient нет close(), и его собственный пул держал бы
+        // classloader старого плагина после каждого обновления
+        this.executor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "mattermost-http");
+            t.setDaemon(true);
+            return t;
+        });
+        this.http = HttpClient.newBuilder()
+                .connectTimeout(TIMEOUT)
+                .executor(executor)
+                .build();
     }
 
     /**
@@ -47,6 +79,10 @@ public class MattermostClient {
      * Возвращает empty если пользователь с таким email не найден в Mattermost.
      */
     public Optional<String> findDirectChannelId(String email) {
+        String cached = channelIds.getIfPresent(email);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
         String domain = adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, "");
         String token  = adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, "");
         String botId  = adminSettings.get(ChannelKeys.MATTERMOST_BOT_ID, "");
@@ -64,7 +100,17 @@ public class MattermostClient {
         HttpResponse<String> chanResp = post(domain, token, "/api/v4/channels/direct", body);
         requireSuccess(chanResp);
 
-        return Optional.of(extractId(chanResp.body()));
+        String channelId = extractId(chanResp.body());
+        channelIds.put(email, channelId);
+        return Optional.of(channelId);
+    }
+
+    /**
+     * Сбрасывает кеш канала: пользователя могли удалить или пересоздать в Mattermost,
+     * и тогда сохранённый id перестаёт работать до следующего резолва.
+     */
+    public void forgetChannel(String email) {
+        channelIds.invalidate(email);
     }
 
     /** Отправляет сообщение в канал. Бросает {@link MattermostException} при сбое. */
@@ -77,6 +123,12 @@ public class MattermostClient {
         HttpResponse<String> resp = post(domain, token, "/api/v4/posts", body);
         requireSuccess(resp);
         log.debug("Сообщение отправлено в канал {}", channelId);
+    }
+
+    /** ponytail: HttpClient в Java 17 не закрывается — гасим хотя бы его пул потоков. */
+    @PreDestroy
+    public void destroy() {
+        executor.shutdownNow();
     }
 
     // ---- HTTP-обёртки ----

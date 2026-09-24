@@ -1,11 +1,12 @@
 package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
+import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheManager;
+import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
 import ru.my.ao.UserNotificationSettingsEntity;
@@ -27,6 +28,10 @@ import java.util.stream.Collectors;
  * Реализация {@link UserSettingsService} на базе Active Objects.
  * Использует upsert-паттерн: при сохранении ищет существующую запись по
  * {@code USER_KEY} и обновляет её, либо создаёт новую.
+ * <p>
+ * Кеш кластерный: пользователь меняет настройки на той ноде, куда попал его
+ * запрос, а рассылку может вести другая — реплицируемая инвалидация не даёт ей
+ * работать со старым списком каналов.
  */
 @Named
 @ExportAsService(UserSettingsService.class)
@@ -35,19 +40,27 @@ public class UserSettingsServiceImpl implements UserSettingsService {
     private static final Logger log = LoggerFactory.getLogger(UserSettingsServiceImpl.class);
 
     private final ActiveObjects ao;
-    private final Cache<String, UserSettings> cache = CacheBuilder.newBuilder()
-            .expireAfterWrite(5, TimeUnit.MINUTES)
-            .build();
+    private final Cache<String, UserSettings> cache;
 
     @Inject
-    public UserSettingsServiceImpl(@ComponentImport ActiveObjects ao) {
+    public UserSettingsServiceImpl(@ComponentImport ActiveObjects ao,
+                                   @ComponentImport CacheManager cacheManager) {
         this.ao = ao;
+        // maxEntries обязателен: без границы кеш растёт по числу пользователей инстанса
+        this.cache = cacheManager.getCache(
+                UserSettingsServiceImpl.class.getName() + ".settings",
+                null,
+                new CacheSettingsBuilder()
+                        .maxEntries(10_000)
+                        .expireAfterWrite(5, TimeUnit.MINUTES)
+                        .replicateViaInvalidation()
+                        .build());
     }
 
     @Override
     public UserSettings getSettings(ApplicationUser user) {
         String key = user.getKey();
-        UserSettings cached = cache.getIfPresent(key);
+        UserSettings cached = cache.get(key);
         if (cached != null) {
             return cached;
         }
@@ -83,7 +96,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
             entity.save();
             return null;
         });
-        cache.invalidate(user.getKey());
+        cache.remove(user.getKey());
     }
 
     private UserSettings loadFromAO(ApplicationUser user) {

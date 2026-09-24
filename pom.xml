@@ -47,11 +47,32 @@
             <version>${sal.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- кластерный кеш и планировщик: приходят из Jira, объявлены явно,
+             чтобы версия не уехала вместе с транзитивной зависимостью -->
+        <dependency>
+            <groupId>com.atlassian.cache</groupId>
+            <artifactId>atlassian-cache-api</artifactId>
+            <version>${atlassian.cache.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.atlassian.scheduler</groupId>
+            <artifactId>atlassian-scheduler-api</artifactId>
+            <version>${atlassian.scheduler.version}</version>
+            <scope>provided</scope>
+        </dependency>
 
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- настоящий кеш в unit-тестах: мокать CacheManager дороже, чем поднять in-memory -->
+        <dependency>
+            <groupId>com.atlassian.cache</groupId>
+            <artifactId>atlassian-cache-memory</artifactId>
+            <version>${atlassian.cache.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -261,6 +282,8 @@
         <testkit.version>6.3.11</testkit.version>
         <ao.version>3.2.2</ao.version>
         <sal.version>5.1.3</sal.version>
+        <atlassian.cache.version>6.0.2</atlassian.cache.version>
+        <atlassian.scheduler.version>4.0.0</atlassian.scheduler.version>
         <spring.version>5.3.39-atlassian-4</spring.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>

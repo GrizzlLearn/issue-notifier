@@ -13,8 +13,7 @@ public class TelegramNotificationSenderTest {
 
     private final TelegramClient client = mock(TelegramClient.class);
     private final UserSettingsService userSettingsService = mock(UserSettingsService.class);
-    private final TelegramPollingService pollingService = mock(TelegramPollingService.class);
-    private final TelegramNotificationSender sender = new TelegramNotificationSender(client, userSettingsService, pollingService);
+    private final TelegramNotificationSender sender = new TelegramNotificationSender(client, userSettingsService);
 
     @Test
     public void channelIsTelegram() {

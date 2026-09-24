@@ -1,4 +1,4 @@
-package ru.my.impl.util;
+package ru.my.model;
 
 /**
  * Утилита для ручной сериализации строк в JSON без внешних зависимостей.

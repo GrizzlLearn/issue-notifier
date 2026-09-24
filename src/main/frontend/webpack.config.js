@@ -3,6 +3,9 @@ const TerserPlugin = require('terser-webpack-plugin');
 
 module.exports = {
   entry: {
+    // грузится на каждой странице Jira — держим крошечным, он только
+    // подтягивает user-settings по клику (см. src/user/nav.js)
+    'user-nav': './src/user/nav.js',
     'user-settings': './src/user/index.jsx',
     'admin-settings': './src/admin/index.jsx',
   },

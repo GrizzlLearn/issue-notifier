@@ -3,6 +3,7 @@ package ru.my.impl;
 import com.atlassian.activeobjects.external.ActiveObjects;
 import net.java.ao.Query;
 import org.junit.After;
+import com.atlassian.cache.memory.MemoryCacheManager;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -26,7 +27,7 @@ public class AdminSettingsServiceTest {
     @Before
     public void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        service = new AdminSettingsServiceImpl(ao);
+        service = new AdminSettingsServiceImpl(ao, new MemoryCacheManager());
     }
 
     @After

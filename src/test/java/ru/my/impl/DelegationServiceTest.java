@@ -6,6 +6,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import net.java.ao.Query;
 import org.junit.After;
+import com.atlassian.cache.memory.MemoryCacheManager;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -41,7 +42,7 @@ public class DelegationServiceTest {
     @Before
     public void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        service = new DelegationServiceImpl(ao, userManager);
+        service = new DelegationServiceImpl(ao, userManager, new MemoryCacheManager());
     }
 
     @After

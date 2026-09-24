@@ -32,8 +32,21 @@ public class MattermostNotificationSender implements NotificationSender {
         }
         client.findDirectChannelId(email)
               .ifPresentOrElse(
-                      channelId -> client.sendMessage(channelId, message),
+                      channelId -> sendOrForget(email, channelId, message),
                       () -> log.warn("Пользователь {} не найден в Mattermost", email));
+    }
+
+    /**
+     * id канала кешируется, поэтому при сбое отправки его надо забыть: пользователя
+     * могли удалить или пересоздать, и иначе канал остался бы битым до истечения кеша.
+     */
+    private void sendOrForget(String email, String channelId, String message) {
+        try {
+            client.sendMessage(channelId, message);
+        } catch (RuntimeException e) {
+            client.forgetChannel(email);
+            throw e;
+        }
     }
 
     @Override

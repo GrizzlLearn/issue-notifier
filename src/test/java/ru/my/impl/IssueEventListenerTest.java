@@ -37,6 +37,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import ru.my.model.ClosingStatuses;
 
 /**
  * Проверяет маршрутизацию событий: CREATED и DELETED игнорируются,
@@ -237,7 +238,7 @@ public class IssueEventListenerTest {
     public void statusSelectedForProjectTriggersClosedAction() {
         org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
 
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatus("3", "PROJ")));
+        listener.onIssueEvent(statusChangedTo("3", issueInProject("PROJ")));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
@@ -247,7 +248,7 @@ public class IssueEventListenerTest {
     public void otherStatusDoesNotTriggerClosedAction() {
         org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
 
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatus("10001", "PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
@@ -256,7 +257,7 @@ public class IssueEventListenerTest {
     /** Без выбранных статусов проект уведомлений о закрытии не шлёт — правила по категории нет. */
     @Test
     public void projectWithoutConfiguredStatusesDoesNotTriggerClosedAction() {
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatus("10001", "PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
@@ -266,22 +267,18 @@ public class IssueEventListenerTest {
     public void assigneeChangeNotifiesNewAssignee() {
         ApplicationUser assignee = mock(ApplicationUser.class);
         org.mockito.Mockito.when(assignee.getDisplayName()).thenReturn("Пётр");
-        Issue issue = issueWithStatus("10001", "PROJ");
-        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+        org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
 
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+        listener.onIssueEvent(assignedTo("petr", issueInProject("PROJ")));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), eq(List.of(assignee)), anyMap());
     }
 
-    /** Снятие исполнителя уведомлять некому. */
+    /** Снятие исполнителя уведомлять некому: в changelog пустое newvalue. */
     @Test
     public void clearedAssigneeNotifiesNobody() {
-        Issue issue = issueWithStatus("10001", "PROJ");
-        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(null);
-
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+        listener.onIssueEvent(assignedTo(null, issueInProject("PROJ")));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
@@ -291,13 +288,12 @@ public class IssueEventListenerTest {
     @Test
     public void assigneeIsExcludedFromFieldChangeMail() {
         ApplicationUser assignee = mock(ApplicationUser.class);
-        Issue issue = issueWithStatus("10001", "PROJ");
-        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+        org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
         org.mockito.Mockito.when(notificationService.processAction(
                         any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
                 .thenReturn(List.of(assignee));
 
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+        listener.onIssueEvent(assignedTo("petr", issueInProject("PROJ")));
 
         verify(notificationService).processEvent(
                 any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)));
@@ -305,7 +301,7 @@ public class IssueEventListenerTest {
 
     @Test
     public void statusChangeDoesNotTriggerAssignedAction() {
-        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatus("10001", "PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
@@ -340,13 +336,10 @@ public class IssueEventListenerTest {
     }
 
     /** Задача с заданным статусом и проектом. */
-    private Issue issueWithStatus(String statusId, String projectKey) {
-        Status status = mock(Status.class);
-        org.mockito.Mockito.when(status.getId()).thenReturn(statusId);
+    private Issue issueInProject(String projectKey) {
         Project project = mock(Project.class);
         org.mockito.Mockito.when(project.getKey()).thenReturn(projectKey);
         Issue issue = mock(Issue.class);
-        org.mockito.Mockito.when(issue.getStatus()).thenReturn(status);
         org.mockito.Mockito.when(issue.getProjectObject()).thenReturn(project);
         org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
         return issue;
@@ -358,14 +351,29 @@ public class IssueEventListenerTest {
     }
 
     private IssueEvent eventWithChanges(Long typeId, Issue issue) {
-        return eventWithChanges(typeId, issue, "Status");
+        return eventWithChanges(typeId, issue, "Status", null);
     }
 
-    private IssueEvent eventWithChanges(Long typeId, Issue issue, String fieldName) {
+    /** Изменение статуса с id нового статуса в {@code newvalue}. */
+    private IssueEvent statusChangedTo(String statusId, Issue issue) {
+        return eventWithChanges(typeId(), issue, "Status", statusId);
+    }
+
+    /** Изменение исполнителя с ключом нового исполнителя в {@code newvalue}. */
+    private IssueEvent assignedTo(String userKey, Issue issue) {
+        return eventWithChanges(typeId(), issue, "assignee", userKey);
+    }
+
+    private static Long typeId() {
+        return EventType.ISSUE_UPDATED_ID;
+    }
+
+    private IssueEvent eventWithChanges(Long typeId, Issue issue, String fieldName, String newValue) {
         GenericValue item = mock(GenericValue.class);
         org.mockito.Mockito.when(item.getString("field")).thenReturn(fieldName);
         org.mockito.Mockito.when(item.getString("oldstring")).thenReturn("Open");
         org.mockito.Mockito.when(item.getString("newstring")).thenReturn("In Progress");
+        org.mockito.Mockito.when(item.getString("newvalue")).thenReturn(newValue);
 
         GenericValue changeLog = mock(GenericValue.class);
         try {

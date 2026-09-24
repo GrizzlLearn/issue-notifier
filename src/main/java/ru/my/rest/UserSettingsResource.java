@@ -5,8 +5,8 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
-import ru.my.impl.ActionTemplates;
-import ru.my.impl.ChannelKeys;
+import ru.my.model.ActionTemplates;
+import ru.my.model.ChannelKeys;
 import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
@@ -17,6 +17,7 @@ import javax.ws.rs.core.Response;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Named
@@ -24,6 +25,15 @@ import java.util.stream.Collectors;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class UserSettingsResource {
+
+    /**
+     * Telegram chat_id — целое число, у групп со знаком минус. Поле правит
+     * пользователь руками, и мусор в нём иначе виден только в логах отправки.
+     */
+    private static final Pattern CHAT_ID = Pattern.compile("-?\\d{1,20}");
+
+    /** Разумный предел для списка проектов: поле хранится одной строкой в AO. */
+    static final int MAX_PROJECTS = 500;
 
     private final JiraAuthenticationContext authContext;
     private final UserSettingsService userSettingsService;
@@ -59,6 +69,15 @@ public class UserSettingsResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return unauthorized();
         if (dto == null) return badRequest("Тело запроса не задано");
+
+        String chatId = dto.getTelegramChatId();
+        if (chatId != null && !chatId.isBlank() && !CHAT_ID.matcher(chatId.trim()).matches()) {
+            return badRequest("Telegram chat_id — это число; его присылает бот в ответ на /start");
+        }
+        if (dto.getProjects() != null && dto.getProjects().size() > MAX_PROJECTS) {
+            return badRequest("Слишком много проектов: не больше " + MAX_PROJECTS);
+        }
+
         userSettingsService.saveSettings(user, dto.toModel());
         return Response.noContent().build();
     }

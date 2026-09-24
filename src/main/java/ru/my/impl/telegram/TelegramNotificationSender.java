@@ -19,15 +19,11 @@ public class TelegramNotificationSender implements NotificationSender {
 
     private final TelegramClient client;
     private final UserSettingsService userSettingsService;
-    @SuppressWarnings("unused") // инжекция гарантирует запуск polling при старте плагина
-    private final TelegramPollingService pollingService;
 
     @Inject
-    public TelegramNotificationSender(TelegramClient client, UserSettingsService userSettingsService,
-                                      TelegramPollingService pollingService) {
+    public TelegramNotificationSender(TelegramClient client, UserSettingsService userSettingsService) {
         this.client = client;
         this.userSettingsService = userSettingsService;
-        this.pollingService = pollingService;
     }
 
     @Override

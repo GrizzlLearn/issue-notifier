@@ -10,8 +10,8 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
-import ru.my.impl.ActionTemplates;
-import ru.my.impl.ChannelKeys;
+import ru.my.model.ActionTemplates;
+import ru.my.model.ChannelKeys;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
@@ -298,6 +298,21 @@ public class AdminSettingsResourceTest {
 
         assertEquals(204, response.getStatus());
         verify(adminSettingsService, never()).set(eq(enabledKey), anyString());
+        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+    }
+
+    /** Кривой домен ломает URI.create в клиенте — ловим на сохранении, а не в логе отправки. */
+    @Test
+    public void putReturns400WhenMattermostDomainIsNotAbsoluteUrl() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(400, resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, "mm.example.com")).getStatus());
+        assertEquals(400, resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, "https://mm example.com")).getStatus());
+    }
+
+    @Test
+    public void putAcceptsAbsoluteMattermostDomain() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(204, resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com")).getStatus());
         verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
     }
 }

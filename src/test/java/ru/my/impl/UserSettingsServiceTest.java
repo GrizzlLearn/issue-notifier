@@ -3,6 +3,7 @@ package ru.my.impl;
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.jira.user.MockApplicationUser;
 import net.java.ao.Query;
+import com.atlassian.cache.memory.MemoryCacheManager;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -27,7 +28,7 @@ public class UserSettingsServiceTest {
 
     @Before
     public void setUp() {
-        service = new UserSettingsServiceImpl(ao);
+        service = new UserSettingsServiceImpl(ao, new MemoryCacheManager());
     }
 
     @Test

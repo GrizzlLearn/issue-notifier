@@ -59,7 +59,11 @@ public final class DiffFormatter {
             }
             String oldString = item.getString("oldstring");
             String newString = item.getString("newstring");
-            changes.add(new DiffResult.FieldChange(field, oldString, newString));
+            // newvalue — идентификатор нового значения (ключ пользователя, id статуса);
+            // по нему логика действий узнаёт, что именно изменилось, не заглядывая
+            // в текущее состояние задачи
+            String newValue = item.getString("newvalue");
+            changes.add(new DiffResult.FieldChange(field, oldString, newString, newValue));
         }
         return new DiffResult(changes);
     }

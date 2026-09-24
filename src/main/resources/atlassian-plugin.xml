@@ -7,9 +7,6 @@
         <param name="plugin-logo">images/pluginLogo.png</param>
     </plugin-info>
 
-    <!-- add our i18n resource -->
-    <resource type="i18n" name="i18n" location="issue-notifier"/>
-    
     <!-- Active Objects — хранилище настроек плагина -->
     <ao key="ao-module" name="Issue Notifier Active Objects">
         <description>Хранилище настроек плагина</description>
@@ -43,14 +40,22 @@
         <url-pattern>/issue-notifier/admin</url-pattern>
     </servlet>
 
-    <!-- JS-бандл для пользовательского диалога (загружается на всех страницах) -->
+    <!-- Загрузчик пункта в шапке: единственное, что грузится на каждой странице.
+         Сам диалог подтягивается по клику через WRM.require — иначе React разбирался бы
+         при открытии любой задачи, доски и дашборда. -->
+    <web-resource key="user-nav-resources" name="Issue Notifier Nav">
+        <dependency>com.atlassian.auiplugin:ajs</dependency>
+        <resource type="download" name="user-nav.js" location="/js/user-nav.min.js"/>
+        <context>atl.general</context>
+    </web-resource>
+
+    <!-- JS-бандл пользовательского диалога: без context, грузится только по требованию -->
     <web-resource key="user-settings-resources" name="Issue Notifier User Settings">
         <dependency>com.atlassian.auiplugin:ajs</dependency>
         <!-- jira/ajs/select/multi-select — тот же виджет, что рендерит User Picker/Fix Versions
              в самой Jira; используем его для пикеров проектов и делегатов в модалке -->
         <dependency>jira.webresources:frother-multiselect</dependency>
         <resource type="download" name="user-settings.js" location="/js/user-settings.min.js"/>
-        <context>atl.general</context>
     </web-resource>
 
     <!-- JS-бандл для admin-страницы (подключается сервлетом напрямую) -->

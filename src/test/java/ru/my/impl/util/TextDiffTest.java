@@ -84,4 +84,20 @@ public class TextDiffTest {
         assertEquals('-', lines.get(1).marker()); // b удалено
         assertEquals(' ', lines.get(2).marker()); // c
     }
+
+    /**
+     * Поле в тысячи строк: LCS-матрица m×n съела бы десятки мегабайт, поэтому
+     * такое изменение отдаётся целиком, без построчного сравнения.
+     */
+    @Test
+    public void returnsWholeVersionsWhenTooManyLines() {
+        String from = "x\n".repeat(TextDiff.MAX_LINES + 10);
+        String to = "y\n".repeat(TextDiff.MAX_LINES + 10);
+
+        List<TextDiff.Line> lines = TextDiff.diff(from, to);
+
+        assertTrue(lines.stream().noneMatch(l -> l.marker() == ' '));
+        assertEquals('-', lines.get(0).marker());
+        assertEquals('+', lines.get(lines.size() - 1).marker());
+    }
 }

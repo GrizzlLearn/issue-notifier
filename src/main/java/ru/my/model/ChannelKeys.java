@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.model;
 
 /**
  * Ключи настроек каналов уведомлений в {@link ru.my.api.AdminSettingsService}.

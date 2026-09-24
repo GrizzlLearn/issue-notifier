@@ -81,6 +81,36 @@ public class UserSettingsResourceTest {
         ));
     }
 
+    /** chat_id правит пользователь руками; мусор в нём иначе виден только в логах отправки. */
+    @Test
+    public void putReturns400WhenChatIdIsNotNumeric() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        UserSettingsDto dto = new UserSettingsDto(true, List.of("*"), List.of(), "@mychat", null);
+
+        assertEquals(400, resource.save(dto).getStatus());
+        verify(userSettingsService, never()).saveSettings(any(), any());
+    }
+
+    @Test
+    public void putAcceptsNegativeChatIdOfGroupChat() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        UserSettingsDto dto = new UserSettingsDto(true, List.of("*"), List.of(), "-1001234567", null);
+
+        assertEquals(204, resource.save(dto).getStatus());
+    }
+
+    @Test
+    public void putReturns400WhenTooManyProjects() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        List<String> projects = java.util.stream.IntStream.range(0, UserSettingsResource.MAX_PROJECTS + 1)
+                .mapToObj(i -> "P" + i)
+                .collect(java.util.stream.Collectors.toList());
+
+        assertEquals(400, resource.save(
+                new UserSettingsDto(true, projects, List.of(), null, null)).getStatus());
+        verify(userSettingsService, never()).saveSettings(any(), any());
+    }
+
     @Test
     public void putIgnoresUnknownChannelNames() {
         when(authContext.getLoggedInUser()).thenReturn(user);

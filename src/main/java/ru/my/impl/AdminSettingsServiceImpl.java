@@ -1,10 +1,11 @@
 package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
+import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheManager;
+import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
 import ru.my.ao.AdminSettingsEntity;
@@ -26,6 +27,10 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Результаты кешируются на 60 секунд — настройки меняются редко и только вручную.
  * {@link #set} инвалидирует запись для изменённого ключа.
+ * <p>
+ * Кеш кластерный ({@code replicateViaInvalidation}): администратор правит настройки
+ * на одной ноде, а канал должен выключиться на всех. Реплицируются только
+ * инвалидации — значения остаются локальными, сериализовать их не требуется.
  */
 @Named
 @ExportAsService(AdminSettingsService.class)
@@ -37,18 +42,25 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
     private static final String ABSENT = "\0";
 
     private final ActiveObjects ao;
-    private final Cache<String, String> cache = CacheBuilder.newBuilder()
-            .expireAfterWrite(60, TimeUnit.SECONDS)
-            .build();
+    private final Cache<String, String> cache;
 
     @Inject
-    public AdminSettingsServiceImpl(@ComponentImport ActiveObjects ao) {
+    public AdminSettingsServiceImpl(@ComponentImport ActiveObjects ao,
+                                    @ComponentImport CacheManager cacheManager) {
         this.ao = ao;
+        this.cache = cacheManager.getCache(
+                AdminSettingsServiceImpl.class.getName() + ".settings",
+                null,
+                new CacheSettingsBuilder()
+                        .maxEntries(1_000)
+                        .expireAfterWrite(60, TimeUnit.SECONDS)
+                        .replicateViaInvalidation()
+                        .build());
     }
 
     @Override
     public String get(String key, String defaultValue) {
-        String cached = cache.getIfPresent(key);
+        String cached = cache.get(key);
         if (cached != null) {
             return ABSENT.equals(cached) ? defaultValue : cached;
         }
@@ -81,11 +93,11 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
             entity.save();
             return null;
         });
-        cache.invalidate(key);
+        cache.remove(key);
     }
 
     @Override
     public boolean isChannelEnabled(NotificationChannel channel) {
-        return Boolean.parseBoolean(get(channel.name().toLowerCase() + ".enabled", "false"));
+        return Boolean.parseBoolean(get(channel.enabledKey(), "false"));
     }
 }

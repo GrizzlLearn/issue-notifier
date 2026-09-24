@@ -5,8 +5,8 @@ import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.project.ProjectCategory;
 import com.atlassian.jira.project.type.ProjectTypeKey;
-import ru.my.impl.ActionTemplates;
-import ru.my.impl.util.JsonUtil;
+import ru.my.model.ActionTemplates;
+import ru.my.model.JsonUtil;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
@@ -35,10 +35,6 @@ public final class AdminPageData {
      * все содержат эту подстроку, а перечислять их поимённо пришлось бы поддерживать.
      */
     static final String USER_PICKER_TYPE = "userpicker";
-
-    /** Каналы, по которым рассылаются уведомления о действиях (email не участвует). */
-    private static final List<NotificationChannel> ACTION_CHANNELS =
-            List.of(NotificationChannel.MATTERMOST, NotificationChannel.TELEGRAM);
 
     private AdminPageData() {
     }
@@ -81,7 +77,7 @@ public final class AdminPageData {
             action.placeholders().forEach(ph -> placeholders.add(JsonUtil.jsonString(ph)));
 
             StringJoiner channels = new StringJoiner(",", "[", "]");
-            for (NotificationChannel channel : ACTION_CHANNELS) {
+            for (NotificationChannel channel : NotificationChannel.actionChannels()) {
                 channels.add("{"
                         + "\"channel\":" + JsonUtil.jsonString(channel.name())
                         + ",\"templateKey\":" + JsonUtil.jsonString(ActionTemplates.templateKey(action, channel))

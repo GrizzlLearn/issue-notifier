@@ -7,7 +7,6 @@ import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.comments.Comment;
-import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
@@ -35,6 +34,7 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import ru.my.model.ClosingStatuses;
 
 /**
  * Слушатель событий Jira. Парсит changelog в потоке Jira-события (C1),
@@ -114,8 +114,21 @@ public class IssueEventListener {
         }
     }
 
+    /**
+     * Ошибка здесь уходит в диспетчер событий Jira и мешает другим слушателям,
+     * поэтому разбор события обёрнут целиком: внутри рабочих задач ошибки уже
+     * ловит {@link #submit}.
+     */
     @EventListener
     public void onIssueEvent(IssueEvent event) {
+        try {
+            handleIssueEvent(event);
+        } catch (Exception e) {
+            log.error("Ошибка разбора события {}: {}", event.getEventTypeId(), e.getMessage(), e);
+        }
+    }
+
+    private void handleIssueEvent(IssueEvent event) {
         Issue issue = event.getIssue();
         ApplicationUser author = event.getUser();
         // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
@@ -147,12 +160,14 @@ public class IssueEventListener {
         // к БД быть не должно.
         submit(typeId, () -> {
             List<ApplicationUser> notified = new ArrayList<>();
-            if (hasChange(diff, "assignee")) {
-                notified.addAll(notifyAssigned(issue, author));
+            DiffResult.FieldChange assigneeChange = changeOf(diff, "assignee");
+            if (assigneeChange != null) {
+                notified.addAll(notifyAssigned(issue, author, assigneeChange));
             }
-            if (hasChange(diff, "status") && isClosingTransition(issue)) {
+            DiffResult.FieldChange statusChange = changeOf(diff, "status");
+            if (statusChange != null && isClosingTransition(issue, statusChange.toId())) {
                 notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
-                        List.of(), placeholders(issue, author, "status", statusName(issue))));
+                        List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue()))));
             }
             notificationService.processEvent(issue, author, diff, notified);
         });
@@ -211,19 +226,31 @@ public class IssueEventListener {
         return users;
     }
 
-    private static boolean hasChange(DiffResult diff, String fieldName) {
-        return diff.getChanges().stream().anyMatch(c -> fieldName.equalsIgnoreCase(c.fieldName()));
+    /** @return изменение поля из changelog или {@code null}, если поле не менялось */
+    private static DiffResult.FieldChange changeOf(DiffResult diff, String fieldName) {
+        return diff.getChanges().stream()
+                .filter(c -> fieldName.equalsIgnoreCase(c.fieldName()))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
      * Назначение исполнителем: уведомление уходит тому, кого назначили.
      * Снятие исполнителя получателя не даёт, а назначивший себя сам отсеивается
      * дальше по конвейеру как автор события.
+     * <p>
+     * Исполнитель берётся из changelog, а не из {@code issue.getAssignee()}:
+     * задачу могли переназначить ещё раз, пока событие ждало в очереди, и тогда
+     * уведомление ушло бы не тому.
      *
      * @return кому сообщение реально ушло — им не нужна вторая рассылка об изменении полей
      */
-    private List<ApplicationUser> notifyAssigned(Issue issue, ApplicationUser author) {
-        ApplicationUser assignee = issue.getAssignee();
+    private List<ApplicationUser> notifyAssigned(Issue issue, ApplicationUser author,
+                                                 DiffResult.FieldChange change) {
+        if (change.toId() == null || change.toId().isBlank()) {
+            return List.of(); // исполнителя сняли
+        }
+        ApplicationUser assignee = userManager.getUserByKey(change.toId());
         if (assignee == null) {
             return List.of();
         }
@@ -235,15 +262,17 @@ public class IssueEventListener {
      * Закрывающим считается только статус, выбранный администратором для проекта
      * задачи на вкладке «Действия». Проект без выбранных статусов уведомлений
      * о закрытии не шлёт — правила по категории статуса нет.
+     * <p>
+     * Статус берётся из changelog, а не из задачи: к моменту рассылки её могли
+     * перевести дальше, и закрытие бы потерялось.
      */
-    private boolean isClosingTransition(Issue issue) {
-        Status status = issue.getStatus();
-        if (status == null) {
+    private boolean isClosingTransition(Issue issue, String newStatusId) {
+        if (newStatusId == null || newStatusId.isBlank()) {
             return false;
         }
         String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : "";
         return ClosingStatuses.isClosing(
-                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, status.getId());
+                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, newStatusId);
     }
 
     private Map<String, String> placeholders(Issue issue, ApplicationUser author,
@@ -263,8 +292,8 @@ public class IssueEventListener {
         return values;
     }
 
-    private static String statusName(Issue issue) {
-        return issue.getStatus() != null ? issue.getStatus().getName() : "";
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
     }
 
     private static String truncate(String text) {

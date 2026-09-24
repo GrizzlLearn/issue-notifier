@@ -1,4 +1,4 @@
-package ru.my.impl;
+package ru.my.model;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
