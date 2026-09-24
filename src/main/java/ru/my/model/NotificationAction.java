@@ -25,6 +25,11 @@ public enum NotificationAction {
             List.of("issueKey", "issueUrl", "summary", "project", "author", "status"),
             ActionScope.SELECTED, true, true),
 
+    /** Получатель — тот, кого назначили; список приходит от слушателя событий. */
+    ASSIGNED("assigned", "Назначение исполнителем",
+            List.of("issueKey", "issueUrl", "summary", "project", "author", "assignee"),
+            ActionScope.ALL, false, false),
+
     COMMENT_ADDED("commentAdded", "Новый комментарий",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
             ActionScope.SELECTED, false, false);

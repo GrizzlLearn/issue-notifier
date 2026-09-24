@@ -205,6 +205,39 @@ public class IssueEventListenerTest {
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
     }
 
+    @Test
+    public void assigneeChangeNotifiesNewAssignee() {
+        ApplicationUser assignee = mock(ApplicationUser.class);
+        org.mockito.Mockito.when(assignee.getDisplayName()).thenReturn("Пётр");
+        Issue issue = issueWithStatus("10001", "PROJ");
+        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.ASSIGNED), eq(List.of(assignee)), anyMap());
+    }
+
+    /** Снятие исполнителя уведомлять некому. */
+    @Test
+    public void clearedAssigneeNotifiesNobody() {
+        Issue issue = issueWithStatus("10001", "PROJ");
+        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(null);
+
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issue, "assignee"));
+
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
+    }
+
+    @Test
+    public void statusChangeDoesNotTriggerAssignedAction() {
+        listener.onIssueEvent(eventWithChanges(EventType.ISSUE_UPDATED_ID, issueWithStatus("10001", "PROJ")));
+
+        verify(notificationService, never()).processAction(
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
+    }
+
     // ---- вспомогательные методы ----------------------------------------
 
     /** Событие без changelog — для проверки фильтрации по типу или пустого diff. */
@@ -241,8 +274,12 @@ public class IssueEventListenerTest {
     }
 
     private IssueEvent eventWithChanges(Long typeId, Issue issue) {
+        return eventWithChanges(typeId, issue, "Status");
+    }
+
+    private IssueEvent eventWithChanges(Long typeId, Issue issue, String fieldName) {
         GenericValue item = mock(GenericValue.class);
-        org.mockito.Mockito.when(item.getString("field")).thenReturn("Status");
+        org.mockito.Mockito.when(item.getString("field")).thenReturn(fieldName);
         org.mockito.Mockito.when(item.getString("oldstring")).thenReturn("Open");
         org.mockito.Mockito.when(item.getString("newstring")).thenReturn("In Progress");
 

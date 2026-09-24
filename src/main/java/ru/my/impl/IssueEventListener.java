@@ -131,7 +131,12 @@ public class IssueEventListener {
         if (diff.isEmpty()) {
             return;
         }
-        if (hasStatusChange(diff)) {
+        if (hasChange(diff, "assignee")) {
+            // исполнителя резолвим в рабочем потоке — в потоке Jira-события
+            // обращений к БД быть не должно
+            submit(typeId, () -> notifyAssigned(issue, author));
+        }
+        if (hasChange(diff, "status")) {
             // настройка закрывающих статусов читается в рабочем потоке — в потоке
             // Jira-события обращений к БД быть не должно
             submit(typeId, () -> {
@@ -173,8 +178,22 @@ public class IssueEventListener {
         return users;
     }
 
-    private static boolean hasStatusChange(DiffResult diff) {
-        return diff.getChanges().stream().anyMatch(c -> "status".equalsIgnoreCase(c.fieldName()));
+    private static boolean hasChange(DiffResult diff, String fieldName) {
+        return diff.getChanges().stream().anyMatch(c -> fieldName.equalsIgnoreCase(c.fieldName()));
+    }
+
+    /**
+     * Назначение исполнителем: уведомление уходит тому, кого назначили.
+     * Снятие исполнителя получателя не даёт, а назначивший себя сам отсеивается
+     * дальше по конвейеру как автор события.
+     */
+    private void notifyAssigned(Issue issue, ApplicationUser author) {
+        ApplicationUser assignee = issue.getAssignee();
+        if (assignee == null) {
+            return;
+        }
+        notificationService.processAction(issue, author, NotificationAction.ASSIGNED,
+                List.of(assignee), placeholders(issue, author, "assignee", assignee.getDisplayName()));
     }
 
     /**
