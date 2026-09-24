@@ -101,6 +101,7 @@ function SecretField({ field, values, setValue }) {
 }
 
 const PROJECTS_KEY = 'sd.projects';
+const CATEGORIES_KEY = 'sd.categories';
 const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
@@ -110,6 +111,17 @@ const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enable
 const hintStyle = { fontSize: 11, color: '#707070' };
 
 const parseKeys = raw => (raw || '').split(',').filter(Boolean);
+
+// Проекты области действия: отмеченные явно плюс проекты отмеченных категорий.
+// Разворот только для экрана — в настройке категории остаются категориями,
+// иначе новый проект в категории пришлось бы отмечать руками.
+function scopedProjects(values) {
+  const chosenCategories = parseKeys(values[CATEGORIES_KEY]);
+  const byCategory = PAGE_DATA.projects
+    .filter(p => p.category && chosenCategories.includes(p.category))
+    .map(p => p.value);
+  return [...new Set([...parseKeys(values[PROJECTS_KEY]), ...byCategory])];
+}
 
 // "HELP:10001,3;SUP:10002" ↔ { HELP: ['10001','3'], SUP: ['10002'] }
 function parseClosing(raw) {
@@ -241,18 +253,55 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
 
 // Проекты, к которым применяется логика портала: SD-проекты полным списком
 // (их немного), остальные — через пикер.
-function ProjectsPanel({ projects, selected, labels, setValue }) {
+function ProjectsPanel({ projects, labels, values, setValue }) {
+  const categories = PAGE_DATA.categories || [];
+  const chosenCategories = parseKeys(values[CATEGORIES_KEY]);
+  const selected = parseKeys(values[PROJECTS_KEY]);
+
+  // проект, попавший в область через категорию, отмечен, но снимается только категорией —
+  // иначе галка возвращалась бы сама и это выглядело бы сбоем
+  const viaCategory = new Set(projects
+    .filter(p => p.category && chosenCategories.includes(p.category))
+    .map(p => p.value));
+
   const sdProjects = projects.filter(p => p.serviceDesk);
   const sdKeys = sdProjects.map(p => p.value);
   const otherSelected = selected.filter(key => !sdKeys.includes(key));
+  const otherViaCategory = [...viaCategory].filter(key => !sdKeys.includes(key) && !selected.includes(key));
 
   function setSelected(next) {
     setValue(PROJECTS_KEY, next.join(','));
   }
 
+  function toggleCategory(id, checked) {
+    setValue(CATEGORIES_KEY, (checked
+      ? [...chosenCategories, id]
+      : chosenCategories.filter(c => c !== id)).join(','));
+  }
+
   return (
     <fieldset className="in-section">
       <legend>Проекты с логикой портала</legend>
+
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории проектов</div>
+        {categories.length === 0 && <div style={hintStyle}>Категорий проектов в инстансе нет.</div>}
+        {categories.map(c => (
+          <label key={c.value} style={{ marginRight: 16 }}>
+            <input
+              type="checkbox"
+              checked={chosenCategories.includes(c.value)}
+              onChange={e => toggleCategory(c.value, e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            {c.label}
+          </label>
+        ))}
+        <div style={hintStyle}>
+          Проект, добавленный в отмеченную категорию позже, попадёт в область сам —
+          но закрывающие статусы для него всё равно нужно выбрать на вкладке «Действия».
+        </div>
+      </div>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Service Desk</div>
@@ -262,13 +311,15 @@ function ProjectsPanel({ projects, selected, labels, setValue }) {
             <label>
               <input
                 type="checkbox"
-                checked={selected.includes(p.value)}
+                checked={selected.includes(p.value) || viaCategory.has(p.value)}
+                disabled={viaCategory.has(p.value)}
                 onChange={e => setSelected(e.target.checked
                   ? [...selected, p.value]
                   : selected.filter(k => k !== p.value))}
                 style={{ marginRight: 6 }}
               />
               {p.label}
+              {viaCategory.has(p.value) && <span style={{ ...hintStyle, marginLeft: 6 }}>через категорию</span>}
             </label>
           </div>
         ))}
@@ -283,6 +334,11 @@ function ProjectsPanel({ projects, selected, labels, setValue }) {
           onAdd={key => setSelected([...selected, key])}
           onRemove={key => setSelected(selected.filter(k => k !== key))}
         />
+        {otherViaCategory.length > 0 && (
+          <div style={{ ...hintStyle, marginTop: 6 }}>
+            Через категории также включены: {otherViaCategory.map(key => labels[key] || key).join(', ')}
+          </div>
+        )}
       </div>
     </fieldset>
   );
@@ -582,8 +638,8 @@ function ProjectsTab({ values, setValue }) {
   return (
     <ProjectsPanel
       projects={PAGE_DATA.projects}
-      selected={parseKeys(values[PROJECTS_KEY])}
       labels={PROJECT_LABELS}
+      values={values}
       setValue={setValue}
     />
   );
@@ -595,7 +651,7 @@ function ActionsTab({ values, setValue }) {
     <ActionsPanel
       actions={PAGE_DATA.actions}
       labels={PROJECT_LABELS}
-      selected={parseKeys(values[PROJECTS_KEY])}
+      selected={scopedProjects(values)}
       statuses={PAGE_DATA.statuses}
       values={values}
       setValue={setValue}

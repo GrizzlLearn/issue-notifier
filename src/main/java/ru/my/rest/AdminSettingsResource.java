@@ -66,6 +66,7 @@ public class AdminSettingsResource {
                 ChannelKeys.TELEGRAM_BOT_TOKEN,
                 ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
                 SD_PROJECTS,
+                PortalProjects.CATEGORIES_KEY,
                 ClosingStatuses.KEY));
         for (NotificationAction action : NotificationAction.values()) {
             keys.add(ActionTemplates.enabledKey(action));

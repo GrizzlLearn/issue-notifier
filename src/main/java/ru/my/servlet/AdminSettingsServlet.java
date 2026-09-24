@@ -34,10 +34,12 @@ public class AdminSettingsServlet extends HttpServlet {
 
         // справочники страницы отдаём сразу в HTML — данные лежат в этом же
         // процессе Jira, ходить за ними из браузера незачем
+        ProjectManager projectManager = ComponentAccessor.getComponent(ProjectManager.class);
         String pageData = AdminPageData.toJson(
-                ComponentAccessor.getComponent(ProjectManager.class).getProjectObjects(),
+                projectManager.getProjectObjects(),
                 ComponentAccessor.getComponent(ConstantsManager.class).getStatuses(),
-                ComponentAccessor.getComponent(CustomFieldManager.class).getCustomFieldObjects());
+                ComponentAccessor.getComponent(CustomFieldManager.class).getCustomFieldObjects(),
+                projectManager.getAllProjectCategories());
 
         String pluginResourceBase = req.getContextPath()
                 + "/download/resources/ru.my.issue-notifier:admin-settings-resources";

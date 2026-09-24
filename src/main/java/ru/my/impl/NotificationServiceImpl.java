@@ -196,8 +196,13 @@ public class NotificationServiceImpl implements NotificationService {
         if (ActionScope.SELECTED != scope) {
             return true;
         }
-        String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : null;
-        return PortalProjects.contains(adminSettingsService.get(PortalProjects.KEY, ""), projectKey);
+        var project = issue.getProjectObject();
+        var category = project != null ? project.getProjectCategoryObject() : null;
+        return PortalProjects.contains(
+                adminSettingsService.get(PortalProjects.KEY, ""),
+                adminSettingsService.get(PortalProjects.CATEGORIES_KEY, ""),
+                project != null ? project.getKey() : null,
+                category != null ? category.getId() : null);
     }
 
     private void sendAction(NotificationAction action, NotificationChannel channel,

@@ -3,6 +3,7 @@ package ru.my.servlet;
 import com.atlassian.jira.issue.fields.CustomField;
 import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.project.Project;
+import com.atlassian.jira.project.ProjectCategory;
 import com.atlassian.jira.project.type.ProjectTypeKey;
 import ru.my.impl.ActionTemplates;
 import ru.my.impl.util.JsonUtil;
@@ -50,7 +51,8 @@ public final class AdminPageData {
      * @return строка JSON, пригодная для вставки в {@code <script>} — см. {@link #embed(String)}
      */
     public static String toJson(Collection<Project> projects, Collection<Status> statuses,
-                                Collection<CustomField> customFields) {
+                                Collection<CustomField> customFields,
+                                Collection<ProjectCategory> categories) {
         StringJoiner projectsJson = new StringJoiner(",", "[", "]");
         projects.stream()
                 .sorted(Comparator.comparing(Project::getName, String.CASE_INSENSITIVE_ORDER))
@@ -58,6 +60,9 @@ public final class AdminPageData {
                         + "\"value\":" + JsonUtil.jsonString(p.getKey())
                         + ",\"label\":" + JsonUtil.jsonString(p.getName() + " (" + p.getKey() + ")")
                         + ",\"serviceDesk\":" + SERVICE_DESK.equals(p.getProjectTypeKey())
+                        + ",\"category\":" + (p.getProjectCategoryObject() != null
+                                ? JsonUtil.jsonString(String.valueOf(p.getProjectCategoryObject().getId()))
+                                : "null")
                         + "}"));
 
         StringJoiner statusesJson = new StringJoiner(",", "[", "]");
@@ -108,7 +113,16 @@ public final class AdminPageData {
                         + ",\"scope\":" + JsonUtil.jsonString(fieldScope(cf))
                         + "}"));
 
+        StringJoiner categoriesJson = new StringJoiner(",", "[", "]");
+        categories.stream()
+                .sorted(Comparator.comparing(ProjectCategory::getName, String.CASE_INSENSITIVE_ORDER))
+                .forEach(c -> categoriesJson.add("{"
+                        + "\"value\":" + JsonUtil.jsonString(String.valueOf(c.getId()))
+                        + ",\"label\":" + JsonUtil.jsonString(c.getName())
+                        + "}"));
+
         return "{\"projects\":" + projectsJson
+                + ",\"categories\":" + categoriesJson
                 + ",\"statuses\":" + statusesJson
                 + ",\"userFields\":" + userFieldsJson
                 + ",\"actions\":" + actionsJson + "}";
