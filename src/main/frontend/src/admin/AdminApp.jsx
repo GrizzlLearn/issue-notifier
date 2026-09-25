@@ -40,6 +40,14 @@ const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
 
+// Варианты области: один источник для радио внутри действия и для свёрнутой шапки
+const SCOPES = [
+  ['all', 'Во всех проектах', 'во всех проектах'],
+  ['selected', 'Только в портальных проектах', 'в портальных проектах'],
+  ['service_desk', 'Только в Service Desk-проектах', 'в Service Desk-проектах'],
+];
+const SCOPE_SHORT = Object.fromEntries(SCOPES.map(([value, , short]) => [value, short]));
+
 // Ключ флага канала — как в AdminSettingsServiceImpl: имя канала в нижнем регистре + ".enabled".
 const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enabled'] === 'true';
 const hintStyle = { fontSize: 11, color: '#707070' };
@@ -289,7 +297,7 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
 
   return (
     <fieldset className="in-section">
-      <legend>Проекты с логикой портала</legend>
+      <legend>Портальные проекты</legend>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории проектов</div>
@@ -369,7 +377,7 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
   }
 
   if (selected.length === 0) {
-    return <div style={hintStyle}>Отметьте проекты выше, чтобы выбрать для них закрывающие статусы.</div>;
+    return <div style={hintStyle}>Отметьте проекты на вкладке «Портальные проекты», чтобы выбрать для них закрывающие статусы.</div>;
   }
 
   return (
@@ -534,143 +542,160 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
         const noRecipients = action.recipientsKey
           && selectedRecipients(values, action.recipientsKey).length === 0;
 
+        const broken = enabled && (noTemplates || noRecipients || noProjects);
+        // область у действия с фиксированной областью выведена из закрывающих статусов
+        const scopeShort = action.scopeFixed
+          ? 'где заданы закрывающие статусы'
+          : SCOPE_SHORT[scope] || scope;
+
         return (
-          <fieldset key={action.key} className="in-section">
-            <legend>{action.title}</legend>
-
-            <div className="field-group" style={{ marginBottom: 12 }}>
-              <label className="in-check">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={e => setValue(action.enabledKey, e.target.checked ? 'true' : 'false')}
-                />
-                <span>Уведомлять</span>
-              </label>
-            </div>
-
-            <div className="field-group" style={{ marginBottom: 12 }}>
-              <div className="label">Область</div>
-              {action.scopeFixed && (
-                <div style={hintStyle}>
-                  Работает в проектах, для которых ниже выбраны закрывающие статусы.
-                </div>
+          // <details> вместо своего состояния: раскрытие, фокус и клавиатура —
+          // штатное поведение браузера, а действий со временем станет больше
+          <details key={action.key} className="in-action">
+            <summary className="in-action-head">
+              <span className="in-action-title">{action.title}</span>
+              <span className={'in-action-state' + (enabled ? ' in-on' : '')}>
+                {enabled ? 'уведомляем' : 'выключено'}
+              </span>
+              {enabled && <span className="in-action-scope">{scopeShort}</span>}
+              {broken && (
+                <span className="in-action-warn" title="Уведомления по этому действию не отправятся">
+                  не отправится
+                </span>
               )}
-              {!action.scopeFixed && (
-                <div className="in-radio-row">
-                  {[
-                    ['all', 'Во всех проектах'],
-                    ['selected', 'Только в проектах со вкладки «Проекты»'],
-                    ['service_desk', 'Только в Service Desk-проектах'],
-                  ].map(([value, label]) => (
-                    <label key={value} className="in-check">
-                      <input
-                        type="radio"
-                        name={action.scopeKey}
-                        checked={scope === value}
-                        onChange={() => setValue(action.scopeKey, value)}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+            </summary>
 
-            {enabled && noTemplates && (
-              <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
-                {liveChannels.length === 0
-                  ? 'Все каналы отключены на вкладке «Каналы» — уведомления по этому действию отправляться не будут.'
-                  : 'Шаблоны не заданы — уведомления по этому действию отправляться не будут.'}
-              </div>
-            )}
-
-            {enabled && noRecipients && (
-              <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
-                Получатели не выбраны — уведомления по этому действию отправляться не будут.
-              </div>
-            )}
-
-            {enabled && noProjects && (
-              <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
-                На вкладке «Проекты» не отмечено ни одного проекта — уведомления по этому действию не отправятся.
-              </div>
-            )}
-
-            {action.recipientsKey && (
-              <RecipientsField
-                recipientsKey={action.recipientsKey}
-                values={values}
-                setValue={setValue}
-              />
-            )}
-
-            {action.key === CLOSED_ACTION && (
-              <ClosingStatusesField
-                labels={labels}
-                selected={selected}
-                statuses={statuses}
-                values={values}
-                setValue={setValue}
-              />
-            )}
-
-            {action.channels.map(ch => {
-              const channelOff = !isChannelOn(values, ch.channel);
-
-              return (
-                <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
-                  <label className="label" htmlFor={ch.templateKey}>
-                    {CHANNEL_TITLES[ch.channel] || ch.channel}
-                    {channelOff && <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal' }}>канал отключён</span>}
-                  </label>
-                  <textarea
-                    id={ch.templateKey}
-                    className="textarea"
-                    rows={3}
-                    value={values[ch.templateKey] || ''}
-                    readOnly={channelOff}
-                    onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
-                    aria-invalid={Boolean(errors[ch.templateKey])}
-                    style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+            <div className="in-action-body">
+              <div className="field-group" style={{ marginBottom: 12 }}>
+                <label className="in-check">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={e => setValue(action.enabledKey, e.target.checked ? 'true' : 'false')}
                   />
-                  {errors[ch.templateKey] && (
-                    <div className="in-field-error">{errors[ch.templateKey]}</div>
-                  )}
+                  <span>Уведомлять</span>
+                </label>
+              </div>
 
-                  {ch.templateKeyNoText && (
-                    <>
-                      <label className="label" htmlFor={ch.templateKeyNoText} style={{ marginTop: 8 }}>
-                        {(CHANNEL_TITLES[ch.channel] || ch.channel) + ' — без текста комментария'}
+              <div className="field-group" style={{ marginBottom: 12 }}>
+                <div className="label">Область</div>
+                {action.scopeFixed && (
+                  <div style={hintStyle}>
+                    Работает в проектах, для которых ниже выбраны закрывающие статусы.
+                  </div>
+                )}
+                {!action.scopeFixed && (
+                  <div className="in-radio-row">
+                    {SCOPES.map(([value, label]) => (
+                      <label key={value} className="in-check">
+                        <input
+                          type="radio"
+                          name={action.scopeKey}
+                          checked={scope === value}
+                          onChange={() => setValue(action.scopeKey, value)}
+                        />
+                        <span>{label}</span>
                       </label>
-                      <textarea
-                        id={ch.templateKeyNoText}
-                        className="textarea"
-                        rows={2}
-                        value={values[ch.templateKeyNoText] || ''}
-                        readOnly={channelOff}
-                        onChange={channelOff ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
-                        aria-invalid={Boolean(errors[ch.templateKeyNoText])}
-                        style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
-                      />
-                      {errors[ch.templateKeyNoText] && (
-                        <div className="in-field-error">{errors[ch.templateKeyNoText]}</div>
-                      )}
-                      <div style={hintStyle}>
-                        Уходит, когда текст отправлять нельзя: запрет в настройках ниже,
-                        личная настройка получателя или комментарий с ограничением по группе или роли.
-                        Плейсхолдер {'{comment}'} в нём остаётся пустым.
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                    ))}
+                  </div>
+                )}
+              </div>
 
-            <div style={hintStyle}>
-              Доступные плейсхолдеры: {action.placeholders.map(p => '{' + p + '}').join(', ')}
+              {enabled && noTemplates && (
+                <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
+                  {liveChannels.length === 0
+                    ? 'Все каналы отключены на вкладке «Каналы» — уведомления по этому действию отправляться не будут.'
+                    : 'Шаблоны не заданы — уведомления по этому действию отправляться не будут.'}
+                </div>
+              )}
+
+              {enabled && noRecipients && (
+                <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
+                  Получатели не выбраны — уведомления по этому действию отправляться не будут.
+                </div>
+              )}
+
+              {enabled && noProjects && (
+                <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
+                  Портальные проекты не выбраны — уведомления по этому действию не отправятся.
+                </div>
+              )}
+
+              {action.recipientsKey && (
+                <RecipientsField
+                  recipientsKey={action.recipientsKey}
+                  values={values}
+                  setValue={setValue}
+                />
+              )}
+
+              {action.key === CLOSED_ACTION && (
+                <ClosingStatusesField
+                  labels={labels}
+                  selected={selected}
+                  statuses={statuses}
+                  values={values}
+                  setValue={setValue}
+                />
+              )}
+
+              {action.channels.map(ch => {
+                const channelOff = !isChannelOn(values, ch.channel);
+
+                return (
+                  <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
+                    <label className="label" htmlFor={ch.templateKey}>
+                      {CHANNEL_TITLES[ch.channel] || ch.channel}
+                      {channelOff && <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal' }}>канал отключён</span>}
+                    </label>
+                    <textarea
+                      id={ch.templateKey}
+                      className="textarea"
+                      rows={3}
+                      value={values[ch.templateKey] || ''}
+                      readOnly={channelOff}
+                      onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
+                      aria-invalid={Boolean(errors[ch.templateKey])}
+                      style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                    />
+                    {errors[ch.templateKey] && (
+                      <div className="in-field-error">{errors[ch.templateKey]}</div>
+                    )}
+
+                    {ch.templateKeyNoText && (
+                      <>
+                        <label className="label" htmlFor={ch.templateKeyNoText} style={{ marginTop: 8 }}>
+                          {(CHANNEL_TITLES[ch.channel] || ch.channel) + ' — без текста комментария'}
+                        </label>
+                        <textarea
+                          id={ch.templateKeyNoText}
+                          className="textarea"
+                          rows={2}
+                          value={values[ch.templateKeyNoText] || ''}
+                          readOnly={channelOff}
+                          onChange={channelOff ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
+                          aria-invalid={Boolean(errors[ch.templateKeyNoText])}
+                          style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                        />
+                        {errors[ch.templateKeyNoText] && (
+                          <div className="in-field-error">{errors[ch.templateKeyNoText]}</div>
+                        )}
+                        <div style={hintStyle}>
+                          Уходит, когда текст отправлять нельзя: запрет в «Тексте комментариев» выше,
+                          личная настройка получателя или комментарий с ограничением по группе или роли.
+                          Плейсхолдер {'{comment}'} в нём остаётся пустым.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div style={hintStyle}>
+                Доступные плейсхолдеры: {action.placeholders.map(p => '{' + p + '}').join(', ')}
+              </div>
             </div>
-          </fieldset>
+          </details>
         );
       })}
     </>
@@ -697,7 +722,7 @@ function ActionsTab({ values, setValue, errors }) {
   return (
     <>
       <fieldset className="in-section">
-        <legend>Комментарии</legend>
+        <legend>Текст комментариев</legend>
         <label className="in-check">
           <input
             type="checkbox"
@@ -796,7 +821,9 @@ export default function AdminApp() {
 
   if (loading) return <div className="in-loading">Загрузка…</div>;
 
-  const tabs = [['channels', 'Каналы'], ['actions', 'Действия'], ['projects', 'Проекты']];
+  // порядок совпадает со сценарием настройки: подключить канал, отметить
+  // проекты, включить действия
+  const tabs = [['channels', 'Каналы'], ['projects', 'Портальные проекты'], ['actions', 'Действия']];
 
   return (
     <div className="in-admin-wrap">

@@ -198,3 +198,64 @@
     line-height: 1;
     cursor: pointer;
 }
+
+/* Действие — свёрнутый блок на нативном <details>: действий со временем
+   становится больше, и простыня из четырёх fieldset'ов уже не читалась.
+   Шапка показывает состояние, чтобы не раскрывать блок ради проверки. */
+.in-action {
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    margin-bottom: 12px;
+}
+
+.in-action-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    font-weight: 600;
+    color: #172b4d;
+    cursor: pointer;
+}
+
+.in-action-head:hover { background: #f4f5f7; }
+
+.in-action[open] > .in-action-head {
+    border-bottom: 1px solid #dfe1e6;
+    margin-bottom: 4px;
+}
+
+/* Маркер рисует браузер; ::marker есть не везде, поэтому не прячем его,
+   а только не даём ему растянуть строку */
+.in-action-head::marker { color: #5e6c84; }
+
+.in-action-title { margin-right: auto; }
+
+.in-action-state,
+.in-action-scope,
+.in-action-warn {
+    font-size: 11px;
+    font-weight: normal;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+
+.in-action-state {
+    color: #5e6c84;
+    background: #f4f5f7;
+}
+
+.in-action-state.in-on {
+    color: #006644;
+    background: #e3fcef;
+}
+
+.in-action-scope { color: #5e6c84; }
+
+.in-action-warn {
+    color: #974f0c;
+    background: #fffae6;
+}
+
+.in-action-body { padding: 0 16px 16px; }
