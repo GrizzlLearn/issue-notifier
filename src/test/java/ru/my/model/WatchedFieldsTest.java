@@ -5,6 +5,7 @@ import org.junit.Test;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -62,6 +63,6 @@ public class WatchedFieldsTest {
     public void includesTreatsEmptySettingAsAllGroups() {
         assertTrue(WatchedFields.includes("", WatchedFields.CUSTOM));
         assertTrue(WatchedFields.includes("custom", WatchedFields.CUSTOM));
-        assertTrue(!WatchedFields.includes("custom", WatchedFields.DESCRIPTION));
+        assertFalse(WatchedFields.includes("custom", WatchedFields.DESCRIPTION));
     }
 }

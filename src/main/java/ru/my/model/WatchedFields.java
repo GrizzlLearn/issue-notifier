@@ -1,7 +1,9 @@
 package ru.my.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Какие изменения полей задачи попадают в уведомление наблюдателям —
@@ -42,7 +44,7 @@ public final class WatchedFields {
      * @return тот же {@link DiffResult}, если отфильтровывать нечего
      */
     public static DiffResult filter(String raw, DiffResult diff) {
-        List<String> groups = groups(raw);
+        Set<String> groups = groups(raw);
         if (groups.containsAll(GROUPS)) {
             return diff;
         }
@@ -72,11 +74,11 @@ public final class WatchedFields {
         return DESCRIPTION.equals(change.fieldName()) ? DESCRIPTION : OTHER;
     }
 
-    private static List<String> groups(String raw) {
+    private static Set<String> groups(String raw) {
         if (raw == null || raw.isBlank()) {
-            return GROUPS;
+            return Set.copyOf(GROUPS);
         }
-        List<String> groups = new ArrayList<>();
+        Set<String> groups = new LinkedHashSet<>();
         for (String chunk : raw.split(",")) {
             String trimmed = chunk.trim();
             if (!trimmed.isEmpty() && GROUPS.contains(trimmed)) {
