@@ -4,6 +4,7 @@ import com.atlassian.jira.issue.Issue;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
@@ -30,7 +31,7 @@ public class MattermostMessageFormatter implements MessageFormatter {
     @Override
     public String format(Issue issue, DiffResult diff) {
         StringBuilder sb = new StringBuilder();
-        String issueUrl = applicationProperties.getBaseUrl() + "/browse/" + issue.getKey();
+        String issueUrl = applicationProperties.getBaseUrl(UrlMode.CANONICAL) + "/browse/" + issue.getKey();
         sb.append("В задаче **[").append(mdEsc(issue.getKey())).append("](").append(issueUrl).append(")** — ")
           .append(mdEsc(issue.getSummary())).append(" произошли следующие изменения:\n\n");
 
@@ -63,7 +64,6 @@ public class MattermostMessageFormatter implements MessageFormatter {
         return NotificationChannel.MATTERMOST;
     }
 
-    /** Экранирует спецсимволы Markdown внутри ячейки таблицы. */
     /**
      * Экранирует то, что ломает вёрстку Mattermost: {@code |} рвёт строку таблицы,
      * а квадратные скобки в заголовке задачи превращаются в ссылку-обрубок рядом

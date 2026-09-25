@@ -1,8 +1,6 @@
 package ru.my.model;
 
 import org.junit.Test;
-import ru.my.model.NotificationAction;
-import ru.my.model.NotificationChannel;
 
 import java.util.List;
 import java.util.Map;

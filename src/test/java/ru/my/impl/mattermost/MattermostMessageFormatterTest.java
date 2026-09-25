@@ -2,6 +2,7 @@ package ru.my.impl.mattermost;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import org.junit.Test;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
@@ -18,7 +19,7 @@ public class MattermostMessageFormatterTest {
     private final MattermostMessageFormatter formatter = new MattermostMessageFormatter(applicationProperties);
 
     {
-        when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+        when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");
     }
 
     @Test

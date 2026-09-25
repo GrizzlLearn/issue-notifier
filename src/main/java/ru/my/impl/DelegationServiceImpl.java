@@ -160,6 +160,9 @@ public class DelegationServiceImpl implements DelegationService {
         cache.remove(from.getKey());
     }
 
+    // null из кеша — это промах, а не «делегации нет»: последнее хранится
+    // как Optional.empty(), иначе пустой ответ перечитывался бы каждый раз
+    @SuppressWarnings("OptionalAssignedToNull")
     @Override
     public Optional<DelegationInfo> getDelegation(ApplicationUser from) {
         Optional<DelegationInfo> cached = cache.get(from.getKey());

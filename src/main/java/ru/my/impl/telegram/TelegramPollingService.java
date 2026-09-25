@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
 import ru.my.model.NotificationChannel;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -92,7 +93,7 @@ public class TelegramPollingService implements JobRunner {
 
     @Nullable
     @Override
-    public JobRunnerResponse runJob(JobRunnerRequest request) {
+    public JobRunnerResponse runJob(@Nonnull JobRunnerRequest request) {
         pollOnce();
         return JobRunnerResponse.success();
     }

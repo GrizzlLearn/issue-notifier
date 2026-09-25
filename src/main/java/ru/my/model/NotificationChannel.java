@@ -2,7 +2,6 @@ package ru.my.model;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -45,5 +44,5 @@ public enum NotificationChannel {
 
     private static final List<NotificationChannel> ACTION_CHANNELS = Stream.of(values())
             .filter(c -> c.supportsActionTemplates)
-            .collect(Collectors.toUnmodifiableList());
+            .toList();
 }

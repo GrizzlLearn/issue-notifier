@@ -1,7 +1,5 @@
 package ru.my.rest;
 
-import com.atlassian.jira.permission.GlobalPermissionKey;
-import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
@@ -28,7 +26,6 @@ import java.util.Optional;
 public class UserDelegationResource {
 
     private final JiraAuthenticationContext authContext;
-    private final GlobalPermissionManager globalPermissionManager;
     private final DelegationService delegationService;
     private final UserManager userManager;
 
@@ -36,11 +33,9 @@ public class UserDelegationResource {
     public UserDelegationResource(
             @ComponentImport JiraAuthenticationContext authContext,
             @ComponentImport UserManager userManager,
-            @ComponentImport GlobalPermissionManager globalPermissionManager,
             DelegationService delegationService) {
         this.authContext = authContext;
         this.userManager = userManager;
-        this.globalPermissionManager = globalPermissionManager;
         this.delegationService = delegationService;
     }
 
@@ -76,12 +71,13 @@ public class UserDelegationResource {
             if (delegate == null) {
                 return UserSettingsResource.notFound("Пользователь не найден: " + key);
             }
-            // право на задачу проверяется при рассылке, но сказать об этом лучше здесь:
-            // иначе делегирование молча не работало бы
-            if (!delegate.isActive()
-                    || !globalPermissionManager.hasPermission(GlobalPermissionKey.USE, delegate)) {
+            // право на задачу проверяется при рассылке (BROWSE_PROJECTS), но про
+            // неактивного делегата лучше сказать сразу: иначе делегирование
+            // молча не работало бы
+            if (!delegate.isActive()) {
                 return UserSettingsResource.badRequest(
-                        "Пользователь не может получать уведомления: " + delegate.getDisplayName());
+                        "Пользователь неактивен и не может получать уведомления: "
+                                + delegate.getDisplayName());
             }
             delegates.add(delegate);
         }

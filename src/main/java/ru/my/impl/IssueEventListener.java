@@ -11,6 +11,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -285,7 +286,7 @@ public class IssueEventListener {
     private Map<String, String> placeholders(Issue issue, ApplicationUser author) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("issueKey", issue.getKey());
-        values.put("issueUrl", applicationProperties.getBaseUrl() + "/browse/" + issue.getKey());
+        values.put("issueUrl", applicationProperties.getBaseUrl(UrlMode.CANONICAL) + "/browse/" + issue.getKey());
         values.put("summary", issue.getSummary());
         values.put("project", issue.getProjectObject() != null ? issue.getProjectObject().getName() : "");
         values.put("author", author != null ? author.getDisplayName() : "");

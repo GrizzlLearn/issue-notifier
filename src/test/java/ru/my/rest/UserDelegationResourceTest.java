@@ -1,7 +1,5 @@
 package ru.my.rest;
 
-import com.atlassian.jira.permission.GlobalPermissionKey;
-import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.MockApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
@@ -28,7 +26,6 @@ public class UserDelegationResourceTest {
 
     @Mock private JiraAuthenticationContext authContext;
     @Mock private UserManager userManager;
-    @Mock private GlobalPermissionManager globalPermissionManager;
     @Mock private DelegationService delegationService;
 
     private UserDelegationResource resource;
@@ -38,11 +35,7 @@ public class UserDelegationResourceTest {
 
     @Before
     public void setUp() {
-        // право получать уведомления есть у всех, кроме отдельно оговорённых тестов
-        lenient().when(globalPermissionManager.hasPermission(eq(GlobalPermissionKey.USE), any()))
-                .thenReturn(true);
-        resource = new UserDelegationResource(
-                authContext, userManager, globalPermissionManager, delegationService);
+        resource = new UserDelegationResource(authContext, userManager, delegationService);
     }
 
     // --- GET ---
@@ -185,11 +178,12 @@ public class UserDelegationResourceTest {
         assertEquals(400, resource.set(new DelegationDto(List.of("jdoe"), null)).getStatus());
     }
 
+    /** Делегирование пережило увольнение делегата — говорим об этом сразу. */
     @Test
-    public void putReturns400WhenDelegateHasNoJiraAccess() {
+    public void putReturns400WhenDelegateIsInactive() {
         when(authContext.getLoggedInUser()).thenReturn(user);
+        bob.setActive(false);
         when(userManager.getUserByKey("bob")).thenReturn(bob);
-        when(globalPermissionManager.hasPermission(GlobalPermissionKey.USE, bob)).thenReturn(false);
 
         assertEquals(400, resource.set(new DelegationDto(List.of("bob"), null)).getStatus());
         verify(delegationService, never()).setDelegation(any(), any(), any());

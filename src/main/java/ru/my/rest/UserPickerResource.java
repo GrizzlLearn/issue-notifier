@@ -57,11 +57,10 @@ public class UserPickerResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
 
-        UserSearchParams params = UserSearchParams.builder()
+        UserSearchParams params = UserSearchParams.builder(MAX_RESULTS)
                 .allowEmptyQuery(true)
                 .includeActive(true)
                 .includeInactive(false)
-                .maxResults(MAX_RESULTS)
                 .build();
 
         String q = query == null ? "" : query;

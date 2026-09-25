@@ -134,7 +134,7 @@ public final class AdminPageData {
      */
     private static String fieldScope(CustomField field) {
         List<Project> associated = field.getAssociatedProjectObjects();
-        if (associated == null || associated.isEmpty()) {
+        if (associated.isEmpty()) {
             return "все проекты";
         }
         StringJoiner keys = new StringJoiner(", ");

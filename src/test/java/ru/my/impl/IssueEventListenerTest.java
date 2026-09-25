@@ -6,11 +6,11 @@ import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.comments.Comment;
-import com.atlassian.jira.issue.status.Status;
 import com.atlassian.jira.project.Project;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -210,11 +210,12 @@ public class IssueEventListenerTest {
         Comment comment = mock(Comment.class);
         org.mockito.Mockito.when(comment.getBody()).thenReturn("секрет");
         org.mockito.Mockito.when(comment.getGroupLevel()).thenReturn("jira-developers");
-        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");
 
         listener.onIssueEvent(new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID));
 
+        @SuppressWarnings("unchecked") // ArgumentCaptor не умеет generic-типы иначе
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any());
@@ -238,7 +239,7 @@ public class IssueEventListenerTest {
     public void statusSelectedForProjectTriggersClosedAction() {
         org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
 
-        listener.onIssueEvent(statusChangedTo("3", issueInProject("PROJ")));
+        listener.onIssueEvent(statusChangedTo("3", issueInProject()));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
@@ -248,7 +249,7 @@ public class IssueEventListenerTest {
     public void otherStatusDoesNotTriggerClosedAction() {
         org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
 
-        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
@@ -257,7 +258,7 @@ public class IssueEventListenerTest {
     /** Без выбранных статусов проект уведомлений о закрытии не шлёт — правила по категории нет. */
     @Test
     public void projectWithoutConfiguredStatusesDoesNotTriggerClosedAction() {
-        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
@@ -269,7 +270,7 @@ public class IssueEventListenerTest {
         org.mockito.Mockito.when(assignee.getDisplayName()).thenReturn("Пётр");
         org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
 
-        listener.onIssueEvent(assignedTo("petr", issueInProject("PROJ")));
+        listener.onIssueEvent(assignedTo("petr", issueInProject()));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), eq(List.of(assignee)), anyMap());
@@ -278,7 +279,7 @@ public class IssueEventListenerTest {
     /** Снятие исполнителя уведомлять некому: в changelog пустое newvalue. */
     @Test
     public void clearedAssigneeNotifiesNobody() {
-        listener.onIssueEvent(assignedTo(null, issueInProject("PROJ")));
+        listener.onIssueEvent(assignedTo(null, issueInProject()));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
@@ -293,7 +294,7 @@ public class IssueEventListenerTest {
                         any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
                 .thenReturn(List.of(assignee));
 
-        listener.onIssueEvent(assignedTo("petr", issueInProject("PROJ")));
+        listener.onIssueEvent(assignedTo("petr", issueInProject()));
 
         verify(notificationService).processEvent(
                 any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)));
@@ -301,7 +302,7 @@ public class IssueEventListenerTest {
 
     @Test
     public void statusChangeDoesNotTriggerAssignedAction() {
-        listener.onIssueEvent(statusChangedTo("10001", issueInProject("PROJ")));
+        listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
@@ -329,19 +330,20 @@ public class IssueEventListenerTest {
         if (assignee != null) {
             org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
         }
-        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");
 
         return new IssueEvent(issue, mock(ApplicationUser.class), comment, null, null,
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
     }
 
     /** Задача с заданным статусом и проектом. */
-    private Issue issueInProject(String projectKey) {
+    /** Задача в проекте PROJ: ключ проекта важен только для настройки закрывающих статусов. */
+    private Issue issueInProject() {
         Project project = mock(Project.class);
-        org.mockito.Mockito.when(project.getKey()).thenReturn(projectKey);
+        org.mockito.Mockito.when(project.getKey()).thenReturn("PROJ");
         Issue issue = mock(Issue.class);
         org.mockito.Mockito.when(issue.getProjectObject()).thenReturn(project);
-        org.mockito.Mockito.when(applicationProperties.getBaseUrl()).thenReturn("https://jira.example.com");
+        org.mockito.Mockito.when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");
         return issue;
     }
 

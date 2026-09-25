@@ -151,6 +151,7 @@ public class DelegationServiceTest {
 
         Optional<DelegationInfo> result = service.getDelegation(alice);
 
+        assertTrue(result.isPresent());
         assertEquals(List.of("bob", "carol"), result.get().getToUserKeys());
     }
 
