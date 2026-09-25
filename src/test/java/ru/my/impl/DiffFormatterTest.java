@@ -9,6 +9,7 @@ import ru.my.model.DiffResult;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -80,6 +81,22 @@ public class DiffFormatterTest {
 
         assertEquals(1, result.getChanges().size());
         assertEquals("Status", result.getChanges().get(0).fieldName());
+    }
+
+    /**
+     * Кастомное поле распознаётся по {@code fieldtype}: по нему админская галка
+     * «Кастомные поля» отличает их от системных, а не по имени поля.
+     */
+    @Test
+    public void marksCustomFieldChange() {
+        GenericValue custom = mockItem("Заказчик", null, "Иванов");
+        when(custom.getString("fieldtype")).thenReturn("custom");
+        GenericValue system = mockItem("Status", "Open", "Closed");
+
+        DiffResult result = DiffFormatter.parseItems(List.of(custom, system));
+
+        assertTrue(result.getChanges().get(0).isCustom());
+        assertFalse(result.getChanges().get(1).isCustom());
     }
 
     // ---- вспомогательные методы ----------------------------------------

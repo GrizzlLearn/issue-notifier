@@ -41,6 +41,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import ru.my.model.ActionTemplates;
+import ru.my.model.CommentTextMode;
+import ru.my.model.WatchedFields;
 import ru.my.model.PortalProjects;
 
 /**
@@ -110,6 +112,42 @@ public class NotificationServiceTest {
 
         verify(watcherManager, never()).getWatchers(any(), any());
         verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void skipsEventWhenWatcherNotificationsDisabledByAdmin() {
+        when(adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false")).thenReturn("true");
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    /**
+     * Админ оставил только «Описание», а менялся статус — уведомлять не о чем,
+     * наблюдателей даже не спрашиваем.
+     */
+    @Test
+    public void skipsEventWhenChangedFieldGroupIsUnchecked() {
+        when(adminSettingsService.get(WatchedFields.KEY, "")).thenReturn(WatchedFields.DESCRIPTION);
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void sendsEventWhenChangedFieldGroupIsChecked() {
+        when(adminSettingsService.get(WatchedFields.KEY, "")).thenReturn(WatchedFields.OTHER);
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(sender).send(watcher, "msg");
     }
 
     @Test
@@ -441,6 +479,43 @@ public class NotificationServiceTest {
                 Map.of("issueKey", "PROJ-1", "comment", "секрет"));
 
         verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /**
+     * Режим «всегда с текстом»: личная галка получателя не спрашивается — иначе
+     * администратор не может гарантировать, что текст дойдёт до всех.
+     */
+    @Test
+    public void shownModeIgnoresUserHiddenFlag() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий: {comment}");
+        when(adminSettingsService.get(CommentTextMode.KEY, "")).thenReturn(CommentTextMode.SHOWN.key());
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST))
+                        .commentTextHidden(true).build());
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1", "comment", "секрет"));
+
+        verify(sender).send(watcher, "Комментарий: секрет");
+    }
+
+    /** Режим «всегда без текста» переключает на шаблон без комментария. */
+    @Test
+    public void hiddenModeSwitchesTemplateEvenIfUserAllowsText() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий: {comment}");
+        when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(NotificationAction.COMMENT_ADDED, NotificationChannel.MATTERMOST), ""))
+                .thenReturn("Новый комментарий в {issueKey}");
+        when(adminSettingsService.get(CommentTextMode.KEY, "")).thenReturn(CommentTextMode.HIDDEN.key());
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1", "comment", "секрет"));
+
+        verify(sender).send(watcher, "Новый комментарий в PROJ-1");
     }
 
     /** Текст не должен уехать через шаблон «без текста», даже если в нём оставили {comment}. */

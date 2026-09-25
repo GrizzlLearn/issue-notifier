@@ -7,6 +7,7 @@ import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
 import ru.my.model.ActionTemplates;
 import ru.my.model.ChannelKeys;
+import ru.my.model.CommentTextMode;
 import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
@@ -58,10 +59,14 @@ public class UserSettingsResource {
                 .filter(adminSettingsService::isChannelEnabled)
                 .map(NotificationChannel::name)
                 .collect(Collectors.toList());
-        boolean commentTextAllowed = !Boolean.parseBoolean(
+        CommentTextMode commentTextMode = CommentTextMode.resolve(
+                adminSettingsService.get(CommentTextMode.KEY, ""),
                 adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
+        boolean watchersEnabled = !Boolean.parseBoolean(
+                adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false"));
         return Response.ok(UserSettingsDto.from(
-                userSettingsService.getSettings(user), botUsername, enabledChannels, commentTextAllowed)).build();
+                userSettingsService.getSettings(user), botUsername, enabledChannels,
+                commentTextMode, watchersEnabled)).build();
     }
 
     @PUT

@@ -6,6 +6,8 @@ import com.atlassian.mail.queue.MailQueueItem;
 import org.junit.Test;
 import ru.my.model.NotificationChannel;
 
+import java.util.Map;
+
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -27,18 +29,22 @@ public class EmailNotificationSenderTest {
         verify(mailQueue).addItem(any(MailQueueItem.class));
     }
 
-    @Test
-    public void skipsUserWithEmptyEmail() {
+    @Test(expected = IllegalStateException.class)
+    public void failsForUserWithEmptyEmail() {
         sender.send(mockUser(""), "body");
-
-        verify(mailQueue, never()).addItem(any());
     }
 
-    @Test
-    public void skipsUserWithNullEmail() {
+    @Test(expected = IllegalStateException.class)
+    public void failsForUserWithNullEmail() {
         sender.send(mockUser(null), "body");
+    }
 
-        verify(mailQueue, never()).addItem(any());
+    /** Своих настроек у канала нет — проверка это обычная постановка в очередь. */
+    @Test
+    public void testSendQueuesMessage() {
+        sender.sendTest(mockUser("alice@example.com"), "проверка", Map.of());
+
+        verify(mailQueue).addItem(any(MailQueueItem.class));
     }
 
     private static ApplicationUser mockUser(String email) {

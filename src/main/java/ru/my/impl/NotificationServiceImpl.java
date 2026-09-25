@@ -36,7 +36,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import ru.my.model.ActionTemplates;
+import ru.my.model.CommentTextMode;
 import ru.my.model.PortalProjects;
+import ru.my.model.WatchedFields;
 
 /**
  * Оркестратор уведомлений.
@@ -154,6 +156,17 @@ public class NotificationServiceImpl implements NotificationService {
         if (diff.isEmpty()) {
             return;
         }
+        if (Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false"))) {
+            return;
+        }
+
+        // Группы полей, которые админ отключил, в сообщение не попадают. Фильтр стоит
+        // только здесь: логика действий смотрит в changelog сама (исполнитель, статус),
+        // и снятая галка «Прочие поля» не должна выключать уведомление о назначении.
+        DiffResult watched = WatchedFields.filter(adminSettingsService.get(WatchedFields.KEY, ""), diff);
+        if (watched.isEmpty()) {
+            return;
+        }
         if (formatters.isEmpty()) {
             log.warn("Нет зарегистрированных каналов доставки — уведомление по задаче {} пропущено",
                     issue.getKey());
@@ -173,7 +186,7 @@ public class NotificationServiceImpl implements NotificationService {
             if (excludedKeys.contains(r.user().getKey())) {
                 continue;
             }
-            sendToRecipient(issue, diff, r.user(), r.settings(), channelCache);
+            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache);
         }
     }
 
@@ -203,8 +216,10 @@ public class NotificationServiceImpl implements NotificationService {
 
         // текст комментария запрещён администратором — или его нет в значениях,
         // например у комментария с ограничением по группе или роли
-        boolean textAllowed = placeholders.containsKey("comment")
-                && !Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
+        CommentTextMode textMode = CommentTextMode.resolve(
+                adminSettingsService.get(CommentTextMode.KEY, ""),
+                adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
+        boolean textAllowed = placeholders.containsKey("comment") && textMode != CommentTextMode.HIDDEN;
 
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
@@ -212,7 +227,9 @@ public class NotificationServiceImpl implements NotificationService {
             if (excludedKeys.contains(r.user().getKey())) {
                 continue;
             }
-            boolean withText = textAllowed && !r.settings().isCommentTextHidden();
+            // в режиме SHOWN личная настройка не спрашивается: текст получают все
+            boolean withText = textAllowed
+                    && (textMode == CommentTextMode.SHOWN || !r.settings().isCommentTextHidden());
             Map<String, String> values = withText ? placeholders : withoutCommentText(placeholders);
 
             boolean sent = false;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getAdminSettings, saveAdminSettings } from '../api';
+import { getAdminSettings, saveAdminSettings, testChannel } from '../api';
 
 // Справочники страницы (проекты, статусы, каталог действий) сервлет кладёт прямо
 // в HTML — см. AdminPageData. Поэтому поиск проектов идёт по массиву в памяти
@@ -10,12 +10,14 @@ const MAX_SUGGESTIONS = 20;
 const SECTIONS = [
   {
     title: 'Email',
+    channel: 'EMAIL',
     fields: [
       { key: 'email.enabled', label: 'Включить канал', type: 'checkbox' },
     ],
   },
   {
     title: 'Mattermost',
+    channel: 'MATTERMOST',
     fields: [
       { key: 'mattermost.enabled', label: 'Включить канал', type: 'checkbox' },
       { key: 'mattermost.domain', label: 'URL сервера', type: 'text', placeholder: 'https://mattermost.example.com' },
@@ -25,6 +27,7 @@ const SECTIONS = [
   },
   {
     title: 'Telegram',
+    channel: 'TELEGRAM',
     fields: [
       { key: 'telegram.enabled', label: 'Включить канал', type: 'checkbox' },
       { key: 'telegram.botUsername', label: 'Username бота', type: 'text', placeholder: 'MyJiraBot' },
@@ -35,7 +38,32 @@ const SECTIONS = [
 
 const PROJECTS_KEY = 'sd.projects';
 const CATEGORIES_KEY = 'sd.categories';
-const HIDE_COMMENT_TEXT_KEY = 'comment.hideText';
+// Инвертированный ключ: пустая настройка — уведомляем, как плагин работал раньше.
+const WATCHERS_DISABLED_KEY = 'watchers.disabled';
+const COMMENT_TEXT_MODE_KEY = 'comment.textMode';
+const WATCHED_FIELDS_KEY = 'watchers.fields';
+
+// Значения совпадают с константами WatchedFields на бэкенде: пустая настройка —
+// все группы, снятые галки сохраняются отдельным значением 'none'.
+// Третий элемент — подпись под галкой: сотрудник техподдержки не должен угадывать,
+// что попадает в группу.
+const FIELD_GROUPS = [
+  ['description', 'Описание', 'Поле «Описание» задачи.'],
+  ['custom', 'Кастомные поля',
+    'Поля, созданные у вас в Администрирование → Поля задач: «Заказчик», «Тип обращения», '
+    + 'а также Sprint, Epic Link, Story Points. Обычно самый шумный источник уведомлений.'],
+  ['other', 'Прочие поля задачи',
+    'Встроенные поля Jira, кроме описания: тема, статус, исполнитель, автор, приоритет, '
+    + 'срок, метки, компоненты, версии, резолюция, вложения, связи задач, оценки времени.'],
+];
+const NO_FIELDS = 'none';
+
+// Режимы текста комментария — как CommentTextMode на бэкенде.
+const COMMENT_TEXT_MODES = [
+  ['hidden', 'Всегда без текста комментария', 'Текста не будет ни у кого.'],
+  ['shown', 'Всегда с текстом', 'Текст получат все; личная настройка пользователя не спрашивается.'],
+  ['user', 'Пусть каждый выбирает сам', 'В настройках пользователя появляется галка.'],
+];
 const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
@@ -117,6 +145,50 @@ function SecretField({ field, values, setValue }) {
 }
 
 const parseKeys = raw => (raw || '').split(',').filter(Boolean);
+
+// Проверочная отправка канала. Отправляем значения секции прямо из формы —
+// админ проверяет введённый токен до сохранения; результат приходит от бэкенда
+// текстом (например, «Пользователь не найден в Mattermost»).
+function ChannelTestButton({ section, values }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  // вкладка «Каналы» размонтируется при переключении вкладок, а запрос идёт до 10 секунд:
+  // без этой проверки ответ пришёл бы в размонтированный компонент
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  async function handleClick() {
+    setBusy(true); setError(null); setResult(null);
+    try {
+      const settings = Object.fromEntries(
+        section.fields.filter(f => !f.isSetKey || values[f.key]).map(f => [f.key, values[f.key] || ''])
+      );
+      const message = await testChannel(section.channel, settings);
+      if (alive.current) setResult(message);
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+
+  return (
+    <div className="field-group">
+      <button type="button" className="aui-button" onClick={handleClick} disabled={busy}>
+        {busy ? 'Отправка…' : 'Проверить'}
+      </button>
+      <span style={{ marginLeft: 8 }}>
+        {error && <span className="in-status-text is-error">{error}</span>}
+        {result && <span className="in-status-text is-success">{result}</span>}
+      </span>
+      <div style={hintStyle}>
+        Сообщение придёт вам. Проверяются значения из формы, сохранять их для этого не нужно;
+        пустое поле токена означает «взять сохранённый».
+      </div>
+    </div>
+  );
+}
 
 // Проекты области действия: отмеченные явно плюс проекты отмеченных категорий.
 // Разворот только для экрана — в настройке категории остаются категориями,
@@ -717,23 +789,98 @@ function ProjectsTab({ values, setValue }) {
   );
 }
 
+// Отмеченные группы полей; пустая настройка — все группы, как на бэкенде.
+function watchedGroups(values) {
+  const chosen = parseKeys(values[WATCHED_FIELDS_KEY]);
+  if (chosen.length === 0) {
+    return FIELD_GROUPS.map(([value]) => value);
+  }
+  return chosen.filter(v => v !== NO_FIELDS);
+}
+
+// Рассылка наблюдателям об изменениях задач: общий выключатель и группы полей,
+// которые считаются поводом для уведомления.
+function IssueChangesSection({ values, setValue }) {
+  const on = values[WATCHERS_DISABLED_KEY] !== 'true';
+  const groups = watchedGroups(values);
+
+  function toggleGroup(value, checked) {
+    const next = checked ? [...groups, value] : groups.filter(v => v !== value);
+    setValue(WATCHED_FIELDS_KEY, (next.length ? next : [NO_FIELDS]).join(','));
+  }
+
+  return (
+    <fieldset className="in-section">
+      <legend>Изменения задач</legend>
+      <label className="in-check">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={e => setValue(WATCHERS_DISABLED_KEY, e.target.checked ? 'false' : 'true')}
+        />
+        <span>Уведомлять наблюдателей об изменениях задач</span>
+      </label>
+      <div style={hintStyle}>
+        Выключено — рассылка об изменении полей не идёт, и выбор проектов в настройках
+        пользователя скрыт. Уведомления о действиях ниже работают независимо, включая
+        те, где получателями выбраны наблюдатели.
+      </div>
+
+      {on && (
+        <div style={{ marginTop: 10, marginLeft: 20 }}>
+          <div className="label">Какие изменения считать поводом</div>
+          {FIELD_GROUPS.map(([value, label, note]) => (
+            <label key={value} className="in-check" style={{ marginBottom: 6 }}>
+              <input
+                type="checkbox"
+                checked={groups.includes(value)}
+                onChange={e => toggleGroup(value, e.target.checked)}
+              />
+              <span>{label}
+                <span className="in-check-note" style={{ display: 'block' }}>{note}</span>
+              </span>
+            </label>
+          ))}
+          <div style={hintStyle}>
+            Снятая галка убирает такие поля из сообщения; если после этого менять
+            нечего — уведомление не отправляется. Комментарии сюда не входят — это
+            отдельное действие ниже. На уведомления о действиях (назначение,
+            закрытие) галки не влияют.
+          </div>
+          {groups.length === 0 && (
+            <div className="aui-message aui-message-warning" style={{ marginTop: 8 }}>
+              Ни одна группа полей не выбрана — уведомления об изменениях приходить не будут.
+            </div>
+          )}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 // Вкладка «Действия»: что отправляем, где это работает и каким текстом.
 function ActionsTab({ values, setValue, errors }) {
   return (
     <>
+      <IssueChangesSection values={values} setValue={setValue} />
+
       <fieldset className="in-section">
         <legend>Текст комментариев</legend>
-        <label className="in-check">
-          <input
-            type="checkbox"
-            checked={values[HIDE_COMMENT_TEXT_KEY] !== 'true'}
-            onChange={e => setValue(HIDE_COMMENT_TEXT_KEY, e.target.checked ? 'false' : 'true')}
-          />
-          <span>Отправлять текст комментария в уведомлениях</span>
-        </label>
+        {COMMENT_TEXT_MODES.map(([value, label, hint]) => (
+          <label key={value} className="in-check" style={{ marginBottom: 4 }}>
+            <input
+              type="radio"
+              name={COMMENT_TEXT_MODE_KEY}
+              checked={values[COMMENT_TEXT_MODE_KEY] === value}
+              onChange={() => setValue(COMMENT_TEXT_MODE_KEY, value)}
+            />
+            <span>{label}
+              <span className="in-check-note" style={{ display: 'block' }}>{hint}</span>
+            </span>
+          </label>
+        ))}
         <div style={hintStyle}>
-          Запрет действует на все действия с текстом комментария. Каждый пользователь
-          может дополнительно отключить текст у себя; включить вопреки этой настройке — нет.
+          Настройка действует на все действия с текстом комментария.
         </div>
       </fieldset>
 
@@ -888,6 +1035,8 @@ export default function AdminApp() {
                   )}
                 </div>
               ))}
+
+              {section.channel && <ChannelTestButton section={section} values={values} />}
             </fieldset>
           ))}
         </div>

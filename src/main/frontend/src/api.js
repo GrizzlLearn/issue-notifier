@@ -93,3 +93,16 @@ export async function saveAdminSettings(data) {
     body: JSON.stringify(data),
   }));
 }
+
+// Проверочная отправка: отправляем значения прямо из формы, ещё не сохранённые,
+// чтобы админ проверил введённый токен до записи в настройки.
+export async function testChannel(channel, settings) {
+  const resp = await fetch(`${apiBase()}/admin/settings/test`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: mutationHeaders,
+    body: JSON.stringify({ channel, settings }),
+  });
+  await checkOk(resp);
+  return (await resp.json()).message;
+}

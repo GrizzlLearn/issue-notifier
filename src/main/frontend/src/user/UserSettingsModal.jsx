@@ -148,7 +148,9 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
         ))}
       </div>
 
-      {settings.commentTextAllowed !== false && (
+      {/* Галка появляется только когда админ разрешил оба варианта (CommentTextMode.USER):
+          в режимах «всегда с текстом» и «всегда без текста» выбора у пользователя нет */}
+      {(settings.commentTextMode || 'user') === 'user' && (
         <div className="field-group">
           <label className="in-check">
             <input
@@ -189,6 +191,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
         </div>
       )}
 
+      {settings.watchersEnabled !== false && (
       <div className="field-group">
         <label className="label" htmlFor="in-projects">Проекты — уведомления об изменениях задач</label>
         <div className="description" style={{ marginBottom: 6 }}>
@@ -210,6 +213,7 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
                           ariaLabel="Проекты" onChange={handleProjectsChange} />
         </div>
       </div>
+      )}
 
       {/* статус рядом с кнопкой: тело модалки скроллится, баннер наверху был бы не виден */}
       <div className="in-actions">

@@ -6,19 +6,17 @@ import com.atlassian.mail.queue.MailQueue;
 import com.atlassian.mail.queue.SingleMailQueueItem;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import ru.my.api.NotificationSender;
 import ru.my.model.NotificationChannel;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.Map;
 
 @Named
 @ExportAsService(NotificationSender.class)
 public class EmailNotificationSender implements NotificationSender {
 
-    private static final Logger log = LoggerFactory.getLogger(EmailNotificationSender.class);
     private static final String SUBJECT = "Jira: изменения в задаче";
 
     private final MailQueue mailQueue;
@@ -32,14 +30,24 @@ public class EmailNotificationSender implements NotificationSender {
     public void send(ApplicationUser recipient, String message) {
         String address = recipient.getEmailAddress();
         if (address == null || address.isBlank()) {
-            log.debug("Нет email у пользователя {}, пропускаем", recipient.getDisplayName());
-            return;
+            throw new IllegalStateException(
+                    "У пользователя " + recipient.getDisplayName() + " не указан email в Jira");
         }
         Email email = new Email(address);
         email.setSubject(SUBJECT);
         email.setBody(message);
         email.setMimeType("text/html");
         mailQueue.addItem(new SingleMailQueueItem(email));
+    }
+
+    /**
+     * Своих настроек у канала нет, поэтому проверка — обычная отправка.
+     * Письмо попадает в почтовую очередь Jira: успех здесь означает, что оно
+     * принято в очередь, а не что дошло до ящика.
+     */
+    @Override
+    public void sendTest(ApplicationUser recipient, String message, Map<String, String> settings) {
+        send(recipient, message);
     }
 
     @Override

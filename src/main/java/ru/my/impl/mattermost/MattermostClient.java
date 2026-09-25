@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -83,9 +84,34 @@ public class MattermostClient {
         if (cached != null) {
             return Optional.of(cached);
         }
-        String domain = adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, "");
-        String token  = adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, "");
-        String botId  = adminSettings.get(ChannelKeys.MATTERMOST_BOT_ID, "");
+        Optional<String> channelId = resolveDirectChannelId(email, Map.of());
+        channelId.ifPresent(id -> channelIds.put(email, id));
+        return channelId;
+    }
+
+    /**
+     * Проверочная отправка с админ-страницы: домен, токен и botId берутся из формы.
+     * Кеш каналов не используется — проверяют, как правило, другой сервер или токен,
+     * и записывать результат проверки в рабочий кеш нельзя.
+     */
+    public void sendTest(String email, String text, Map<String, String> settings) {
+        String channelId = resolveDirectChannelId(email, settings)
+                .orElseThrow(() -> new MattermostException(
+                        "Пользователь с email " + email + " не найден в Mattermost"));
+        postMessage(value(ChannelKeys.MATTERMOST_DOMAIN, settings),
+                value(ChannelKeys.MATTERMOST_TOKEN, settings), channelId, text);
+    }
+
+    /** Значение настройки: из формы, а если там пусто — из сохранённых настроек. */
+    private String value(String key, Map<String, String> settings) {
+        String fromForm = settings.get(key);
+        return fromForm == null || fromForm.isBlank() ? adminSettings.get(key, "") : fromForm;
+    }
+
+    private Optional<String> resolveDirectChannelId(String email, Map<String, String> settings) {
+        String domain = value(ChannelKeys.MATTERMOST_DOMAIN, settings);
+        String token  = value(ChannelKeys.MATTERMOST_TOKEN, settings);
+        String botId  = value(ChannelKeys.MATTERMOST_BOT_ID, settings);
 
         HttpResponse<String> userResp = get(domain, token,
                 "/api/v4/users/email/" + URLEncoder.encode(email, StandardCharsets.UTF_8));
@@ -100,9 +126,7 @@ public class MattermostClient {
         HttpResponse<String> chanResp = post(domain, token, "/api/v4/channels/direct", body);
         requireSuccess(chanResp);
 
-        String channelId = extractId(chanResp.body());
-        channelIds.put(email, channelId);
-        return Optional.of(channelId);
+        return Optional.of(extractId(chanResp.body()));
     }
 
     /**
@@ -115,13 +139,14 @@ public class MattermostClient {
 
     /** Отправляет сообщение в канал. Бросает {@link MattermostException} при сбое. */
     public void sendMessage(String channelId, String text) {
-        String domain = adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, "");
-        String token  = adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, "");
+        postMessage(adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, ""),
+                adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, ""), channelId, text);
+    }
 
+    private void postMessage(String domain, String token, String channelId, String text) {
         String body = "{\"channel_id\":" + JsonUtil.jsonString(channelId)
                 + ",\"message\":" + JsonUtil.jsonString(text) + "}";
-        HttpResponse<String> resp = post(domain, token, "/api/v4/posts", body);
-        requireSuccess(resp);
+        requireSuccess(post(domain, token, "/api/v4/posts", body));
         log.debug("Сообщение отправлено в канал {}", channelId);
     }
 

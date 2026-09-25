@@ -41,16 +41,22 @@ public class DiffResult {
         private final String fromValue; // null — поле было пустым
         private final String toValue;   // null — поле очищено
         private final String toId;      // newvalue из changelog; null — поле очищено
+        private final boolean custom;   // fieldtype=custom в changelog
 
         public FieldChange(String fieldName, String fromValue, String toValue) {
             this(fieldName, fromValue, toValue, null);
         }
 
         public FieldChange(String fieldName, String fromValue, String toValue, String toId) {
+            this(fieldName, fromValue, toValue, toId, false);
+        }
+
+        public FieldChange(String fieldName, String fromValue, String toValue, String toId, boolean custom) {
             this.fieldName = fieldName;
             this.fromValue = fromValue;
             this.toValue = toValue;
             this.toId = toId;
+            this.custom = custom;
         }
 
         public String fieldName()  { return fieldName; }
@@ -59,5 +65,11 @@ public class DiffResult {
 
         /** Идентификатор нового значения из changelog; {@code null} — поле очищено. */
         public String toId()       { return toId; }
+
+        /**
+         * {@code true} — это кастомное поле ({@code fieldtype=custom} в changelog).
+         * По нему {@link WatchedFields} отличает кастомные поля от системных.
+         */
+        public boolean isCustom()  { return custom; }
     }
 }

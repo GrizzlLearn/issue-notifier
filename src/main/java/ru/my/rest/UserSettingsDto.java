@@ -1,6 +1,7 @@
 package ru.my.rest;
 
 import org.codehaus.jackson.annotate.JsonProperty;
+import ru.my.model.CommentTextMode;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
@@ -28,7 +29,9 @@ public class UserSettingsDto {
     @JsonProperty
     private boolean commentTextHidden;
     @JsonProperty
-    private boolean commentTextAllowed; // read-only: разрешён ли текст комментария в админке
+    private String commentTextMode; // read-only: режим текста комментария из админки
+    @JsonProperty
+    private boolean watchersEnabled; // read-only: включены ли в админке уведомления наблюдателям
 
     public UserSettingsDto() {}
 
@@ -42,7 +45,8 @@ public class UserSettingsDto {
     }
 
     public static UserSettingsDto from(UserSettings settings, String telegramBotUsername,
-                                       List<String> enabledChannels, boolean commentTextAllowed) {
+                                       List<String> enabledChannels, CommentTextMode commentTextMode,
+                                       boolean watchersEnabled) {
         UserSettingsDto dto = new UserSettingsDto(
                 settings.isEnabled(),
                 settings.getProjects(),
@@ -51,7 +55,8 @@ public class UserSettingsDto {
                 telegramBotUsername);
         dto.enabledChannels = enabledChannels;
         dto.commentTextHidden = settings.isCommentTextHidden();
-        dto.commentTextAllowed = commentTextAllowed;
+        dto.commentTextMode = commentTextMode.key();
+        dto.watchersEnabled = watchersEnabled;
         return dto;
     }
 
@@ -97,6 +102,9 @@ public class UserSettingsDto {
     public boolean isCommentTextHidden() { return commentTextHidden; }
     public void setCommentTextHidden(boolean commentTextHidden) { this.commentTextHidden = commentTextHidden; }
 
-    public boolean isCommentTextAllowed() { return commentTextAllowed; }
-    public void setCommentTextAllowed(boolean commentTextAllowed) { this.commentTextAllowed = commentTextAllowed; }
+    public String getCommentTextMode() { return commentTextMode; }
+    public void setCommentTextMode(String commentTextMode) { this.commentTextMode = commentTextMode; }
+
+    public boolean isWatchersEnabled() { return watchersEnabled; }
+    public void setWatchersEnabled(boolean watchersEnabled) { this.watchersEnabled = watchersEnabled; }
 }

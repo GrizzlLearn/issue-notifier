@@ -10,12 +10,15 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
+import ru.my.api.NotificationSender;
 import ru.my.model.ActionTemplates;
 import ru.my.model.ChannelKeys;
+import ru.my.model.CommentTextMode;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
 import javax.ws.rs.core.Response;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.*;
@@ -27,6 +30,7 @@ public class AdminSettingsResourceTest {
     @Mock private JiraAuthenticationContext authContext;
     @Mock private GlobalPermissionManager globalPermissionManager;
     @Mock private AdminSettingsService adminSettingsService;
+    @Mock private NotificationSender telegramSender;
 
     private AdminSettingsResource resource;
     private final MockApplicationUser admin = new MockApplicationUser("admin");
@@ -34,7 +38,9 @@ public class AdminSettingsResourceTest {
 
     @Before
     public void setUp() {
-        resource = new AdminSettingsResource(authContext, globalPermissionManager, adminSettingsService);
+        lenient().when(telegramSender.channel()).thenReturn(NotificationChannel.TELEGRAM);
+        resource = new AdminSettingsResource(authContext, globalPermissionManager, adminSettingsService,
+                List.of(telegramSender));
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, admin)).thenReturn(true);
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, regular)).thenReturn(false);
         when(adminSettingsService.get(anyString(), anyString())).thenReturn("");
@@ -314,5 +320,114 @@ public class AdminSettingsResourceTest {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         assertEquals(204, resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com")).getStatus());
         verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+    }
+
+    // --- POST /test ---
+
+    @Test
+    public void testReturns403ForNonAdmin() {
+        when(authContext.getLoggedInUser()).thenReturn(regular);
+        assertEquals(403, resource.test(request("TELEGRAM", Map.of())).getStatus());
+        verify(telegramSender, never()).sendTest(any(), anyString(), anyMap());
+    }
+
+    @Test
+    public void testReturns400ForUnknownChannel() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(400, resource.test(request("ICQ", Map.of())).getStatus());
+    }
+
+    /** Канала без отправщика быть не должно, но 500 из-за него админ видеть не обязан. */
+    @Test
+    public void testReturns400WhenChannelHasNoSender() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(400, resource.test(request("MATTERMOST", Map.of())).getStatus());
+    }
+
+    @Test
+    public void testSendsMessageToRequestingAdmin() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
+
+        assertEquals(200, response.getStatus());
+        verify(telegramSender).sendTest(admin, AdminSettingsResource.TEST_MESSAGE,
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
+    }
+
+    /** Значения из формы не сохраняются: проверка идёт до записи настроек. */
+    @Test
+    public void testDoesNotSaveAnything() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.test(request("TELEGRAM", Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
+
+        verify(adminSettingsService, never()).set(anyString(), anyString());
+    }
+
+    /** Через проверку нельзя подсунуть отправщику произвольную настройку. */
+    @Test
+    public void testPassesOnlyKnownKeysToSender() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Map<String, String> form = new java.util.LinkedHashMap<>();
+        form.put(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC");
+        form.put("какой-то.мусор", "значение");
+        form.put(ChannelKeys.TELEGRAM_BOT_USERNAME, "   ");
+
+        resource.test(request("TELEGRAM", form));
+
+        verify(telegramSender).sendTest(admin, AdminSettingsResource.TEST_MESSAGE,
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
+    }
+
+    /** Ошибку канала показываем администратору текстом, а не 500-й страницей. */
+    @Test
+    public void testReturns400WithChannelErrorMessage() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        doThrow(new IllegalStateException("Токен не подошёл"))
+                .when(telegramSender).sendTest(any(), anyString(), anyMap());
+
+        Response response = resource.test(request("TELEGRAM", Map.of()));
+
+        assertEquals(400, response.getStatus());
+        assertEquals("Токен не подошёл", ((Map<?, ?>) response.getEntity()).get("error"));
+    }
+
+    // --- режим текста комментария ---
+
+    @Test
+    public void putRejectsUnknownCommentTextMode() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(400, resource.set(Map.of(CommentTextMode.KEY, "иногда")).getStatus());
+    }
+
+    @Test
+    public void putAcceptsKnownCommentTextMode() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(204, resource.set(Map.of(CommentTextMode.KEY, "shown")).getStatus());
+        verify(adminSettingsService).set(CommentTextMode.KEY, "shown");
+    }
+
+    /** Записи о режиме ещё нет — GET отдаёт режим, выведенный из старой галки. */
+    @Test
+    public void getFallsBackToLegacyCommentTextFlag() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).thenReturn("true");
+        when(adminSettingsService.get(eq(CommentTextMode.KEY), anyString()))
+                .thenAnswer(call -> call.getArgument(1));
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> settings = (Map<String, String>) resource.get().getEntity();
+
+        assertEquals(CommentTextMode.HIDDEN.key(), settings.get(CommentTextMode.KEY));
+    }
+
+    private static ChannelTestDto request(String channel, Map<String, String> settings) {
+        ChannelTestDto dto = new ChannelTestDto();
+        dto.setChannel(channel);
+        dto.setSettings(settings);
+        return dto;
     }
 }

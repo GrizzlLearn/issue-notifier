@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,7 +86,18 @@ public class TelegramClient {
 
     /** Отправляет HTML-сообщение в указанный чат. Бросает {@link TelegramException} при сбое. */
     public void sendMessage(String chatId, String htmlText) {
-        String token = adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "");
+        sendMessage(chatId, htmlText, Map.of());
+    }
+
+    /**
+     * То же, но токен берётся из {@code settings} (несохранённая форма админ-страницы),
+     * а если там пусто — из сохранённых настроек. Используется проверочной отправкой.
+     */
+    public void sendMessage(String chatId, String htmlText, Map<String, String> settings) {
+        String fromForm = settings.get(ChannelKeys.TELEGRAM_BOT_TOKEN);
+        String token = fromForm == null || fromForm.isBlank()
+                ? adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")
+                : fromForm;
         if (token.isBlank()) {
             throw new TelegramException("Токен Telegram-бота не задан");
         }

@@ -63,7 +63,10 @@ public final class DiffFormatter {
             // по нему логика действий узнаёт, что именно изменилось, не заглядывая
             // в текущее состояние задачи
             String newValue = item.getString("newvalue");
-            changes.add(new DiffResult.FieldChange(field, oldString, newString, newValue));
+            // fieldtype: "custom" у кастомных полей, "jira" у системных —
+            // по нему админская галка «Кастомные поля» отличает одни от других
+            boolean custom = "custom".equalsIgnoreCase(item.getString("fieldtype"));
+            changes.add(new DiffResult.FieldChange(field, oldString, newString, newValue, custom));
         }
         return new DiffResult(changes);
     }

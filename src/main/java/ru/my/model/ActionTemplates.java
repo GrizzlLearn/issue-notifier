@@ -28,6 +28,14 @@ public final class ActionTemplates {
      */
     public static final String HIDE_COMMENT_TEXT_KEY = "comment.hideText";
 
+    /**
+     * Ключ настройки «не уведомлять наблюдателей об изменениях задач». Хранится
+     * инвертированным по той же причине, что и текст комментария: отсутствие
+     * записи означает «уведомляем», как плагин вёл себя до появления галки.
+     * Получателей действий настройка не касается — их задаёт список получателей действия.
+     */
+    public static final String WATCHERS_DISABLED_KEY = "watchers.disabled";
+
     private ActionTemplates() {
     }
 

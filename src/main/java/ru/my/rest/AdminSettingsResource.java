@@ -5,8 +5,13 @@ import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
+import ru.my.api.NotificationSender;
 import ru.my.model.ActionTemplates;
+import ru.my.model.CommentTextMode;
+import ru.my.model.WatchedFields;
 import ru.my.model.ChannelKeys;
 import ru.my.model.ClosingStatuses;
 import ru.my.model.PortalProjects;
@@ -32,6 +37,8 @@ import java.util.regex.Pattern;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class AdminSettingsResource {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminSettingsResource.class);
 
     /**
      * Суффикс read-only ключа, который показывает задан ли соответствующий секрет.
@@ -65,7 +72,10 @@ public class AdminSettingsResource {
                 SD_PROJECTS,
                 PortalProjects.CATEGORIES_KEY,
                 ClosingStatuses.KEY,
-                ActionTemplates.HIDE_COMMENT_TEXT_KEY));
+                ActionTemplates.HIDE_COMMENT_TEXT_KEY,
+                ActionTemplates.WATCHERS_DISABLED_KEY,
+                WatchedFields.KEY,
+                CommentTextMode.KEY));
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
@@ -97,7 +107,8 @@ public class AdminSettingsResource {
     static final Set<String> BOOLEAN_KEYS = buildBooleanKeys();
 
     private static Set<String> buildBooleanKeys() {
-        Set<String> keys = new LinkedHashSet<>(Set.of(ActionTemplates.HIDE_COMMENT_TEXT_KEY));
+        Set<String> keys = new LinkedHashSet<>(Set.of(
+                ActionTemplates.HIDE_COMMENT_TEXT_KEY, ActionTemplates.WATCHERS_DISABLED_KEY));
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
@@ -110,18 +121,29 @@ public class AdminSettingsResource {
         return Set.copyOf(keys);
     }
 
+    /** Текст проверочного сообщения: администратор должен узнать его в мессенджере. */
+    static final String TEST_MESSAGE =
+            "Issue Notifier: проверка канала. Если вы видите это сообщение, настройки верные.";
+
     private final JiraAuthenticationContext authContext;
     private final GlobalPermissionManager globalPermissionManager;
     private final AdminSettingsService adminSettingsService;
+    private final Map<NotificationChannel, NotificationSender> senders;
 
     @Inject
     public AdminSettingsResource(
             @ComponentImport JiraAuthenticationContext authContext,
             @ComponentImport GlobalPermissionManager globalPermissionManager,
-            AdminSettingsService adminSettingsService) {
+            AdminSettingsService adminSettingsService,
+            List<NotificationSender> senders) {
         this.authContext = authContext;
         this.globalPermissionManager = globalPermissionManager;
         this.adminSettingsService = adminSettingsService;
+        Map<NotificationChannel, NotificationSender> byChannel = new LinkedHashMap<>();
+        for (NotificationSender sender : senders) {
+            byChannel.put(sender.channel(), sender);
+        }
+        this.senders = Map.copyOf(byChannel);
     }
 
     @GET
@@ -182,6 +204,10 @@ public class AdminSettingsResource {
             if (invalidScope != null) {
                 return invalidScope;
             }
+            Response invalidMode = validateCommentTextMode(e.getKey(), e.getValue());
+            if (invalidMode != null) {
+                return invalidMode;
+            }
             Response invalidDomain = validateDomain(e.getKey(), e.getValue());
             if (invalidDomain != null) {
                 return invalidDomain;
@@ -196,6 +222,65 @@ public class AdminSettingsResource {
                 .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
 
         return Response.noContent().build();
+    }
+
+    /**
+     * Проверочная отправка сообщения администратору, нажавшему «Проверить».
+     * <p>
+     * Значения канала берутся из тела запроса — из формы, которую админ ещё не сохранил;
+     * чего в теле нет, берётся из сохранённых настроек. Ничего не сохраняет и не смотрит
+     * на галку «Включить канал»: канал обычно проверяют до включения.
+     *
+     * @return {@code 200} с полем {@code message} — что именно произошло,
+     *         {@code 400} с полем {@code error} — текст ошибки канала
+     */
+    @POST
+    @Path("/test")
+    public Response test(ChannelTestDto request) {
+        ApplicationUser user = authContext.getLoggedInUser();
+        if (user == null) return UserSettingsResource.unauthorized();
+        if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
+        if (request == null || request.getChannel() == null) return UserSettingsResource.badRequest("Канал не указан");
+
+        NotificationChannel channel;
+        try {
+            channel = NotificationChannel.valueOf(request.getChannel());
+        } catch (IllegalArgumentException e) {
+            return UserSettingsResource.badRequest("Неизвестный канал: " + request.getChannel());
+        }
+        NotificationSender sender = senders.get(channel);
+        if (sender == null) {
+            return UserSettingsResource.badRequest("Для канала " + channel + " нет отправщика");
+        }
+
+        try {
+            sender.sendTest(user, TEST_MESSAGE, formSettings(request.getSettings()));
+        } catch (Exception e) {
+            log.warn("Проверка канала {} не удалась: {}", channel, e.getMessage());
+            return UserSettingsResource.badRequest(
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+        return Response.ok(Map.of("message", channel == NotificationChannel.EMAIL
+                ? "Письмо поставлено в очередь Jira — проверьте ящик"
+                : "Сообщение отправлено — проверьте " + channel)).build();
+    }
+
+    /**
+     * Значения с формы, которые разрешено использовать в проверке: только известные
+     * ключи настроек. Всё остальное игнорируется, чтобы через проверку нельзя было
+     * подсунуть произвольную настройку.
+     */
+    private static Map<String, String> formSettings(Map<String, String> fromForm) {
+        if (fromForm == null) {
+            return Map.of();
+        }
+        Map<String, String> allowed = new LinkedHashMap<>();
+        fromForm.forEach((key, value) -> {
+            if (KNOWN_KEYS.contains(key) && value != null && !value.isBlank()) {
+                allowed.put(key, value);
+            }
+        });
+        return Map.copyOf(allowed);
     }
 
     /**
@@ -226,9 +311,14 @@ public class AdminSettingsResource {
      * Ключ области отдаёт область действия по умолчанию — иначе переключатель
      * на странице не показывал бы реального поведения.
      */
-    private static String defaultFor(String key) {
+    private String defaultFor(String key) {
         if (BOOLEAN_KEYS.contains(key)) {
             return "false";
+        }
+        // режим текста комментария при отсутствии записи наследует старую галку
+        if (CommentTextMode.KEY.equals(key)) {
+            return CommentTextMode.resolve("",
+                    adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).key();
         }
         NotificationAction action = ActionTemplates.actionOfScopeKey(key);
         return action != null ? action.defaultScope().key() : "";
@@ -248,6 +338,18 @@ public class AdminSettingsResource {
         }
         return UserSettingsResource.badRequest(
                 "Домен Mattermost должен начинаться с http:// или https:// и не содержать пробелов");
+    }
+
+    /** Режим текста комментария принимает только значения {@link CommentTextMode}. */
+    private static Response validateCommentTextMode(String key, String value) {
+        if (!CommentTextMode.KEY.equals(key) || value == null || value.isBlank()) {
+            return null;
+        }
+        if (CommentTextMode.byKey(value) != null) {
+            return null;
+        }
+        return UserSettingsResource.badRequest(
+                "Недопустимое значение для '" + key + "': ожидается 'hidden', 'shown' или 'user'");
     }
 
     /** Область действия принимает только значения {@link ActionScope}. */

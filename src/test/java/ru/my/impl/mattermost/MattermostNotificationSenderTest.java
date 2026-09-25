@@ -4,6 +4,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import org.junit.Test;
 import ru.my.model.NotificationChannel;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
@@ -28,27 +29,34 @@ public class MattermostNotificationSenderTest {
         verify(client).sendMessage("chan123", "hello");
     }
 
-    @Test
-    public void skipsWhenUserNotFoundInMattermost() {
+    /**
+     * «Некуда доставить» — ошибка, а не тихий пропуск: иначе вызывающий считает
+     * получателя уведомлённым и не отправит ему ничего другим способом.
+     */
+    @Test(expected = IllegalStateException.class)
+    public void failsWhenUserNotFoundInMattermost() {
         when(client.findDirectChannelId("bob@example.com")).thenReturn(Optional.empty());
 
         sender.send(mockUser("bob@example.com"), "hello");
-
-        verify(client, never()).sendMessage(any(), any());
     }
 
-    @Test
-    public void skipsUserWithEmptyEmail() {
+    @Test(expected = IllegalStateException.class)
+    public void failsForUserWithEmptyEmail() {
         sender.send(mockUser(""), "hello");
+    }
 
-        verify(client, never()).findDirectChannelId(any());
+    @Test(expected = IllegalStateException.class)
+    public void failsForUserWithNullEmail() {
+        sender.send(mockUser(null), "hello");
     }
 
     @Test
-    public void skipsUserWithNullEmail() {
-        sender.send(mockUser(null), "hello");
+    public void testSendPassesFormSettingsToClient() {
+        Map<String, String> form = Map.of("mattermost.domain", "https://mm.example.com");
 
-        verify(client, never()).findDirectChannelId(any());
+        sender.sendTest(mockUser("alice@example.com"), "проверка", form);
+
+        verify(client).sendTest("alice@example.com", "проверка", form);
     }
 
     private static ApplicationUser mockUser(String email) {
