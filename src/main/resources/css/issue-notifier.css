@@ -15,7 +15,8 @@
     z-index: 3000;
     background: #fff;
     border-radius: 12px;
-    width: 500px;
+    /* под две карточки-примера рядом; calc — чтобы модалка не вылезала на узком экране */
+    width: min(560px, calc(100vw - 32px));
     box-shadow: 0 12px 40px rgba(9, 30, 66, 0.3);
     display: flex;
     flex-direction: column;
@@ -104,12 +105,18 @@
     flex: 1;
 }
 
-/* Строка кнопок */
+/* Строка кнопок липнет к низу: тело модалки скроллится, иначе «Сохранить»
+   уходит за край вместе с блоками-примерами */
 .in-actions {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 16px;
+    position: sticky;
+    bottom: -20px;
+    margin: 16px -20px -20px;
+    padding: 12px 20px;
+    background: #fff;
+    border-top: 1px solid #dfe1e6;
 }
 
 .in-actions-end { margin-left: auto; }
@@ -189,4 +196,116 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px 16px;
+}
+
+/* Выбор из двух вариантов карточками с образцом уведомления: галка над одним
+   из вариантов — это радиокнопка в шапке карточки, а не отдельный чекбокс.
+   Карточки в одной сетке, поэтому верх и низ у них совпадают. */
+.in-dialog fieldset.in-choice {
+    border: 0;
+    margin: 0 0 20px;
+    padding: 0;
+    min-width: 0;
+}
+
+.in-choice-legend {
+    float: none;
+    padding: 0;
+    margin-bottom: 4px;
+    font-weight: 600;
+    color: #172b4d;
+}
+
+/* auto-fit сам ставит карточки друг под друга на узком экране — без media query */
+.in-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+}
+
+.in-choice-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #dfe1e6;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+}
+
+.in-choice-card:hover { border-color: #b3bac5; }
+
+.in-choice-card.is-selected {
+    border-color: #0052cc;
+    box-shadow: 0 0 0 1px #0052cc; /* «толще» рамка без сдвига раскладки */
+    background: #f4f8ff;
+}
+
+.in-choice-card:focus-within {
+    outline: 2px solid #0052cc;
+    outline-offset: 2px;
+}
+
+.in-choice-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.in-choice-head input {
+    margin: 0;
+    flex: none;
+}
+
+.in-choice-title {
+    font-weight: 600;
+    color: #172b4d;
+}
+
+/* Образец сообщения. flex:1 — обе карточки одной высоты, хотя во втором
+   образце нет цитаты комментария. */
+.in-sample {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1px solid #dfe1e6;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #172b4d;
+    overflow-wrap: anywhere;
+}
+
+.in-sample-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.in-sample-bot {
+    font-size: 10px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #dfe1e6;
+    color: #42526e;
+}
+
+.in-sample-time {
+    color: #5e6c84;
+    font-size: 11px;
+}
+
+.in-sample-link { color: #0052cc; }
+
+.in-sample-quote {
+    border-left: 3px solid #b3bac5;
+    padding-left: 8px;
+    color: #42526e;
 }

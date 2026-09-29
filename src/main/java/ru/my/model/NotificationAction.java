@@ -5,8 +5,9 @@ import java.util.List;
 /**
  * Действие в задаче, на которое плагин шлёт уведомление по шаблону из настроек.
  * <p>
- * Текст задаёт администратор на вкладке «Действия»: ключи
- * {@code action.<key>.enabled} и {@code action.<key>.template.<channel>}.
+ * Текст задаёт администратор на вкладке «Действия» — ключ
+ * {@code action.<key>.template.<channel>}. Включается действие не здесь,
+ * а в контексте проектов ({@link ProjectContext#isEnabled}).
  * Встроенных текстов нет — пустой шаблон означает, что по этому каналу
  * уведомление не отправляется. Шаблоны поддерживаются для Mattermost
  * и Telegram; по email уведомления о действиях не рассылаются.
@@ -15,40 +16,32 @@ public enum NotificationAction {
 
     MENTION("mention", "Упоминание через @",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
-            ActionScope.ALL, false, false),
+            false),
 
-    /**
-     * Область не настраивается: закрывающие статусы задаются на каждый проект,
-     * поэтому действие работает ровно там, где они выбраны.
-     */
+    /** Работает в проектах, для которых в контексте выбраны закрывающие статусы. */
     CLOSED("closed", "Переход в закрывающий статус",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "status"),
-            ActionScope.SELECTED, true, true),
+            true),
 
     /** Получатель — тот, кого назначили; список приходит от слушателя событий. */
     ASSIGNED("assigned", "Назначение исполнителем",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "assignee"),
-            ActionScope.ALL, false, false),
+            false),
 
     COMMENT_ADDED("commentAdded", "Новый комментарий",
             List.of("issueKey", "issueUrl", "summary", "project", "author", "comment"),
-            ActionScope.SELECTED, false, true);
+            true);
 
     private final String key;
     private final String title;
     private final List<String> placeholders;
-    private final ActionScope defaultScope;
-    private final boolean scopeFixed;
     private final boolean recipientsConfigurable;
 
     NotificationAction(String key, String title, List<String> placeholders,
-                       ActionScope defaultScope, boolean scopeFixed,
                        boolean recipientsConfigurable) {
         this.key = key;
         this.title = title;
         this.placeholders = List.copyOf(placeholders);
-        this.defaultScope = defaultScope;
-        this.scopeFixed = scopeFixed;
         this.recipientsConfigurable = recipientsConfigurable;
     }
 
@@ -60,20 +53,6 @@ public enum NotificationAction {
     /** Человекочитаемое название для админ-страницы. */
     public String title() {
         return title;
-    }
-
-    /**
-     * Область по умолчанию, пока администратор её не менял:
-     * упоминание касается человека лично и работает везде, портальные действия —
-     * только в отмеченных проектах.
-     */
-    public ActionScope defaultScope() {
-        return defaultScope;
-    }
-
-    /** {@code true} — область задана самим действием, администратор её не переключает. */
-    public boolean isScopeFixed() {
-        return scopeFixed;
     }
 
     /**

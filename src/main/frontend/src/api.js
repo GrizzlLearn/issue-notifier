@@ -97,6 +97,23 @@ export async function saveAdminSettings(data) {
   }));
 }
 
+// Контексты проектов лежат отдельным эндпоинтом: они правятся списком целиком,
+// а не ключами настроек (см. ProjectContextResource).
+export async function getContexts(signal) {
+  const resp = await fetch(`${apiBase()}/admin/contexts`, { credentials: 'same-origin', signal });
+  await checkOk(resp);
+  return resp.json();
+}
+
+export async function saveContexts(contexts) {
+  await checkOk(await fetch(`${apiBase()}/admin/contexts`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: mutationHeaders,
+    body: JSON.stringify(contexts),
+  }));
+}
+
 // Проверочная отправка: отправляем значения прямо из формы, ещё не сохранённые,
 // чтобы админ проверил введённый токен до записи в настройки.
 export async function testChannel(channel, settings) {

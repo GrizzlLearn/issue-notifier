@@ -11,7 +11,6 @@ public class ActionTemplatesTest {
 
     @Test
     public void buildsSettingKeys() {
-        assertEquals("action.mention.enabled", ActionTemplates.enabledKey(NotificationAction.MENTION));
         assertEquals("action.closed.template.telegram",
                 ActionTemplates.templateKey(NotificationAction.CLOSED, NotificationChannel.TELEGRAM));
         assertEquals(NotificationAction.CLOSED,

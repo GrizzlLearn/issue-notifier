@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getAdminSettings, saveAdminSettings, testChannel } from '../api';
+import { getAdminSettings, saveAdminSettings, getContexts, saveContexts, testChannel } from '../api';
 
 // Справочники страницы (проекты, статусы, каталог действий) сервлет кладёт прямо
 // в HTML — см. AdminPageData. Поэтому поиск проектов идёт по массиву в памяти
@@ -36,8 +36,6 @@ const SECTIONS = [
   },
 ];
 
-const PROJECTS_KEY = 'sd.projects';
-const CATEGORIES_KEY = 'sd.categories';
 // Положительный ключ: пустая настройка — не уведомляем (рассылка по всем полям шумная).
 const WATCHERS_ENABLED_KEY = 'watchers.enabled';
 const COMMENT_TEXT_MODE_KEY = 'comment.textMode';
@@ -64,17 +62,9 @@ const COMMENT_TEXT_MODES = [
   ['shown', 'Всегда с текстом', 'Текст получат все; личная настройка пользователя не спрашивается.'],
   ['user', 'Пусть каждый выбирает сам', 'В настройках пользователя появляется галка.'],
 ];
-const CLOSING_KEY = 'closed.statuses';
 const CLOSED_ACTION = 'closed';
+const DEFAULT_CONTEXT = 'default';
 const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
-
-// Варианты области: один источник для радио внутри действия и для свёрнутой шапки
-const SCOPES = [
-  ['all', 'Во всех проектах', 'во всех проектах'],
-  ['selected', 'Только в портальных проектах', 'в портальных проектах'],
-  ['service_desk', 'Только в Service Desk-проектах', 'в Service Desk-проектах'],
-];
-const SCOPE_SHORT = Object.fromEntries(SCOPES.map(([value, , short]) => [value, short]));
 
 // Ключ флага канала — как в AdminSettingsServiceImpl: имя канала в нижнем регистре + ".enabled".
 const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enabled'] === 'true';
@@ -190,34 +180,20 @@ function ChannelTestButton({ section, values }) {
   );
 }
 
-// Проекты области действия: отмеченные явно плюс проекты отмеченных категорий.
+// Проекты контекста: отмеченные явно плюс проекты отмеченных категорий.
 // Разворот только для экрана — в настройке категории остаются категориями,
 // иначе новый проект в категории пришлось бы отмечать руками.
-function scopedProjects(values) {
-  const chosenCategories = parseKeys(values[CATEGORIES_KEY]);
+function contextProjects(context) {
+  const categories = context.categories || [];
   const byCategory = PAGE_DATA.projects
-    .filter(p => p.category && chosenCategories.includes(p.category))
+    .filter(p => p.category && categories.includes(p.category))
     .map(p => p.value);
-  return [...new Set([...parseKeys(values[PROJECTS_KEY]), ...byCategory])];
+  return [...new Set([...(context.projects || []), ...byCategory])];
 }
 
-// "HELP:10001,3;SUP:10002" ↔ { HELP: ['10001','3'], SUP: ['10002'] }
-function parseClosing(raw) {
-  const map = {};
-  (raw || '').split(';').filter(Boolean).forEach(chunk => {
-    const colon = chunk.indexOf(':');
-    if (colon <= 0) return;
-    const ids = chunk.slice(colon + 1).split(',').filter(Boolean);
-    if (ids.length) map[chunk.slice(0, colon)] = ids;
-  });
-  return map;
-}
-
-function formatClosing(map) {
-  return Object.entries(map)
-    .filter(([, ids]) => ids.length)
-    .map(([key, ids]) => `${key}:${ids.join(',')}`)
-    .join(';');
+// Настройка действия в контексте; записи нет — действие выключено, как на бэкенде.
+function contextAction(context, actionKey) {
+  return (context.actions || {})[actionKey] || { enabled: false, recipients: '' };
 }
 
 // Пикер обычных проектов: их в инстансе могут быть сотни, поэтому список целиком
@@ -339,14 +315,15 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
   );
 }
 
-// Проекты, к которым применяется логика портала: SD-проекты полным списком
-// (их немного), остальные — через пикер.
-function ProjectsPanel({ projects, labels, values, setValue }) {
+// Карточка одного контекста: имя, состав (категории, SD-проекты, остальные через
+// пикер) и удаление. У встроенного контекста «Остальные проекты» состава нет —
+// в него попадает всё, что не попало в явные контексты.
+function ContextCard({ context, projects, labels, onChange, onRemove }) {
   const categories = PAGE_DATA.categories || [];
-  const chosenCategories = parseKeys(values[CATEGORIES_KEY]);
-  const selected = parseKeys(values[PROJECTS_KEY]);
+  const chosenCategories = context.categories || [];
+  const selected = context.projects || [];
 
-  // проект, попавший в область через категорию, отмечен, но снимается только категорией —
+  // проект, попавший в контекст через категорию, отмечен, но снимается только категорией —
   // иначе галка возвращалась бы сама и это выглядело бы сбоем
   const viaCategory = new Set(projects
     .filter(p => p.category && chosenCategories.includes(p.category))
@@ -357,19 +334,43 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
   const otherSelected = selected.filter(key => !sdKeys.includes(key));
   const otherViaCategory = [...viaCategory].filter(key => !sdKeys.includes(key) && !selected.includes(key));
 
-  function setSelected(next) {
-    setValue(PROJECTS_KEY, next.join(','));
-  }
+  const setSelected = next => onChange({ ...context, projects: next });
 
   function toggleCategory(id, checked) {
-    setValue(CATEGORIES_KEY, (checked
-      ? [...chosenCategories, id]
-      : chosenCategories.filter(c => c !== id)).join(','));
+    onChange({
+      ...context,
+      categories: checked ? [...chosenCategories, id] : chosenCategories.filter(c => c !== id),
+    });
+  }
+
+  if (context.id === DEFAULT_CONTEXT) {
+    return (
+      <fieldset className="in-section">
+        <legend>Остальные проекты</legend>
+        <div style={hintStyle}>
+          Встроенный контекст: сюда попадают задачи проектов, которых нет ни в одном
+          контексте выше. Удалить его нельзя. Какие действия в нём включены — на вкладке «Действия».
+        </div>
+      </fieldset>
+    );
   }
 
   return (
     <fieldset className="in-section">
-      <legend>Портальные проекты</legend>
+      <legend>{context.name || 'Новый контекст'}</legend>
+
+      <div className="field-group" style={{ marginBottom: 16 }}>
+        <label className="label" htmlFor={`in-ctx-name-${context.id}`}>Название контекста</label>
+        <input
+          id={`in-ctx-name-${context.id}`}
+          className="text"
+          type="text"
+          value={context.name || ''}
+          onChange={e => onChange({ ...context, name: e.target.value })}
+          placeholder="Например: заявки на доступ"
+          style={{ width: '100%', maxWidth: 400 }}
+        />
+      </div>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории проектов</div>
@@ -387,7 +388,7 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
           ))}
         </div>
         <div style={hintStyle}>
-          Проект, добавленный в отмеченную категорию позже, попадёт в область сам —
+          Проект, добавленный в отмеченную категорию позже, попадёт в контекст сам —
           но закрывающие статусы для него всё равно нужно выбрать на вкладке «Действия».
         </div>
       </div>
@@ -430,6 +431,16 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
           </div>
         )}
       </div>
+
+      <div style={{ marginTop: 16 }}>
+        <button type="button" className="aui-button aui-button-link" style={{ padding: 0 }}
+                onClick={onRemove}>
+          Удалить контекст
+        </button>
+        <div style={hintStyle}>
+          Его проекты вернутся в «Остальные проекты», а настройки действий контекста пропадут.
+        </div>
+      </div>
     </fieldset>
   );
 }
@@ -437,19 +448,18 @@ function ProjectsPanel({ projects, labels, values, setValue }) {
 // Закрывающие статусы задаются отдельно для каждого выбранного проекта:
 // в разных workflow закрытие называется по-разному. Строка проекта — кнопка:
 // раскрывается список статусов, выбранные видны чипами и без раскрытия.
-function ClosingStatusesField({ labels, selected, statuses, values, setValue }) {
+function ClosingStatusesField({ labels, selected, statuses, disabled, map, onChange }) {
   const [openProject, setOpenProject] = useState(null);
-  const map = parseClosing(values[CLOSING_KEY]);
   const statusNames = Object.fromEntries(statuses.map(s => [s.value, s.label]));
 
   function toggleStatus(projectKey, statusId, checked) {
     const current = map[projectKey] || [];
     const next = checked ? [...current, statusId] : current.filter(id => id !== statusId);
-    setValue(CLOSING_KEY, formatClosing({ ...map, [projectKey]: next }));
+    onChange({ ...map, [projectKey]: next });
   }
 
   if (selected.length === 0) {
-    return <div style={hintStyle}>Отметьте проекты на вкладке «Портальные проекты», чтобы выбрать для них закрывающие статусы.</div>;
+    return <div style={hintStyle}>В контексте нет проектов — отметьте их на вкладке «Контекст проектов», чтобы выбрать закрывающие статусы.</div>;
   }
 
   return (
@@ -467,6 +477,7 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                 type="button"
                 className="in-status-row"
                 aria-expanded={open}
+                disabled={disabled}
                 onClick={() => setOpenProject(open ? null : key)}
               >
                 <span className="in-chevron">▶</span>
@@ -487,11 +498,11 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                     type="button"
                     className="aui-button aui-button-link"
                     style={{ marginBottom: 8, padding: 0 }}
-                    onClick={() => setValue(CLOSING_KEY, formatClosing({
+                    onClick={() => onChange({
                       ...map,
                       // дополняем: статус, отмеченный вручную, терять нельзя
                       [key]: [...new Set([...chosen, ...statuses.filter(st => st.done).map(st => st.value)])],
-                    }))}
+                    })}
                   >
                     Отметить статусы категории «Готово»
                   </button>
@@ -501,6 +512,7 @@ function ClosingStatusesField({ labels, selected, statuses, values, setValue }) 
                         <input
                           type="checkbox"
                           checked={chosen.includes(s.value)}
+                          disabled={disabled}
                           onChange={e => toggleStatus(key, s.value, e.target.checked)}
                         />
                         <span>
@@ -539,8 +551,8 @@ const BUILT_IN_RECIPIENTS = [
 const NO_RECIPIENTS = 'none';
 
 // Выбранные получатели действия; пустая настройка — наблюдатели, как на бэкенде.
-function selectedRecipients(values, recipientsKey) {
-  const chosen = parseKeys(values[recipientsKey]);
+function selectedRecipients(raw) {
+  const chosen = parseKeys(raw);
   if (chosen.length === 0) {
     return ['watchers'];
   }
@@ -548,13 +560,13 @@ function selectedRecipients(values, recipientsKey) {
 }
 
 // Кому уходит уведомление: встроенные поля задачи плюс кастомные user picker-поля.
-function RecipientsField({ recipientsKey, values, setValue }) {
+function RecipientsField({ raw, disabled, onChange }) {
   const userFields = PAGE_DATA.userFields || [];
-  const selected = selectedRecipients(values, recipientsKey);
+  const selected = selectedRecipients(raw);
 
   function toggle(value, checked) {
     const next = checked ? [...selected, value] : selected.filter(v => v !== value);
-    setValue(recipientsKey, (next.length ? next : [NO_RECIPIENTS]).join(','));
+    onChange((next.length ? next : [NO_RECIPIENTS]).join(','));
   }
 
   return (
@@ -567,6 +579,7 @@ function RecipientsField({ recipientsKey, values, setValue }) {
             <input
               type="checkbox"
               checked={selected.includes(value)}
+              disabled={disabled}
               onChange={e => toggle(value, e.target.checked)}
             />
             <span>{label}</span>
@@ -583,6 +596,7 @@ function RecipientsField({ recipientsKey, values, setValue }) {
               <input
                 type="checkbox"
                 checked={selected.includes(field.value)}
+                disabled={disabled}
                 onChange={e => toggle(field.value, e.target.checked)}
               />
               <span>{field.label} <span className="in-check-note">{field.scope}</span></span>
@@ -599,26 +613,33 @@ function RecipientsField({ recipientsKey, values, setValue }) {
   );
 }
 
-// Действие: галка «уведомлять» и шаблон текста на каждый канал. Пустой шаблон —
-// по этому каналу ничего не уйдёт, поэтому включённое действие без шаблонов
-// показывает предупреждение.
-function ActionsPanel({ actions, labels, selected, statuses, values, setValue, errors }) {
+// Действие в выбранном контексте: галка «уведомлять», получатели и шаблоны текста.
+// Пока действие выключено, остальные его настройки задизейблены — иначе непонятно,
+// работает ли уже настроенное. Шаблоны общие на инстанс, получатели и статусы — на контекст.
+function ActionsPanel({ actions, labels, context, statuses, values, setValue, setContext, errors }) {
+  const selected = contextProjects(context);
+
+  function setAction(actionKey, patch) {
+    const current = contextAction(context, actionKey);
+    setContext({
+      ...context,
+      actions: { ...(context.actions || {}), [actionKey]: { ...current, ...patch } },
+    });
+  }
+
   return (
     <>
       {actions.map(action => {
-        const enabled = values[action.enabledKey] === 'true';
+        const setting = contextAction(context, action.key);
+        const enabled = setting.enabled;
         const liveChannels = action.channels.filter(ch => isChannelOn(values, ch.channel));
         const noTemplates = liveChannels.every(ch => !(values[ch.templateKey] || '').trim());
-        const scope = action.scopeFixed ? action.defaultScope : (values[action.scopeKey] || action.defaultScope);
-        const noProjects = !action.scopeFixed && scope === 'selected' && selected.length === 0;
-        const noRecipients = action.recipientsKey
-          && selectedRecipients(values, action.recipientsKey).length === 0;
+        const noRecipients = action.recipientsConfigurable
+          && selectedRecipients(setting.recipients).length === 0;
+        const noStatuses = action.key === CLOSED_ACTION
+          && Object.values(context.closedStatuses || {}).every(ids => !ids || ids.length === 0);
 
-        const broken = enabled && (noTemplates || noRecipients || noProjects);
-        // область у действия с фиксированной областью выведена из закрывающих статусов
-        const scopeShort = action.scopeFixed
-          ? 'где заданы закрывающие статусы'
-          : SCOPE_SHORT[scope] || scope;
+        const broken = enabled && (noTemplates || noRecipients || noStatuses);
 
         return (
           // <details> вместо своего состояния: раскрытие, фокус и клавиатура —
@@ -629,7 +650,6 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
               <span className={'in-action-state' + (enabled ? ' in-on' : '')}>
                 {enabled ? 'уведомляем' : 'выключено'}
               </span>
-              {enabled && <span className="in-action-scope">{scopeShort}</span>}
               {broken && (
                 <span className="in-action-warn" title="Уведомления по этому действию не отправятся">
                   не отправится
@@ -643,32 +663,13 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                   <input
                     type="checkbox"
                     checked={enabled}
-                    onChange={e => setValue(action.enabledKey, e.target.checked ? 'true' : 'false')}
+                    onChange={e => setAction(action.key, { enabled: e.target.checked })}
                   />
-                  <span>Уведомлять</span>
+                  <span>Уведомлять в контексте «{context.name || 'Остальные проекты'}»</span>
                 </label>
-              </div>
-
-              <div className="field-group" style={{ marginBottom: 12 }}>
-                <div className="label">Область</div>
-                {action.scopeFixed && (
+                {!enabled && (
                   <div style={hintStyle}>
-                    Работает в проектах, для которых ниже выбраны закрывающие статусы.
-                  </div>
-                )}
-                {!action.scopeFixed && (
-                  <div className="in-radio-row">
-                    {SCOPES.map(([value, label]) => (
-                      <label key={value} className="in-check">
-                        <input
-                          type="radio"
-                          name={action.scopeKey}
-                          checked={scope === value}
-                          onChange={() => setValue(action.scopeKey, value)}
-                        />
-                        <span>{label}</span>
-                      </label>
-                    ))}
+                    Если хочешь настроить — включи эту опцию.
                   </div>
                 )}
               </div>
@@ -687,17 +688,17 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                 </div>
               )}
 
-              {enabled && noProjects && (
+              {enabled && noStatuses && (
                 <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
-                  Портальные проекты не выбраны — уведомления по этому действию не отправятся.
+                  Закрывающие статусы не выбраны — уведомления о закрытии не отправятся.
                 </div>
               )}
 
-              {action.recipientsKey && (
+              {action.recipientsConfigurable && (
                 <RecipientsField
-                  recipientsKey={action.recipientsKey}
-                  values={values}
-                  setValue={setValue}
+                  raw={setting.recipients}
+                  disabled={!enabled}
+                  onChange={raw => setAction(action.key, { recipients: raw })}
                 />
               )}
 
@@ -706,13 +707,15 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                   labels={labels}
                   selected={selected}
                   statuses={statuses}
-                  values={values}
-                  setValue={setValue}
+                  disabled={!enabled}
+                  map={context.closedStatuses || {}}
+                  onChange={map => setContext({ ...context, closedStatuses: map })}
                 />
               )}
 
               {action.channels.map(ch => {
                 const channelOff = !isChannelOn(values, ch.channel);
+                const readOnly = channelOff || !enabled;
 
                 return (
                   <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
@@ -725,10 +728,10 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                       className="textarea"
                       rows={3}
                       value={values[ch.templateKey] || ''}
-                      readOnly={channelOff}
-                      onChange={channelOff ? undefined : e => setValue(ch.templateKey, e.target.value)}
+                      readOnly={readOnly}
+                      onChange={readOnly ? undefined : e => setValue(ch.templateKey, e.target.value)}
                       aria-invalid={Boolean(errors[ch.templateKey])}
-                      style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                      style={{ width: '100%', background: readOnly ? '#f4f5f7' : undefined }}
                     />
                     {errors[ch.templateKey] && (
                       <div className="in-field-error">{errors[ch.templateKey]}</div>
@@ -744,10 +747,10 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
                           className="textarea"
                           rows={2}
                           value={values[ch.templateKeyNoText] || ''}
-                          readOnly={channelOff}
-                          onChange={channelOff ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
+                          readOnly={readOnly}
+                          onChange={readOnly ? undefined : e => setValue(ch.templateKeyNoText, e.target.value)}
                           aria-invalid={Boolean(errors[ch.templateKeyNoText])}
-                          style={{ width: '100%', background: channelOff ? '#f4f5f7' : undefined }}
+                          style={{ width: '100%', background: readOnly ? '#f4f5f7' : undefined }}
                         />
                         {errors[ch.templateKeyNoText] && (
                           <div className="in-field-error">{errors[ch.templateKeyNoText]}</div>
@@ -764,7 +767,9 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
               })}
 
               <div style={hintStyle}>
-                Доступные плейсхолдеры: {action.placeholders.map(p => '{' + p + '}').join(', ')}
+                Текст шаблона общий на весь инстанс: контекст решает, кому и о чём
+                уведомлять, а не какими словами. Доступные плейсхолдеры:{' '}
+                {action.placeholders.map(p => '{' + p + '}').join(', ')}
               </div>
             </div>
           </details>
@@ -777,15 +782,49 @@ function ActionsPanel({ actions, labels, selected, statuses, values, setValue, e
 // Справочники уже в PAGE_DATA, загружать на вкладках нечего.
 const PROJECT_LABELS = Object.fromEntries(PAGE_DATA.projects.map(p => [p.value, p.label]));
 
-// Вкладка «Проекты»: к каким проектам относятся действия с областью «только в выбранных».
-function ProjectsTab({ values, setValue }) {
+// Вкладка «Контекст проектов»: сколько контекстов и что в каждом.
+function ContextsTab({ contexts, setContexts }) {
+  function update(id, next) {
+    setContexts(contexts.map(c => (c.id === id ? next : c)));
+  }
+
+  function add() {
+    // id выдаёт сервер при сохранении; пока контекст новый, ключ нужен только React
+    setContexts([...contexts.filter(c => c.id !== DEFAULT_CONTEXT),
+      { id: `new-${Date.now()}`, name: '', projects: [], categories: [], actions: {}, closedStatuses: {} },
+      ...contexts.filter(c => c.id === DEFAULT_CONTEXT)]);
+  }
+
+  const explicit = contexts.filter(c => c.id !== DEFAULT_CONTEXT);
+
   return (
-    <ProjectsPanel
-      projects={PAGE_DATA.projects}
-      labels={PROJECT_LABELS}
-      values={values}
-      setValue={setValue}
-    />
+    <>
+      <div style={{ ...hintStyle, marginBottom: 12 }}>
+        Контекст — это набор проектов со своим набором включённых действий: например,
+        в одной категории нужны только упоминания, в другой ещё и переходы в закрывающий
+        статус. Проект и категория входят ровно в один контекст. Тексты уведомлений общие
+        на инстанс и задаются на вкладке «Действия».
+      </div>
+
+      {explicit.length === 0 && (
+        <div className="aui-message aui-message-info" style={{ marginBottom: 12 }}>
+          Явных контекстов нет — все проекты настраиваются как «Остальные проекты».
+        </div>
+      )}
+
+      {contexts.map(context => (
+        <ContextCard
+          key={context.id}
+          context={context}
+          projects={PAGE_DATA.projects}
+          labels={PROJECT_LABELS}
+          onChange={next => update(context.id, next)}
+          onRemove={() => setContexts(contexts.filter(c => c.id !== context.id))}
+        />
+      ))}
+
+      <button type="button" className="aui-button" onClick={add}>Добавить контекст</button>
+    </>
   );
 }
 
@@ -858,8 +897,12 @@ function IssueChangesSection({ values, setValue }) {
   );
 }
 
-// Вкладка «Действия»: что отправляем, где это работает и каким текстом.
-function ActionsTab({ values, setValue, errors }) {
+// Вкладка «Действия»: выбранный контекст и его настройки плюс общие настройки инстанса.
+function ActionsTab({ values, setValue, contexts, setContexts, errors }) {
+  const [contextId, setContextId] = useState(DEFAULT_CONTEXT);
+  // контекст мог быть удалён на соседней вкладке, пока эта помнила его id
+  const context = contexts.find(c => c.id === contextId) || contexts[contexts.length - 1];
+
   return (
     <>
       <IssueChangesSection values={values} setValue={setValue} />
@@ -880,19 +923,44 @@ function ActionsTab({ values, setValue, errors }) {
           </label>
         ))}
         <div style={hintStyle}>
-          Настройка действует на все действия с текстом комментария.
+          Настройка действует на все действия с текстом комментария во всех контекстах.
         </div>
       </fieldset>
 
-      <ActionsPanel
-        actions={PAGE_DATA.actions}
-        labels={PROJECT_LABELS}
-        selected={scopedProjects(values)}
-        statuses={PAGE_DATA.statuses}
-        values={values}
-        setValue={setValue}
-        errors={errors}
-      />
+      <fieldset className="in-section">
+        <legend>Действия контекста</legend>
+        <div className="field-group" style={{ marginBottom: 12 }}>
+          <label className="label" htmlFor="in-context-select">Контекст проектов</label>
+          <select
+            id="in-context-select"
+            className="select"
+            value={context ? context.id : DEFAULT_CONTEXT}
+            onChange={e => setContextId(e.target.value)}
+          >
+            {contexts.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.id === DEFAULT_CONTEXT ? 'Остальные проекты' : (c.name || 'Новый контекст')}
+              </option>
+            ))}
+          </select>
+          <div style={hintStyle}>
+            Контексты и их состав — на вкладке «Контекст проектов».
+          </div>
+        </div>
+
+        {context && (
+          <ActionsPanel
+            actions={PAGE_DATA.actions}
+            labels={PROJECT_LABELS}
+            context={context}
+            statuses={PAGE_DATA.statuses}
+            values={values}
+            setValue={setValue}
+            setContext={next => setContexts(contexts.map(c => (c.id === context.id ? next : c)))}
+            errors={errors}
+          />
+        )}
+      </fieldset>
     </>
   );
 }
@@ -908,11 +976,20 @@ export default function AdminApp() {
   // снимок сохранённых значений: по нему считаем, что менять на сервере и
   // предупреждать ли об уходе со страницы
   const [saved, setSaved] = useState({});
+  // контексты живут отдельным эндпоинтом и правятся списком целиком
+  const [contexts, setContexts] = useState([]);
+  const [savedContexts, setSavedContexts] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
-    getAdminSettings(controller.signal)
-      .then(data => { setValues(data); setSaved(data); setLoading(false); })
+    Promise.all([getAdminSettings(controller.signal), getContexts(controller.signal)])
+      .then(([data, ctx]) => {
+        setValues(data);
+        setSaved(data);
+        setContexts(ctx);
+        setSavedContexts(JSON.stringify(ctx));
+        setLoading(false);
+      })
       .catch(e => {
         if (e.name !== 'AbortError') { setError(e.message); setLoading(false); }
       });
@@ -923,7 +1000,8 @@ export default function AdminApp() {
   }, []);
 
   const payload = buildPayload(values, saved);
-  const dirty = Object.keys(payload).length > 0;
+  const contextsDirty = JSON.stringify(contexts) !== savedContexts;
+  const dirty = Object.keys(payload).length > 0 || contextsDirty;
   const errors = templateErrors(values);
   const errorKeys = Object.keys(errors);
 
@@ -940,9 +1018,24 @@ export default function AdminApp() {
       setError('Исправьте плейсхолдеры в шаблонах — они отмечены под полями.');
       return;
     }
+    const nameless = contexts.find(c => c.id !== DEFAULT_CONTEXT && !(c.name || '').trim());
+    if (nameless) {
+      setError('У контекста не задано название — вкладка «Контекст проектов».');
+      return;
+    }
     setSaving(true); setError(null); setSuccess(false);
     try {
-      await saveAdminSettings(payload);
+      // контексты первыми: они валидируются на сервере строже, и при отказе
+      // настройки каналов не должны уехать половиной
+      if (contextsDirty) {
+        await saveContexts(contexts);
+        const fresh = await getContexts();
+        setContexts(fresh);
+        setSavedContexts(JSON.stringify(fresh));
+      }
+      if (Object.keys(payload).length > 0) {
+        await saveAdminSettings(payload);
+      }
       // секреты сервер обратно не отдаёт: помечаем их установленными и чистим поля,
       // иначе введённый токен ушёл бы ещё раз при следующем сохранении
       const next = { ...values };
@@ -970,7 +1063,7 @@ export default function AdminApp() {
 
   // порядок совпадает со сценарием настройки: подключить канал, отметить
   // проекты, включить действия
-  const tabs = [['channels', 'Каналы'], ['projects', 'Портальные проекты'], ['actions', 'Действия']];
+  const tabs = [['channels', 'Каналы'], ['projects', 'Контекст проектов'], ['actions', 'Действия']];
 
   return (
     <div className="in-admin-wrap">
@@ -1000,8 +1093,11 @@ export default function AdminApp() {
           id={`in-admin-panel-${tab}`}
           aria-labelledby={`in-admin-tab-${tab}`}
         >
-          {tab === 'actions' && <ActionsTab values={values} setValue={setValue} errors={errors} />}
-          {tab === 'projects' && <ProjectsTab values={values} setValue={setValue} />}
+          {tab === 'actions' && (
+            <ActionsTab values={values} setValue={setValue} contexts={contexts}
+                        setContexts={setContexts} errors={errors} />
+          )}
+          {tab === 'projects' && <ContextsTab contexts={contexts} setContexts={setContexts} />}
           {tab === 'channels' && SECTIONS.map(section => (
             <fieldset key={section.title} className="in-section">
               <legend>{section.title}</legend>

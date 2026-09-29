@@ -285,8 +285,8 @@ public class AdminSettingsResourceTest {
 
         resource.get();
 
-        verify(adminSettingsService).get(ActionTemplates.enabledKey(NotificationAction.MENTION), "false");
         verify(adminSettingsService).get("mattermost.enabled", "false");
+        verify(adminSettingsService).get(ActionTemplates.WATCHERS_ENABLED_KEY, "false");
         verify(adminSettingsService).get(ChannelKeys.MATTERMOST_DOMAIN, "");
     }
 
@@ -294,7 +294,7 @@ public class AdminSettingsResourceTest {
     @Test
     public void putIgnoresBlankBooleanInsteadOfRejecting() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
-        String enabledKey = ActionTemplates.enabledKey(NotificationAction.MENTION);
+        String enabledKey = "mattermost.enabled";
 
         Map<String, String> body = new java.util.LinkedHashMap<>();
         body.put(enabledKey, "");

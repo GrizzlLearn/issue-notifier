@@ -16,7 +16,6 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.NotificationService;
 import ru.my.api.UserSettingsService;
-import ru.my.model.ActionScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
@@ -37,7 +36,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import ru.my.model.ActionTemplates;
 import ru.my.model.CommentTextMode;
-import ru.my.model.PortalProjects;
+import ru.my.model.ProjectContext;
+import ru.my.model.ProjectContexts;
 import ru.my.model.WatchedFields;
 
 /**
@@ -72,8 +72,6 @@ public class NotificationServiceImpl implements NotificationService {
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
     /** Ключ типа проектов, которые создаёт Jira Service Desk. */
-    private static final String SERVICE_DESK = "service_desk";
-
     private final WatcherManager watcherManager;
     private final CustomFieldManager customFieldManager;
     private final PermissionManager permissionManager;
@@ -194,18 +192,17 @@ public class NotificationServiceImpl implements NotificationService {
     public List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
                                                List<ApplicationUser> recipients, Map<String, String> placeholders,
                                                Collection<ApplicationUser> exclude) {
-        if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.enabledKey(action), "false"))) {
-            return List.of();
-        }
-        if (!isInScope(action, issue)) {
+        // всё про «где и кому» лежит в контексте проектов задачи: одно чтение
+        // настроек вместо чтения флага, области и получателей по отдельности
+        ProjectContext context = contextOf(issue, adminSettingsService);
+        if (!context.isEnabled(action)) {
             return List.of();
         }
 
         // явный список получателей (например, упомянутые в комментарии) имеет
         // приоритет над настройкой — он относится к конкретному событию
         List<ApplicationUser> base = (recipients == null || recipients.isEmpty())
-                ? IssueRecipients.resolve(
-                        adminSettingsService.get(ActionTemplates.recipientsKey(action), ""),
+                ? IssueRecipients.resolve(context.recipients(action),
                         issue, watcherManager, customFieldManager)
                 : recipients;
 
@@ -247,27 +244,17 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     /**
-     * Работает ли действие в проекте задачи: область {@code all} — везде,
-     * {@code selected} — только в проектах, отмеченных на вкладке «Проекты».
-     * Действие с фиксированной областью настройку не читает.
+     * Контекст проектов, по которому работают действия для этой задачи.
+     * <p>
+     * Статический и с сервисом в параметрах, потому что тем же контекстом
+     * пользуется {@link IssueEventListener} при проверке закрывающего статуса:
+     * правило выбора контекста должно быть одно на оба места.
      */
-    private boolean isInScope(NotificationAction action, Issue issue) {
-        ActionScope scope = action.isScopeFixed()
-                ? action.defaultScope()
-                : ActionScope.byKey(adminSettingsService.get(
-                        ActionTemplates.scopeKey(action), action.defaultScope().key()));
+    static ProjectContext contextOf(Issue issue, AdminSettingsService adminSettingsService) {
         var project = issue.getProjectObject();
-        if (ActionScope.SERVICE_DESK == scope) {
-            return project != null && project.getProjectTypeKey() != null
-                    && SERVICE_DESK.equals(project.getProjectTypeKey().getKey());
-        }
-        if (ActionScope.SELECTED != scope) {
-            return true;
-        }
         var category = project != null ? project.getProjectCategoryObject() : null;
-        return PortalProjects.contains(
-                adminSettingsService.get(PortalProjects.KEY, ""),
-                adminSettingsService.get(PortalProjects.CATEGORIES_KEY, ""),
+        return ProjectContexts.resolve(
+                ProjectContexts.parse(adminSettingsService.get(ProjectContexts.KEY, "")),
                 project != null ? project.getKey() : null,
                 category != null ? category.getId() : null);
     }

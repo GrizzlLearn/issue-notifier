@@ -37,7 +37,8 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import ru.my.model.ClosingStatuses;
+import ru.my.model.ProjectContext;
+import ru.my.model.ProjectContexts;
 
 /**
  * Проверяет маршрутизацию событий: CREATED и DELETED игнорируются,
@@ -237,9 +238,9 @@ public class IssueEventListenerTest {
     /** Закрывающим считается только статус, выбранный для этого проекта. */
     @Test
     public void statusSelectedForProjectTriggersClosedAction() {
-        org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
+        closingStatusesInContext();
 
-        listener.onIssueEvent(statusChangedTo("3", issueInProject()));
+        listener.onIssueEvent(statusChangedTo(CLOSING_STATUS_ID, issueInProject()));
 
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
@@ -247,7 +248,7 @@ public class IssueEventListenerTest {
 
     @Test
     public void otherStatusDoesNotTriggerClosedAction() {
-        org.mockito.Mockito.when(adminSettingsService.get(ClosingStatuses.KEY, "")).thenReturn("PROJ:3");
+        closingStatusesInContext();
 
         listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
@@ -336,11 +337,26 @@ public class IssueEventListenerTest {
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
     }
 
-    /** Задача с заданным статусом и проектом. */
+    /** Проект и статус, вокруг которых крутятся тесты закрывающего перехода. */
+    private static final String PROJECT_KEY = "PROJ";
+    private static final String CLOSING_STATUS_ID = "3";
+
+    /**
+     * Контекст проектов, в котором для проекта выбран закрывающий статус.
+     * Проект отмечен явно, поэтому задача попадёт именно в этот контекст.
+     */
+    private void closingStatusesInContext() {
+        ProjectContext context = new ProjectContext("a1b2c3d4", "Портал",
+                java.util.Set.of(PROJECT_KEY), java.util.Set.of(), java.util.Map.of(),
+                java.util.Map.of(PROJECT_KEY, java.util.Set.of(CLOSING_STATUS_ID)));
+        org.mockito.Mockito.when(adminSettingsService.get(ProjectContexts.KEY, ""))
+                .thenReturn(ProjectContexts.format(java.util.List.of(context)));
+    }
+
     /** Задача в проекте PROJ: ключ проекта важен только для настройки закрывающих статусов. */
     private Issue issueInProject() {
         Project project = mock(Project.class);
-        org.mockito.Mockito.when(project.getKey()).thenReturn("PROJ");
+        org.mockito.Mockito.when(project.getKey()).thenReturn(PROJECT_KEY);
         Issue issue = mock(Issue.class);
         org.mockito.Mockito.when(issue.getProjectObject()).thenReturn(project);
         org.mockito.Mockito.when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");

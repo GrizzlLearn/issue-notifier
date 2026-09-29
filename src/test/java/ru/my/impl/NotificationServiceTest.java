@@ -19,7 +19,6 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
 import ru.my.model.DiffResult;
-import ru.my.model.ActionScope;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
@@ -28,6 +27,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -43,7 +43,8 @@ import static org.mockito.Mockito.when;
 import ru.my.model.ActionTemplates;
 import ru.my.model.CommentTextMode;
 import ru.my.model.WatchedFields;
-import ru.my.model.PortalProjects;
+import ru.my.model.ProjectContext;
+import ru.my.model.ProjectContexts;
 
 /**
  * Проверяет оркестрацию: фильтрацию наблюдателей, делегирование,
@@ -426,14 +427,27 @@ public class NotificationServiceTest {
 
     // ---- уведомления о действиях ----------------------------------------
 
+    /** Контекстов нет вообще — значит действие нигде не включено, и плагин молчит. */
     @Test
-    public void actionIsSkippedWhenDisabledByAdmin() {
-        when(adminSettingsService.get(ActionTemplates.enabledKey(NotificationAction.MENTION), "false"))
-                .thenReturn("false");
-
+    public void actionIsSkippedWhenNoContextEnablesIt() {
         service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher), Map.of());
 
         verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    /** Действие есть в контексте, но выключено — уведомления не уходят. */
+    @Test
+    public void actionIsSkippedWhenDisabledInContext() {
+        ProjectContext context = new ProjectContext(ProjectContexts.DEFAULT_ID, "Остальные проекты",
+                Set.of(), Set.of(),
+                Map.of(NotificationAction.MENTION.key(), new ProjectContext.ActionSetting(false, "")),
+                Map.of());
+        when(adminSettingsService.get(ProjectContexts.KEY, ""))
+                .thenReturn(ProjectContexts.format(List.of(context)));
+
+        service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher), Map.of());
+
         verify(sender, never()).send(any(), any());
     }
 
@@ -620,12 +634,14 @@ public class NotificationServiceTest {
         verify(sender, never()).send(any(), any());
     }
 
-    /** Действие с областью «только выбранные» молчит в проекте, которого нет в списке. */
+    /**
+     * Действие, включённое в чужом контексте, в этом проекте не работает:
+     * задача попадёт во встроенный контекст, где оно выключено.
+     */
     @Test
-    public void actionWithSelectedScopeIsSkippedForProjectOutsideList() {
+    public void actionEnabledInAnotherContextIsSkipped() {
         enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
-        setScope(NotificationAction.COMMENT_ADDED, ActionScope.SELECTED);
-        when(adminSettingsService.get(PortalProjects.KEY, "")).thenReturn("OTHER");
+        enableActionInContext(NotificationAction.COMMENT_ADDED, "OTHER", "");
 
         service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
 
@@ -634,10 +650,9 @@ public class NotificationServiceTest {
     }
 
     @Test
-    public void actionWithSelectedScopeWorksForListedProject() {
+    public void actionWorksInContextOfIssueProject() {
         enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
-        setScope(NotificationAction.COMMENT_ADDED, ActionScope.SELECTED);
-        when(adminSettingsService.get(PortalProjects.KEY, "")).thenReturn("PROJ,OTHER");
+        enableActionInContext(NotificationAction.COMMENT_ADDED, "PROJ,OTHER", "");
         setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
 
         service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
@@ -646,11 +661,32 @@ public class NotificationServiceTest {
         verify(sender).send(watcher, "Комментарий в PROJ-1");
     }
 
+    /**
+     * Получателей задаёт контекст: выбран автор задачи, поэтому наблюдателей
+     * даже не спрашиваем.
+     */
+    @Test
+    public void actionSendsToRecipientsFromContext() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        enableActionInContext(NotificationAction.COMMENT_ADDED, "", IssueRecipients.REPORTER);
+        MockApplicationUser reporter = new MockApplicationUser("carol", "Carol", "carol@example.com");
+        when(issue.getReporter()).thenReturn(reporter);
+        when(userSettingsService.getSettings(reporter))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST)).build());
+        when(delegationService.getEffectiveRecipients(reporter)).thenReturn(List.of(reporter));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(reporter, "Комментарий в PROJ-1");
+        verify(watcherManager, never()).getWatchers(any(), any());
+    }
+
     /** Список проектов в настройках получателя относится только к изменениям задач. */
     @Test
     public void actionIgnoresRecipientProjectFilter() {
         enableAction(NotificationAction.MENTION, "Упомянули в {issueKey}");
-        setScope(NotificationAction.MENTION, ActionScope.ALL);
         when(userSettingsService.getSettings(watcher))
                 .thenReturn(UserSettings.builder().projects(List.of("OTHER"))
                         .channels(List.of(NotificationChannel.MATTERMOST)).build());
@@ -669,7 +705,7 @@ public class NotificationServiceTest {
      * обычный и на случай, когда текст комментария отправлять нельзя.
      */
     private void enableAction(NotificationAction action, String template) {
-        when(adminSettingsService.get(ActionTemplates.enabledKey(action), "false")).thenReturn("true");
+        enableActionInContext(action, "", "");
         for (NotificationChannel channel : NotificationChannel.actionChannels()) {
             lenient().when(adminSettingsService.get(
                     ActionTemplates.templateKey(action, channel), "")).thenReturn(template);
@@ -679,9 +715,21 @@ public class NotificationServiceTest {
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
     }
 
-    private void setScope(NotificationAction action, ActionScope scope) {
-        when(adminSettingsService.get(ActionTemplates.scopeKey(action), action.defaultScope().key()))
-                .thenReturn(scope.key());
+    /**
+     * Включает действие в контексте проектов: во встроенном «Остальные проекты»,
+     * если {@code projects} пуст, иначе в контексте с этими проектами. Получатели
+     * задаются строкой в формате {@link IssueRecipients}; пустая — по умолчанию.
+     */
+    private void enableActionInContext(NotificationAction action, String projects, String recipients) {
+        Set<String> projectKeys = projects.isEmpty()
+                ? Set.of()
+                : Set.of(projects.split(","));
+        String id = projectKeys.isEmpty() ? ProjectContexts.DEFAULT_ID : "a1b2c3d4";
+        ProjectContext context = new ProjectContext(id, "Контекст", projectKeys, Set.of(),
+                Map.of(action.key(), new ProjectContext.ActionSetting(true, recipients)),
+                Map.of());
+        lenient().when(adminSettingsService.get(ProjectContexts.KEY, ""))
+                .thenReturn(ProjectContexts.format(List.of(context)));
     }
 
     /**

@@ -68,7 +68,6 @@ public class AdminPageDataTest {
         String json = AdminPageData.toJson(List.of(), List.of(), List.of(), List.of());
 
         assertTrue(json.contains("\"key\":\"mention\""));
-        assertTrue(json.contains("\"enabledKey\":\"action.mention.enabled\""));
         assertTrue(json.contains("\"templateKey\":\"action.closed.template.telegram\""));
         assertTrue(json.contains("\"placeholders\":[\"issueKey\",\"issueUrl\",\"summary\",\"project\",\"author\",\"status\"]"));
     }
@@ -99,12 +98,15 @@ public class AdminPageDataTest {
         assertTrue(json.contains("\"scope\":\"все проекты\""));
     }
 
+    /** Получатели настраиваются не у всех действий — экран должен знать, у каких. */
     @Test
-    public void jsonExposesRecipientsKeyOnlyForConfigurableAction() {
+    public void jsonMarksActionsWithConfigurableRecipients() {
         String json = AdminPageData.toJson(List.of(), List.of(), List.of(), List.of());
 
-        assertTrue(json.contains("\"recipientsKey\":\"action.closed.recipients\""));
-        assertTrue(json.contains("\"recipientsKey\":null"));
+        assertTrue(json.contains("\"key\":\"closed\",\"title\":\"Переход в закрывающий статус\","
+                + "\"recipientsConfigurable\":true"));
+        assertTrue(json.contains("\"key\":\"assigned\",\"title\":\"Назначение исполнителем\","
+                + "\"recipientsConfigurable\":false"));
     }
 
     /** Категория проекта нужна экрану, чтобы разворачивать её в список проектов. */

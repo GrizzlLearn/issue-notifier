@@ -87,15 +87,13 @@ public final class AdminPageData {
                         + "}");
             }
 
+            // «включено» и получатели пришли не сюда, а в контексты проектов:
+            // они настраиваются на контекст, а каталог действий один на инстанс
             actionsJson.add("{"
-                    + "\"recipientsKey\":" + (action.isRecipientsConfigurable()
-                            ? JsonUtil.jsonString(ActionTemplates.recipientsKey(action)) : "null")
-                    + ",\"key\":" + JsonUtil.jsonString(action.key())
+                    + "\"key\":" + JsonUtil.jsonString(action.key())
                     + ",\"title\":" + JsonUtil.jsonString(action.title())
-                    + ",\"enabledKey\":" + JsonUtil.jsonString(ActionTemplates.enabledKey(action))
-                    + ",\"scopeKey\":" + JsonUtil.jsonString(ActionTemplates.scopeKey(action))
-                    + ",\"defaultScope\":" + JsonUtil.jsonString(action.defaultScope().key())
-                    + ",\"scopeFixed\":" + action.isScopeFixed()
+                    + ",\"recipientsConfigurable\":" + action.isRecipientsConfigurable()
+                    + ",\"carriesCommentText\":" + action.carriesCommentText()
                     + ",\"placeholders\":" + placeholders
                     + ",\"channels\":" + channels
                     + "}");

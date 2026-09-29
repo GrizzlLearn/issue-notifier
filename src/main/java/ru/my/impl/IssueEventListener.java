@@ -35,7 +35,6 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import ru.my.model.ClosingStatuses;
 
 /**
  * Слушатель событий Jira. Парсит changelog в потоке Jira-события (C1),
@@ -261,7 +260,7 @@ public class IssueEventListener {
 
     /**
      * Закрывающим считается только статус, выбранный администратором для проекта
-     * задачи на вкладке «Действия». Проект без выбранных статусов уведомлений
+     * задачи в её контексте проектов. Проект без выбранных статусов уведомлений
      * о закрытии не шлёт — правила по категории статуса нет.
      * <p>
      * Статус берётся из changelog, а не из задачи: к моменту рассылки её могли
@@ -272,8 +271,8 @@ public class IssueEventListener {
             return false;
         }
         String projectKey = issue.getProjectObject() != null ? issue.getProjectObject().getKey() : "";
-        return ClosingStatuses.isClosing(
-                adminSettingsService.get(ClosingStatuses.KEY, ""), projectKey, newStatusId);
+        return NotificationServiceImpl.contextOf(issue, adminSettingsService)
+                .isClosing(projectKey, newStatusId);
     }
 
     private Map<String, String> placeholders(Issue issue, ApplicationUser author,

@@ -13,9 +13,6 @@ import ru.my.model.ActionTemplates;
 import ru.my.model.CommentTextMode;
 import ru.my.model.WatchedFields;
 import ru.my.model.ChannelKeys;
-import ru.my.model.ClosingStatuses;
-import ru.my.model.PortalProjects;
-import ru.my.model.ActionScope;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 
@@ -51,9 +48,6 @@ public class AdminSettingsResource {
     /** Абсолютный URL без завершающего слэша — к нему клиент дописывает {@code /api/v4/...}. */
     private static final Pattern DOMAIN = Pattern.compile("https?://[^\\s/]+(/[^\\s]*[^\\s/])?");
 
-    /** Проекты, отмеченные на вкладке «Проекты»: CSV из project key. */
-    static final String SD_PROJECTS = PortalProjects.KEY;
-
     static final List<String> KNOWN_KEYS = buildKnownKeys();
 
     /**
@@ -69,9 +63,6 @@ public class AdminSettingsResource {
                 ChannelKeys.TELEGRAM_BOT_USERNAME,
                 ChannelKeys.TELEGRAM_BOT_TOKEN,
                 ChannelKeys.TELEGRAM_BOT_TOKEN + IS_SET_SUFFIX,
-                SD_PROJECTS,
-                PortalProjects.CATEGORIES_KEY,
-                ClosingStatuses.KEY,
                 ActionTemplates.HIDE_COMMENT_TEXT_KEY,
                 ActionTemplates.WATCHERS_ENABLED_KEY,
                 WatchedFields.KEY,
@@ -79,14 +70,9 @@ public class AdminSettingsResource {
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
+        // enabled, получатели и область живут в контекстах проектов
+        // (см. ProjectContextResource) — здесь остаются только шаблоны
         for (NotificationAction action : NotificationAction.values()) {
-            keys.add(ActionTemplates.enabledKey(action));
-            if (!action.isScopeFixed()) {
-                keys.add(ActionTemplates.scopeKey(action));
-            }
-            if (action.isRecipientsConfigurable()) {
-                keys.add(ActionTemplates.recipientsKey(action));
-            }
             for (NotificationChannel channel : NotificationChannel.actionChannels()) {
                 keys.add(ActionTemplates.templateKey(action, channel));
                 if (action.carriesCommentText()) {
@@ -112,12 +98,7 @@ public class AdminSettingsResource {
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
-        for (NotificationAction action : NotificationAction.values()) {
-            keys.add(ActionTemplates.enabledKey(action));
-            if (!action.isScopeFixed()) {
-                keys.add(ActionTemplates.scopeKey(action));
-            }
-        }
+
         return Set.copyOf(keys);
     }
 
@@ -199,10 +180,6 @@ public class AdminSettingsResource {
             Response invalidTemplate = validateTemplate(e.getKey(), e.getValue());
             if (invalidTemplate != null) {
                 return invalidTemplate;
-            }
-            Response invalidScope = validateScope(e.getKey(), e.getValue());
-            if (invalidScope != null) {
-                return invalidScope;
             }
             Response invalidMode = validateCommentTextMode(e.getKey(), e.getValue());
             if (invalidMode != null) {
@@ -308,8 +285,6 @@ public class AdminSettingsResource {
      * <p>
      * Булев ключ без записи — это «выключено», а не «пусто»: клиент отправляет
      * полученное значение обратно, и {@code ""} не прошло бы валидацию PUT.
-     * Ключ области отдаёт область действия по умолчанию — иначе переключатель
-     * на странице не показывал бы реального поведения.
      */
     private String defaultFor(String key) {
         if (BOOLEAN_KEYS.contains(key)) {
@@ -320,8 +295,7 @@ public class AdminSettingsResource {
             return CommentTextMode.resolve("",
                     adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).key();
         }
-        NotificationAction action = ActionTemplates.actionOfScopeKey(key);
-        return action != null ? action.defaultScope().key() : "";
+        return "";
     }
 
     /**
@@ -350,18 +324,6 @@ public class AdminSettingsResource {
         }
         return UserSettingsResource.badRequest(
                 "Недопустимое значение для '" + key + "': ожидается 'hidden', 'shown' или 'user'");
-    }
-
-    /** Область действия принимает только значения {@link ActionScope}. */
-    private static Response validateScope(String key, String value) {
-        if (ActionTemplates.actionOfScopeKey(key) == null || value == null || value.isBlank()) {
-            return null;
-        }
-        if (ActionScope.byKey(value) != null) {
-            return null;
-        }
-        return UserSettingsResource.badRequest(
-                "Недопустимая область для '" + key + "': ожидается 'all', 'selected' или 'service_desk'");
     }
 
     /**

@@ -48,6 +48,80 @@ function StatusBanner({ error, success }) {
   return null;
 }
 
+// Два варианта текста комментария образцами: слева с цитатой, справа без неё.
+// Радио в шапке карточки, а не отдельная галка — «галка над одним из вариантов»
+// это и есть выбор одного из двух, и нативная радиогруппа сама даёт стрелки,
+// объявление «1 из 2» и клик по всей карточке.
+const COMMENT_TEXT_OPTIONS = [
+  {
+    id: 'with',
+    hidden: false,
+    title: 'С текстом комментария',
+    note: 'В сообщении будет цитата комментария.',
+    quote: 'Проверила на стенде: округление ломается на суммах больше 10 000. '
+      + 'Посмотри, пожалуйста, до релиза.',
+  },
+  {
+    id: 'without',
+    hidden: true,
+    title: 'Без текста комментария',
+    note: 'Только факт: комментарий добавлен, самого текста нет.',
+    quote: null,
+  },
+];
+
+function CommentTextChoice({ hidden, onChange }) {
+  return (
+    <fieldset className="in-choice">
+      <legend className="in-choice-legend">Текст комментария в уведомлениях</legend>
+      <div className="description">
+        Так будет выглядеть сообщение в Mattermost. Точный текст задаёт администратор.
+      </div>
+      <div className="in-choice-grid">
+        {COMMENT_TEXT_OPTIONS.map(opt => (
+          // в <label> только строчные элементы: <div> внутри label невалиден,
+          // блочность задаёт CSS
+          <label
+            key={opt.id}
+            className={'in-choice-card' + (hidden === opt.hidden ? ' is-selected' : '')}
+          >
+            <span className="in-choice-head">
+              {/* имя радио берём с заголовка карточки: иначе скринридер прочитал бы
+                  вместе с ним весь образец */}
+              <input
+                type="radio"
+                name="in-comment-text"
+                checked={hidden === opt.hidden}
+                onChange={() => onChange(opt.hidden)}
+                aria-labelledby={`in-ct-${opt.id}-title`}
+                aria-describedby={`in-ct-${opt.id}-note`}
+              />
+              <span id={`in-ct-${opt.id}-title`} className="in-choice-title">{opt.title}</span>
+            </span>
+
+            {/* образец дублирует подпись под ним, поэтому скрыт от скринридера;
+                «ссылка» — span, чтобы не плодить Tab-стопы */}
+            <span className="in-sample" aria-hidden="true">
+              <span className="in-sample-head">
+                <b>Issue Notifier</b>
+                <span className="in-sample-bot">БОТ</span>
+                <span className="in-sample-time">10:42</span>
+              </span>
+              <span className="in-sample-body">
+                Анна Петрова прокомментировала задачу{' '}
+                <span className="in-sample-link">PAY-142</span> «Ошибка округления в счёте»
+              </span>
+              {opt.quote && <span className="in-sample-quote">{opt.quote}</span>}
+            </span>
+
+            <span id={`in-ct-${opt.id}-note`} className="description">{opt.note}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -55,6 +129,11 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
 
   // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
   const channels = settings.channels ?? [];
+
+  // Галки «Получать уведомления» в модалке нет: уведомления включены по умолчанию,
+  // отписаться можно, сняв все каналы доставки. settings.enabled уходит на PUT таким,
+  // каким пришёл с сервера, — поле осталось в модели и в REST.
+
   // Каналы, выключенные администратором, не показываем — выбрать их всё равно нельзя,
   // уведомления по ним не уйдут (см. AdminSettingsService.isChannelEnabled)
   const enabledChannels = settings.enabledChannels ?? CHANNELS.map(ch => ch.id);
@@ -92,27 +171,16 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
 
   return (
     <div>
-      {settings.enabled && noChannels && (
+      {noChannels && (
         <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
           Не выбран ни один канал доставки — уведомления приходить не будут.
         </div>
       )}
-      {settings.enabled && telegramWithoutChatId && (
+      {telegramWithoutChatId && (
         <div className="aui-message aui-message-warning" style={{ marginBottom: 12 }}>
           Telegram выбран, но Chat ID не указан — в Telegram ничего не придёт.
         </div>
       )}
-
-      <div className="field-group">
-        <label className="in-check">
-          <input
-            type="checkbox"
-            checked={settings.enabled}
-            onChange={e => onChange({ ...settings, enabled: e.target.checked })}
-          />
-          <span>Получать уведомления</span>
-        </label>
-      </div>
 
       <div className="field-group">
         <label className="label">Каналы доставки</label>
@@ -131,19 +199,13 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
         ))}
       </div>
 
-      {/* Галка появляется только когда админ разрешил оба варианта (CommentTextMode.USER):
+      {/* Выбор появляется только когда админ разрешил оба варианта (CommentTextMode.USER):
           в режимах «всегда с текстом» и «всегда без текста» выбора у пользователя нет */}
       {(settings.commentTextMode || 'user') === 'user' && (
-        <div className="field-group">
-          <label className="in-check">
-            <input
-              type="checkbox"
-              checked={!settings.commentTextHidden}
-              onChange={e => onChange({ ...settings, commentTextHidden: !e.target.checked })}
-            />
-            <span>Показывать текст комментария в уведомлениях</span>
-          </label>
-        </div>
+        <CommentTextChoice
+          hidden={Boolean(settings.commentTextHidden)}
+          onChange={commentTextHidden => onChange({ ...settings, commentTextHidden })}
+        />
       )}
 
       {channels.includes('TELEGRAM') && (
