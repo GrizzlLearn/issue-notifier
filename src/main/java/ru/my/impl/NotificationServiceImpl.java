@@ -273,6 +273,8 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     /** @return {@code true} — сообщение ушло; иначе шаблон пуст, канала нет или отправка упала. */
+    // В логах — ключ пользователя, а не имя и не email: WARN в plugin.log доступен
+    // всем, кто читает логи, а связка «кто получает уведомления + его email» лишняя
     private boolean sendAction(NotificationAction action, NotificationChannel channel,
                                ApplicationUser recipient, Map<String, String> placeholders,
                                boolean withText) {
@@ -294,7 +296,7 @@ public class NotificationServiceImpl implements NotificationService {
             return true;
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
-                    action, channel, recipient.getDisplayName(), e.getMessage());
+                    action, channel, recipient.getKey(), e.getMessage());
             return false;
         }
     }
@@ -396,7 +398,7 @@ public class NotificationServiceImpl implements NotificationService {
             sender.send(recipient, message);
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления через {} для {}: {}",
-                    channel, recipient.getDisplayName(), e.getMessage());
+                    channel, recipient.getKey(), e.getMessage());
         }
     }
 

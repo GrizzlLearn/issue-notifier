@@ -13,14 +13,22 @@ import java.util.regex.Pattern;
  */
 public final class MentionParser {
 
-    private static final Pattern MENTION = Pattern.compile("\\[~([^\\]\\s]+)]");
+    private static final Pattern MENTION = Pattern.compile("\\[~([^]\\s]+)]");
+
+    /**
+     * Предел числа упоминаний в одном комментарии. Дальше — не уведомление, а
+     * рассылка: каждое упоминание превращается в синхронную отправку, а пул
+     * обработки событий всего на пару потоков.
+     */
+    static final int MAX_MENTIONS = 20;
 
     private MentionParser() {
     }
 
     /**
      * @param text текст комментария или описания; может быть null
-     * @return имена упомянутых пользователей в порядке появления, без повторов
+     * @return имена упомянутых пользователей в порядке появления, без повторов,
+     *         не больше {@value #MAX_MENTIONS} — остальные отбрасываются
      */
     public static List<String> parse(String text) {
         List<String> names = new ArrayList<>();
@@ -28,7 +36,7 @@ public final class MentionParser {
             return names;
         }
         Matcher matcher = MENTION.matcher(text);
-        while (matcher.find()) {
+        while (matcher.find() && names.size() < MAX_MENTIONS) {
             String name = matcher.group(1);
             if (!names.contains(name)) {
                 names.add(name);

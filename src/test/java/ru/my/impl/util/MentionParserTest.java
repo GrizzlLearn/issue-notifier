@@ -25,4 +25,15 @@ public class MentionParserTest {
         assertTrue(MentionParser.parse("обычный комментарий про [ссылку]").isEmpty());
         assertTrue(MentionParser.parse(null).isEmpty());
     }
+
+    /** Сотня упоминаний в одном комментарии — это рассылка, а не уведомление. */
+    @Test
+    public void stopsAfterLimit() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < MentionParser.MAX_MENTIONS + 5; i++) {
+            text.append("[~user").append(i).append("] ");
+        }
+
+        assertEquals(MentionParser.MAX_MENTIONS, MentionParser.parse(text.toString()).size());
+    }
 }

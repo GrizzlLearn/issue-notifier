@@ -204,4 +204,29 @@ public class UserDelegationResourceTest {
         assertEquals(204, response.getStatus());
         verify(delegationService).removeDelegation(user);
     }
+    /** Выбранный день окончания входит в работу: срок — конец этого дня, а не начало. */
+    @Test
+    public void putStoresEndOfChosenDay() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        when(userManager.getUserByKey("bob")).thenReturn(new MockApplicationUser("bob"));
+
+        assertEquals(204, resource.set(new DelegationDto(List.of("bob"), "2026-10-05")).getStatus());
+        verify(delegationService).setDelegation(eq(user), anyList(),
+                eq(java.time.LocalDate.parse("2026-10-06")
+                        .atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
+    }
+
+    @Test
+    public void putReturns400WhenTooManyDelegates() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i <= UserDelegationResource.MAX_DELEGATES; i++) {
+            many.add("user" + i);
+        }
+        // предел проверяется до поиска пользователей — лишние ключи даже не резолвим
+
+        assertEquals(400, resource.set(new DelegationDto(many, null)).getStatus());
+        verify(delegationService, never()).setDelegation(any(), anyList(), any());
+    }
+
 }

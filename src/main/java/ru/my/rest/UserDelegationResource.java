@@ -57,12 +57,21 @@ public class UserDelegationResource {
         return Response.ok(new DelegationDto(info.getToUserKeys(), activeUntilStr)).build();
     }
 
+    /** Делегирование — это отпуск, а не рассылка на отдел. */
+    static final int MAX_DELEGATES = 5;
+
     @PUT
     public Response set(DelegationDto dto) {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
         if (dto == null || dto.getToUserKeys() == null || dto.getToUserKeys().isEmpty()) {
             return UserSettingsResource.badRequest("Поле toUserKeys обязательно и не может быть пустым");
+        }
+        // предел как у списка проектов: без него делегирование на сотни человек
+        // превращает одно событие в сотни синхронных отправок
+        if (dto.getToUserKeys().size() > MAX_DELEGATES) {
+            return UserSettingsResource.badRequest(
+                    "Получателей не больше " + MAX_DELEGATES + ", сохранить нельзя");
         }
 
         List<ApplicationUser> delegates = new ArrayList<>();
@@ -85,7 +94,11 @@ public class UserDelegationResource {
         Instant activeUntil = null;
         if (dto.getActiveUntil() != null) {
             try {
-                activeUntil = LocalDate.parse(dto.getActiveUntil()).atStartOfDay(ZoneOffset.UTC).toInstant();
+                // конец выбранного дня, а не его начало: пользователь выбирает «до
+                // такого-то числа включительно», а isAfter(now) на начале суток
+                // выключал делегирование за день до срока
+                activeUntil = LocalDate.parse(dto.getActiveUntil())
+                        .plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
             } catch (Exception e) {
                 return UserSettingsResource.badRequest("Неверный формат даты, ожидается YYYY-MM-DD");
             }

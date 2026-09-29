@@ -23,6 +23,10 @@ async function resolveItems(keys, resolveLabel, signal) {
   }));
 }
 
+// Совпадает с UserDelegationResource.MAX_DELEGATES: сервер откажет,
+// но пользователь должен узнать предел до нажатия «Сохранить».
+const MAX_DELEGATES = 5;
+
 const CHANNELS = [
   { id: 'EMAIL', label: 'Email' },
   { id: 'MATTERMOST', label: 'Mattermost' },
@@ -365,6 +369,10 @@ function DelegationTab({ delegation, delegateItems, onSaved, onDirtyChange }) {
       setError('Дата окончания уже прошла — такая делегация не работает.');
       return;
     }
+    if (toUserKeys.length > MAX_DELEGATES) {
+      setError(`Получателей не больше ${MAX_DELEGATES} — уберите лишних, иначе сохранить нельзя.`);
+      return;
+    }
     setSaving(true); setError(null);
     try {
       await saveDelegation({ toUserKeys, activeUntil: activeUntil || null });
@@ -400,9 +408,16 @@ function DelegationTab({ delegation, delegateItems, onSaved, onDirtyChange }) {
       </p>
 
       <div className="field-group">
-        <label className="label" htmlFor="in-delegate">Получатели</label>
+        <label className="label" htmlFor="in-delegate">
+          Получатели (не больше {MAX_DELEGATES})
+        </label>
         <AjsMultiSelect key={pickerKey} id="in-delegate" initialItems={pickerItems} url={`${apiBase()}/users`}
                         ariaLabel="Получатели делегирования" onChange={setToUserKeys} />
+        {toUserKeys.length > MAX_DELEGATES && (
+          <div className="aui-message aui-message-warning" style={{ marginTop: 8 }}>
+            Выбрано {toUserKeys.length}: сохранить можно не больше {MAX_DELEGATES} получателей.
+          </div>
+        )}
       </div>
 
       <div className="field-group">
@@ -443,7 +458,7 @@ function DelegationTab({ delegation, delegateItems, onSaved, onDirtyChange }) {
           type="button"
           className="aui-button aui-button-primary in-actions-end"
           onClick={handleSave}
-          disabled={saving || toUserKeys.length === 0}
+          disabled={saving || toUserKeys.length === 0 || toUserKeys.length > MAX_DELEGATES}
         >
           {saving ? 'Сохранение…' : 'Сохранить'}
         </button>

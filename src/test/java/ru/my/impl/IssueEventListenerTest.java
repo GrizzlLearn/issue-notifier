@@ -353,6 +353,23 @@ public class IssueEventListenerTest {
                 .thenReturn(ProjectContexts.format(java.util.List.of(context)));
     }
 
+    /**
+     * Массовая правка с отключёнными уведомлениями: Jira выставляет sendMail=false,
+     * и плагин обязан молчать — иначе галка «без уведомлений» ничего не значит.
+     */
+    @Test
+    public void ignoresEventWithoutSendMail() {
+        IssueEvent event = eventWithChanges(EventType.ISSUE_UPDATED_ID);
+        IssueEvent silent = new IssueEvent(event.getIssue(), event.getUser(), null, null,
+                event.getChangeLog(), Collections.<String, Object>emptyMap(),
+                EventType.ISSUE_UPDATED_ID, false);
+
+        listener.onIssueEvent(silent);
+
+        verify(notificationService, never()).processEvent(any(), any(), any(), any());
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap());
+    }
+
     /** Задача в проекте PROJ: ключ проекта важен только для настройки закрывающих статусов. */
     private Issue issueInProject() {
         Project project = mock(Project.class);

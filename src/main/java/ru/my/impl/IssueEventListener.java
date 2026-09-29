@@ -129,6 +129,12 @@ public class IssueEventListener {
     }
 
     private void handleIssueEvent(IssueEvent event) {
+        // bulk-операция или workflow-функция с отключёнными уведомлениями: Jira
+        // просит не рассылать, и это относится и к нашим каналам, иначе галка
+        // «без уведомлений» в массовой правке ничего не значит
+        if (!event.isSendMail()) {
+            return;
+        }
         Issue issue = event.getIssue();
         ApplicationUser author = event.getUser();
         // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
