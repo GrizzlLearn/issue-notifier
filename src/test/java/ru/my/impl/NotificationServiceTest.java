@@ -683,6 +683,20 @@ public class NotificationServiceTest {
         verify(watcherManager, never()).getWatchers(any(), any());
     }
 
+    /** A делегировал уведомления B; B прокомментировал — B не должен узнать о себе. */
+    @Test
+    public void skipsDelegateWhoIsTheAuthor() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        MockApplicationUser delegate = new MockApplicationUser("bob", "Bob", "bob@example.com");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(delegate));
+
+        service.processAction(issue, delegate, NotificationAction.COMMENT_ADDED, List.of(),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender, never()).send(any(), any());
+    }
+
     /** Список проектов в настройках получателя относится только к изменениям задач. */
     @Test
     public void actionIgnoresRecipientProjectFilter() {

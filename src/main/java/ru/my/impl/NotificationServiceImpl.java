@@ -343,6 +343,11 @@ public class NotificationServiceImpl implements NotificationService {
                 if (!recipient.isActive()) {
                     continue;
                 }
+                // автор отсеивается и среди делегатов: иначе B, которому A делегировал
+                // уведомления, получал бы сообщение о своём же комментарии
+                if (author != null && Objects.equals(recipient.getKey(), author.getKey())) {
+                    continue;
+                }
                 // содержимое задачи уходит только тому, кто и так может её открыть:
                 // делегат и упомянутый в комментарии наблюдателями не являются
                 if (!permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, issue, recipient)) {

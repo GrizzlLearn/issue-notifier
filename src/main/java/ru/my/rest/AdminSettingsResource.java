@@ -177,6 +177,12 @@ public class AdminSettingsResource {
         if (body == null || body.isEmpty()) return UserSettingsResource.badRequest("Тело запроса не задано");
 
         for (Map.Entry<String, String> e : body.entrySet()) {
+            // null дошёл бы до БД, а потом cache.put(key, null) ронял бы каждый
+            // get этого ключа — одна опечатка в клиенте отравила бы настройку
+            if (e.getValue() == null) {
+                return UserSettingsResource.badRequest(
+                        "Пустое значение (null) для '" + e.getKey() + "': передайте строку");
+            }
             if (isBlankBoolean(e.getKey(), e.getValue())) {
                 continue;
             }
@@ -286,11 +292,6 @@ public class AdminSettingsResource {
     }
 
     /**
-     * Значения с формы, которые разрешено использовать в проверке: только известные
-     * ключи настроек. Всё остальное игнорируется, чтобы через проверку нельзя было
-     * подсунуть произвольную настройку.
-     */
-    /**
      * Ключ отпечатка проверенной конфигурации канала, например
      * {@code "mattermost.testedConfig"}. Через PUT не принимается и в GET не отдаётся:
      * его пишет только успешная проверка, иначе запрет обходился бы одним запросом.
@@ -369,6 +370,11 @@ public class AdminSettingsResource {
         return null;
     }
 
+    /**
+     * Значения с формы, которые разрешено использовать в проверке: только известные
+     * ключи настроек. Всё остальное игнорируется, чтобы через проверку нельзя было
+     * подсунуть произвольную настройку.
+     */
     private static Map<String, String> formSettings(Map<String, String> fromForm) {
         if (fromForm == null) {
             return Map.of();

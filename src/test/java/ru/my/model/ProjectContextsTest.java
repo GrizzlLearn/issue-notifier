@@ -73,6 +73,18 @@ public class ProjectContextsTest {
         assertEquals("reporter,assignee", loaded.recipients(NotificationAction.CLOSED));
     }
 
+    /** Порядок проектов не должен меняться между запусками JVM: иначе дифф настроек шумит. */
+    @Test
+    public void roundTripKeepsProjectOrder() {
+        java.util.Set<String> ordered = new java.util.LinkedHashSet<>(
+                List.of("ZED", "ALPHA", "MID", "BETA"));
+        ProjectContext saved = new ProjectContext("a1", "Контекст", ordered, Set.of(), Map.of(), Map.of());
+
+        ProjectContext loaded = ProjectContexts.parse(ProjectContexts.format(List.of(saved))).get(0);
+
+        assertEquals(List.of("ZED", "ALPHA", "MID", "BETA"), List.copyOf(loaded.projects()));
+    }
+
     @Test
     public void parseIgnoresGarbage() {
         assertEquals(1, ProjectContexts.parse("не json").size());

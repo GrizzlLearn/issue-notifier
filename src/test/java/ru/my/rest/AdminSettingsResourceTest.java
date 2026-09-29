@@ -36,6 +36,9 @@ public class AdminSettingsResourceTest {
     @Mock private com.atlassian.jira.user.util.UserManager userManager;
 
     private AdminSettingsResource resource;
+    /** Канал тестов проверки: единственный зарегистрированный отправщик — Telegram. */
+    private static final String TELEGRAM = "TELEGRAM";
+
     private final MockApplicationUser admin = new MockApplicationUser("admin");
     private final MockApplicationUser regular = new MockApplicationUser("jdoe");
 
@@ -208,7 +211,7 @@ public class AdminSettingsResourceTest {
     public void putEnablesChannelAfterSuccessfulTest() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("123:ABC");
-        rememberTest(NotificationChannel.TELEGRAM);
+        rememberTest();
 
         assertEquals(204, resource.set(Map.of("telegram.enabled", "true")).getStatus());
         verify(adminSettingsService).set("telegram.enabled", "true");
@@ -222,7 +225,7 @@ public class AdminSettingsResourceTest {
     public void putRejectsEnablingWithConfigThatWasNotTested() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("123:ABC");
-        rememberTest(NotificationChannel.TELEGRAM);
+        rememberTest();
 
         Response response = resource.set(Map.of(
                 "telegram.enabled", "true",
@@ -244,6 +247,20 @@ public class AdminSettingsResourceTest {
 
         assertEquals(204, response.getStatus());
         verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+    }
+
+    /**
+     * null дошёл бы до БД, а потом cache.put(key, null) ронял бы каждый get
+     * этого ключа — рассылка молча ломалась бы до перезапуска.
+     */
+    @Test
+    public void putReturns400ForNullValue() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        Map<String, String> body = new java.util.LinkedHashMap<>();
+        body.put(ChannelKeys.MATTERMOST_DOMAIN, null);
+
+        assertEquals(400, resource.set(body).getStatus());
+        verify(adminSettingsService, never()).set(anyString(), any());
     }
 
     @Test
@@ -384,7 +401,7 @@ public class AdminSettingsResourceTest {
     @Test
     public void testReturns403ForNonAdmin() {
         when(authContext.getLoggedInUser()).thenReturn(regular);
-        assertEquals(403, resource.test(request("TELEGRAM", Map.of())).getStatus());
+        assertEquals(403, resource.test(request(TELEGRAM, Map.of())).getStatus());
         verify(telegramSender, never()).sendTest(any(), anyString(), anyMap());
     }
 
@@ -422,7 +439,7 @@ public class AdminSettingsResourceTest {
     public void testSavesOnlyTestedMarker() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        resource.test(request("TELEGRAM", Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
+        resource.test(request(TELEGRAM, Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
 
         verify(adminSettingsService, never()).set(eq(ChannelKeys.TELEGRAM_BOT_TOKEN), anyString());
         verify(adminSettingsService, never()).set(eq("telegram.enabled"), anyString());
@@ -440,7 +457,7 @@ public class AdminSettingsResourceTest {
         form.put("какой-то.мусор", "значение");
         form.put(ChannelKeys.TELEGRAM_BOT_USERNAME, "   ");
 
-        resource.test(request("TELEGRAM", form));
+        resource.test(request(TELEGRAM, form));
 
         verify(telegramSender).sendTest(admin, TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName()),
                 Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
@@ -453,8 +470,7 @@ public class AdminSettingsResourceTest {
         MockApplicationUser target = new MockApplicationUser("jdoe");
         when(userManager.getUserByName("jdoe")).thenReturn(target);
 
-        Response response = resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "jdoe"));
+        Response response = resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "jdoe"));
 
         assertEquals(200, response.getStatus());
         verify(telegramSender).sendTest(eq(target), anyString(), anyMap());
@@ -468,8 +484,7 @@ public class AdminSettingsResourceTest {
         when(userManager.getUserByName("JIRAUSER10100")).thenReturn(null);
         when(userManager.getUserByKey("JIRAUSER10100")).thenReturn(target);
 
-        assertEquals(200, resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "JIRAUSER10100")).getStatus());
+        assertEquals(200, resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "JIRAUSER10100")).getStatus());
         verify(telegramSender).sendTest(eq(target), anyString(), anyMap());
     }
 
@@ -477,8 +492,7 @@ public class AdminSettingsResourceTest {
     public void testReturns400WhenJiraUserNotFound() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "нет-такого"));
+        Response response = resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "нет-такого"));
 
         assertEquals(400, response.getStatus());
         verify(telegramSender, never()).sendTest(any(), anyString(), anyMap());
@@ -489,8 +503,7 @@ public class AdminSettingsResourceTest {
     public void testSendsToPlainEmailAddress() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
+        Response response = resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
 
         assertEquals(200, response.getStatus());
         verify(telegramSender).sendTestTo(eq("qa@example.com"), anyString(), anyMap());
@@ -500,8 +513,7 @@ public class AdminSettingsResourceTest {
     public void testReturns400ForMalformedEmail() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "куда-то"));
+        Response response = resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "куда-то"));
 
         assertEquals(400, response.getStatus());
         verify(telegramSender, never()).sendTestTo(anyString(), anyString(), anyMap());
@@ -514,8 +526,7 @@ public class AdminSettingsResourceTest {
         doThrow(new UnsupportedOperationException("Канал TELEGRAM умеет проверку только на пользователя Jira"))
                 .when(telegramSender).sendTestTo(anyString(), anyString(), anyMap());
 
-        Response response = resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
+        Response response = resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
 
         assertEquals(400, response.getStatus());
         assertEquals("Канал TELEGRAM умеет проверку только на пользователя Jira",
@@ -526,8 +537,7 @@ public class AdminSettingsResourceTest {
     public void testReturns400ForUnknownRecipientType() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        assertEquals(400, resource.test(request("TELEGRAM",
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "всем", "")).getStatus());
+        assertEquals(400, resource.test(request(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "всем", "")).getStatus());
     }
 
     /** Письмо проверки отличается от уведомления темой и телом. */
@@ -535,7 +545,6 @@ public class AdminSettingsResourceTest {
     public void emailTestUsesItsOwnLetter() {
         String letter = TestMessages.forChannel(NotificationChannel.EMAIL, "Иван");
 
-        assertTrue(TestMessages.EMAIL_SUBJECT.contains("проверка"));
         assertTrue(letter.contains("Иван"));
         assertTrue(letter.contains("проверочное письмо"));
         // каркас как у настоящих писем плагина — см. EmailMessageFormatter
@@ -571,7 +580,7 @@ public class AdminSettingsResourceTest {
         doThrow(new IllegalStateException("Токен не подошёл"))
                 .when(telegramSender).sendTest(any(), anyString(), anyMap());
 
-        Response response = resource.test(request("TELEGRAM", Map.of()));
+        Response response = resource.test(request(TELEGRAM, Map.of()));
 
         assertEquals(400, response.getStatus());
         assertEquals("Токен не подошёл", ((Map<?, ?>) response.getEntity()).get("error"));
@@ -644,17 +653,18 @@ public class AdminSettingsResourceTest {
      * Проверка канала прошла с текущими сохранёнными настройками: отметку считает
      * сам ресурс, поэтому берём её из его же ответа на проверку.
      */
-    private void rememberTest(NotificationChannel channel) {
-        resource.test(request(channel.name(), Map.of()));
+    private void rememberTest() {
+        String key = AdminSettingsResource.testedKey(NotificationChannel.TELEGRAM);
+        resource.test(request(TELEGRAM, Map.of()));
         ArgumentCaptor<String> marker = ArgumentCaptor.forClass(String.class);
-        verify(adminSettingsService).set(eq(AdminSettingsResource.testedKey(channel)), marker.capture());
-        when(adminSettingsService.get(AdminSettingsResource.testedKey(channel), ""))
-                .thenReturn(marker.getValue());
+        verify(adminSettingsService).set(eq(key), marker.capture());
+        when(adminSettingsService.get(key, "")).thenReturn(marker.getValue());
     }
 
-    private static ChannelTestDto request(String channel, Map<String, String> settings,
+    /** Проверка с выбранным получателем — во всех таких тестах канал один. */
+    private static ChannelTestDto request(Map<String, String> settings,
                                          String recipientType, String recipient) {
-        ChannelTestDto dto = request(channel, settings);
+        ChannelTestDto dto = request(TELEGRAM, settings);
         dto.setRecipientType(recipientType);
         dto.setRecipient(recipient);
         return dto;

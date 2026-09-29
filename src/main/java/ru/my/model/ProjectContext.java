@@ -1,5 +1,6 @@
 package ru.my.model;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -76,17 +77,22 @@ public final class ProjectContext {
         return name;
     }
 
+    /**
+     * Порядок сохраняется: {@code Set.copyOf} отдавал элементы в произвольном
+     * порядке, из-за чего список проектов в GET и в сохранённом JSON менялся
+     * между запусками JVM, а дифф настроек в БД шумел без причины.
+     */
     public Set<String> projects() {
-        return Set.copyOf(projects);
+        return Collections.unmodifiableSet(projects);
     }
 
     public Set<String> categories() {
-        return Set.copyOf(categories);
+        return Collections.unmodifiableSet(categories);
     }
 
     /** Ключи действий, у которых есть запись в этом контексте. */
     public Set<String> actionKeys() {
-        return Set.copyOf(actions.keySet());
+        return Collections.unmodifiableSet(actions.keySet());
     }
 
     /** {@code true} — встроенный контекст «Остальные проекты». */
@@ -120,13 +126,13 @@ public final class ProjectContext {
     /** id закрывающих статусов проекта в этом контексте; пусто — не заданы. */
     public Set<String> closingStatuses(String projectKey) {
         Set<String> statuses = closedStatuses.get(projectKey);
-        return statuses == null ? Set.of() : Set.copyOf(statuses);
+        return statuses == null ? Set.of() : Collections.unmodifiableSet(statuses);
     }
 
     /** Все закрывающие статусы контекста — нужно сериализации и админ-странице. */
     public Map<String, Set<String>> closedStatuses() {
         Map<String, Set<String>> copy = new LinkedHashMap<>();
-        closedStatuses.forEach((project, statuses) -> copy.put(project, Set.copyOf(statuses)));
+        closedStatuses.forEach((project, statuses) -> copy.put(project, Collections.unmodifiableSet(statuses)));
         return copy;
     }
 

@@ -115,15 +115,20 @@ public final class ActionTemplates {
     }
 
     /**
-     * Telegram принимает HTML-разметку, поэтому спецсимволы в значениях экранируются.
+     * Telegram и письмо — разметка HTML, поэтому спецсимволы в значениях экранируются.
      * Для Mattermost экранирования нет: markdown-спецсимволы в свободном тексте
      * безвредны, а обратные слэши были бы видны получателю.
+     * <p>
+     * Email в каналы действий сейчас не входит ({@code supportsActionTemplates = false}),
+     * так что шаблон до него не доходит. Экранирование всё равно здесь: включение
+     * email в действия — это одна литера в {@link NotificationChannel}, а валидация
+     * шаблонов к нему уже готова, и без этой строки дыра открылась бы сразу.
      */
     private static String escape(String value, NotificationChannel channel) {
         if (value == null) {
             return "";
         }
-        if (channel == NotificationChannel.TELEGRAM) {
+        if (channel == NotificationChannel.TELEGRAM || channel == NotificationChannel.EMAIL) {
             return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
         }
         return value;

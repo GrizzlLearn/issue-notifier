@@ -45,6 +45,24 @@ public class TelegramPollingServiceTest {
         verify(client).sendMessage(eq("123456"), contains("123456"));
     }
 
+    /**
+     * Человек написал боту /start и заблокировал его: ответ падает с 403.
+     * offset обязан сдвинуться, иначе тот же апдейт придёт снова и /start
+     * перестанет работать у всех.
+     */
+    @Test
+    public void movesOffsetEvenWhenReplyFails() {
+        when(client.getUpdates(0)).thenReturn(
+                "{\"ok\":true,\"result\":[{\"update_id\":300," +
+                "\"message\":{\"chat\":{\"id\":777},\"text\":\"/start\"}}]}");
+        doThrow(new TelegramClient.TelegramException("Forbidden: bot was blocked by the user"))
+                .when(client).sendMessage(eq("777"), anyString());
+
+        service.pollOnce();
+
+        verify(adminSettings).set(TelegramPollingService.OFFSET_KEY, "301");
+    }
+
     @Test
     public void updatesOffsetAfterProcessing() {
         when(client.getUpdates(0)).thenReturn(

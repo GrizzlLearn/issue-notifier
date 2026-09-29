@@ -120,10 +120,17 @@ public class TelegramPollingService implements JobRunner {
                 if (!cid.find()) continue;
                 String chatId = cid.group(1);
 
-                client.sendMessage(chatId,
-                        "Ваш Telegram chat_id: <code>" + chatId + "</code>\n\n" +
-                        "Скопируйте это число в настройки уведомлений Jira.");
-                log.debug("Ответили на /start в чате {}", chatId);
+                // Ошибку ответа глотаем на этом апдейте: иначе offset не сдвинется,
+                // тот же апдейт придёт снова, и /start перестанет работать у всех —
+                // достаточно одному человеку написать боту и заблокировать его
+                try {
+                    client.sendMessage(chatId,
+                            "Ваш Telegram chat_id: <code>" + chatId + "</code>\n\n" +
+                            "Скопируйте это число в настройки уведомлений Jira.");
+                    log.debug("Ответили на /start в чате {}", chatId);
+                } catch (Exception e) {
+                    log.warn("Не удалось ответить на /start в чате {}: {}", chatId, e.getMessage());
+                }
             }
             // пишем только когда offset реально сдвинулся — иначе запись в БД на каждый опрос
             if (nextOffset != offset) {

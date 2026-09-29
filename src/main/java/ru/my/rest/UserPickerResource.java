@@ -56,6 +56,11 @@ public class UserPickerResource {
     public Response search(@QueryParam("query") String query) {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
+        // без этой проверки поиск отдавал бы ключи и имена всех активных
+        // пользователей любому авторизованному, включая клиентов Service Desk
+        if (!globalPermissionManager.hasPermission(GlobalPermissionKey.USER_PICKER, user)) {
+            return UserSettingsResource.forbidden();
+        }
 
         UserSearchParams params = UserSearchParams.builder(MAX_RESULTS)
                 .allowEmptyQuery(true)
