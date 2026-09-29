@@ -113,12 +113,12 @@ export async function saveContexts(contexts) {
 
 // Проверочная отправка: отправляем значения прямо из формы, ещё не сохранённые,
 // чтобы админ проверил введённый токен до записи в настройки.
-export async function testChannel(channel, settings) {
+export async function testChannel(channel, settings, recipientType, recipient) {
   const resp = await fetch(`${apiBase()}/admin/settings/test`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: mutationHeaders,
-    body: JSON.stringify({ channel, settings }),
+    body: JSON.stringify({ channel, settings, recipientType, recipient }),
   });
   await checkOk(resp);
   return (await resp.json()).message;

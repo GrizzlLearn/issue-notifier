@@ -139,10 +139,20 @@ const parseKeys = raw => (raw || '').split(',').filter(Boolean);
 // Проверочная отправка канала. Отправляем значения секции прямо из формы —
 // админ проверяет введённый токен до сохранения; результат приходит от бэкенда
 // текстом (например, «Пользователь не найден в Mattermost»).
-function ChannelTestButton({ section, values }) {
+// Кому уходит проверка. Telegram адресует по chat_id из настроек пользователя,
+// поэтому произвольной почты у него нет — вариант скрыт.
+const TEST_RECIPIENTS = [
+  ['me', 'Мне'],
+  ['user', 'Пользователю Jira'],
+  ['email', 'На адрес почты'],
+];
+
+function ChannelTestButton({ section, values, onTested }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [recipientType, setRecipientType] = useState('me');
+  const [recipient, setRecipient] = useState('');
   // вкладка «Каналы» размонтируется при переключении вкладок, а запрос идёт до 10 секунд:
   // без этой проверки ответ пришёл бы в размонтированный компонент
   const alive = useRef(true);
@@ -154,8 +164,12 @@ function ChannelTestButton({ section, values }) {
       const settings = Object.fromEntries(
         section.fields.filter(f => !f.isSetKey || values[f.key]).map(f => [f.key, values[f.key] || ''])
       );
-      const message = await testChannel(section.channel, settings);
-      if (alive.current) setResult(message);
+      const message = await testChannel(section.channel, settings, recipientType,
+        recipientType === 'me' ? '' : recipient.trim());
+      if (alive.current) {
+        setResult(message);
+        onTested(section.channel);
+      }
     } catch (e) {
       if (alive.current) setError(e.message);
     } finally {
@@ -163,18 +177,55 @@ function ChannelTestButton({ section, values }) {
     }
   }
 
+  const variants = section.channel === 'TELEGRAM'
+    ? TEST_RECIPIENTS.filter(([value]) => value !== 'email')
+    : TEST_RECIPIENTS;
+  const needsTarget = recipientType !== 'me';
+
   return (
     <div className="field-group">
-      <button type="button" className="aui-button" onClick={handleClick} disabled={busy}>
-        {busy ? 'Отправка…' : 'Проверить'}
-      </button>
-      <span style={{ marginLeft: 8 }}>
-        {error && <span className="in-status-text is-error">{error}</span>}
-        {result && <span className="in-status-text is-success">{result}</span>}
-      </span>
+      <label className="label" htmlFor={`in-test-to-${section.channel}`}>Кому отправить проверку</label>
+      <select
+        id={`in-test-to-${section.channel}`}
+        className="select"
+        value={recipientType}
+        onChange={e => { setRecipientType(e.target.value); setResult(null); setError(null); }}
+      >
+        {variants.map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+
+      {needsTarget && (
+        <input
+          className="text"
+          type={recipientType === 'email' ? 'email' : 'text'}
+          value={recipient}
+          onChange={e => setRecipient(e.target.value)}
+          placeholder={recipientType === 'email' ? 'qa@example.com' : 'логин или ключ пользователя Jira'}
+          style={{ width: '100%', maxWidth: 320, marginTop: 6 }}
+          aria-label={recipientType === 'email' ? 'Адрес почты' : 'Пользователь Jira'}
+        />
+      )}
+
+      <div style={{ marginTop: 8 }}>
+        <button type="button" className="aui-button" onClick={handleClick}
+                disabled={busy || (needsTarget && !recipient.trim())}>
+          {busy ? 'Отправка…' : 'Проверить'}
+        </button>
+        <span style={{ marginLeft: 8 }}>
+          {error && <span className="in-status-text is-error">{error}</span>}
+          {result && <span className="in-status-text is-success">{result}</span>}
+        </span>
+      </div>
+
       <div style={hintStyle}>
-        Сообщение придёт вам. Проверяются значения из формы, сохранять их для этого не нужно;
-        пустое поле токена означает «взять сохранённый».
+        {section.channel === 'MATTERMOST'
+          ? 'В Mattermost получатель ищется по адресу почты — своей или указанной. '
+          : ''}
+        Проверяются значения из формы, сохранять их для этого не нужно; пустое поле
+        токена означает «взять сохранённый». Без успешной проверки включённый канал
+        сохранить нельзя.
       </div>
     </div>
   );
@@ -999,6 +1050,9 @@ export default function AdminApp() {
   // снимок сохранённых значений: по нему считаем, что менять на сервере и
   // предупреждать ли об уходе со страницы
   const [saved, setSaved] = useState({});
+  // каналы, по которым проверка прошла в этом сеансе: включить канал без неё
+  // нельзя, иначе настройку сохраняют «на глаз» и уведомления молча не уходят
+  const [testedChannels, setTestedChannels] = useState([]);
   // контексты живут отдельным эндпоинтом и правятся списком целиком
   const [contexts, setContexts] = useState([]);
   const [savedContexts, setSavedContexts] = useState('');
@@ -1044,6 +1098,16 @@ export default function AdminApp() {
     const nameless = contexts.find(c => c.id !== DEFAULT_CONTEXT && !(c.name || '').trim());
     if (nameless) {
       setError('У контекста не задано название — вкладка «Контекст проектов».');
+      return;
+    }
+    // проверяем только те каналы, которые включают прямо сейчас: уже включённый
+    // и сохранённый канал не должен требовать проверки на каждую правку
+    const untested = SECTIONS.filter(section => section.channel
+      && values[`${section.channel.toLowerCase()}.enabled`] === 'true'
+      && saved[`${section.channel.toLowerCase()}.enabled`] !== 'true'
+      && !testedChannels.includes(section.channel));
+    if (untested.length > 0) {
+      setError(`Отправьте проверку перед включением: ${untested.map(s => s.title).join(', ')}.`);
       return;
     }
     setSaving(true); setError(null); setSuccess(false);
@@ -1155,7 +1219,14 @@ export default function AdminApp() {
                 </div>
               ))}
 
-              {section.channel && <ChannelTestButton section={section} values={values} />}
+              {section.channel && (
+                <ChannelTestButton
+                  section={section}
+                  values={values}
+                  onTested={channel => setTestedChannels(prev =>
+                    prev.includes(channel) ? prev : [...prev, channel])}
+                />
+              )}
             </fieldset>
           ))}
         </div>

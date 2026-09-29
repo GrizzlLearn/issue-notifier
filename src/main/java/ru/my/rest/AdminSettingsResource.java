@@ -4,6 +4,7 @@ import com.atlassian.jira.permission.GlobalPermissionKey;
 import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
+import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import ru.my.model.WatchedFields;
 import ru.my.model.ChannelKeys;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
+import ru.my.model.TestMessages;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -28,6 +30,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 @Named
 @Path("/admin/settings")
@@ -102,13 +108,13 @@ public class AdminSettingsResource {
         return Set.copyOf(keys);
     }
 
-    /** Текст проверочного сообщения: администратор должен узнать его в мессенджере. */
-    static final String TEST_MESSAGE =
-            "Issue Notifier: проверка канала. Если вы видите это сообщение, настройки верные.";
+    /** Почтовый адрес: проверяем только форму, доставку проверит сама отправка. */
+    private static final Pattern EMAIL = Pattern.compile("[^@\\s]+@[^@\\s.]+\\.[^@\\s]+");
 
     private final JiraAuthenticationContext authContext;
     private final GlobalPermissionManager globalPermissionManager;
     private final AdminSettingsService adminSettingsService;
+    private final UserManager userManager;
     private final Map<NotificationChannel, NotificationSender> senders;
 
     @Inject
@@ -116,10 +122,12 @@ public class AdminSettingsResource {
             @ComponentImport JiraAuthenticationContext authContext,
             @ComponentImport GlobalPermissionManager globalPermissionManager,
             AdminSettingsService adminSettingsService,
+            @ComponentImport UserManager userManager,
             List<NotificationSender> senders) {
         this.authContext = authContext;
         this.globalPermissionManager = globalPermissionManager;
         this.adminSettingsService = adminSettingsService;
+        this.userManager = userManager;
         Map<NotificationChannel, NotificationSender> byChannel = new LinkedHashMap<>();
         for (NotificationSender sender : senders) {
             byChannel.put(sender.channel(), sender);
@@ -191,6 +199,11 @@ public class AdminSettingsResource {
             }
         }
 
+        Response untested = requireSuccessfulTest(body);
+        if (untested != null) {
+            return untested;
+        }
+
         body.entrySet().stream()
                 .filter(e -> KNOWN_KEYS.contains(e.getKey()))
                 .filter(e -> !isBlankBoolean(e.getKey(), e.getValue()))                   // «не задано» — не трогаем
@@ -230,13 +243,43 @@ public class AdminSettingsResource {
             return UserSettingsResource.badRequest("Для канала " + channel + " нет отправщика");
         }
 
+        String type = request.getRecipientType() == null || request.getRecipientType().isBlank()
+                ? "me" : request.getRecipientType().trim();
+        String target = request.getRecipient() == null ? "" : request.getRecipient().trim();
+        Map<String, String> settings = formSettings(request.getSettings());
+        // разметка у каналов разная: Markdown в Mattermost, HTML в Telegram, письмо в почте
+        String message = TestMessages.forChannel(channel, user.getDisplayName());
+
         try {
-            sender.sendTest(user, TEST_MESSAGE, formSettings(request.getSettings()));
+            switch (type) {
+                case "me" -> sender.sendTest(user, message, settings);
+                case "user" -> {
+                    ApplicationUser recipient = resolveUser(target);
+                    if (recipient == null) {
+                        return UserSettingsResource.badRequest("Пользователь Jira не найден: " + target);
+                    }
+                    sender.sendTest(recipient, message, settings);
+                }
+                case "email" -> {
+                    if (!EMAIL.matcher(target).matches()) {
+                        return UserSettingsResource.badRequest("Это не похоже на адрес почты: " + target);
+                    }
+                    sender.sendTestTo(target, message, settings);
+                }
+                default -> {
+                    return UserSettingsResource.badRequest("Неизвестный получатель проверки: " + type);
+                }
+            }
+        } catch (UnsupportedOperationException e) {
+            return UserSettingsResource.badRequest(e.getMessage());
         } catch (Exception e) {
             log.warn("Проверка канала {} не удалась: {}", channel, e.getMessage());
             return UserSettingsResource.badRequest(
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
+        // запоминаем, что именно проверено: без этого PUT не даст включить канал
+        adminSettingsService.set(testedKey(channel), fingerprint(channel, settings));
+
         return Response.ok(Map.of("message", channel == NotificationChannel.EMAIL
                 ? "Письмо поставлено в очередь Jira — проверьте ящик"
                 : "Сообщение отправлено — проверьте " + channel)).build();
@@ -247,6 +290,85 @@ public class AdminSettingsResource {
      * ключи настроек. Всё остальное игнорируется, чтобы через проверку нельзя было
      * подсунуть произвольную настройку.
      */
+    /**
+     * Ключ отпечатка проверенной конфигурации канала, например
+     * {@code "mattermost.testedConfig"}. Через PUT не принимается и в GET не отдаётся:
+     * его пишет только успешная проверка, иначе запрет обходился бы одним запросом.
+     */
+    static String testedKey(NotificationChannel channel) {
+        return channel.name().toLowerCase(Locale.ROOT) + ".testedConfig";
+    }
+
+    /**
+     * Ключи настроек канала, кроме флага включённости: по ним считается отпечаток.
+     * У email своих ключей нет — его отпечаток одинаков всегда, и это верно:
+     * проверять там нечего, кроме самой отправки через почту Jira.
+     */
+    private static List<String> configKeys(NotificationChannel channel) {
+        String prefix = channel.name().toLowerCase(Locale.ROOT) + ".";
+        List<String> keys = new ArrayList<>();
+        for (String key : KNOWN_KEYS) {
+            if (key.startsWith(prefix) && !key.equals(channel.enabledKey()) && !isIsSetKey(key)) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Отпечаток конфигурации канала: SHA-256 от «ключ=значение» в порядке ключей.
+     * Нужен, чтобы отметка «проверено» относилась именно к проверенным значениям —
+     * иначе админ проверил бы рабочий токен, а включил канал с другим.
+     * Хеш односторонний, поэтому секреты в настройках он не раскрывает.
+     *
+     * @param overrides значения, которые переопределяют сохранённые (форма или тело PUT)
+     */
+    private String fingerprint(NotificationChannel channel, Map<String, String> overrides) {
+        StringBuilder canonical = new StringBuilder();
+        for (String key : configKeys(channel)) {
+            String value = overrides.get(key);
+            if (value == null || value.isBlank()) {
+                value = adminSettingsService.get(key, "");
+            }
+            canonical.append(key).append('=').append(value).append('\n');
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 есть в любой JVM — но если нет, включать канал без проверки нельзя
+            throw new IllegalStateException("Нет SHA-256 для отпечатка настроек канала", e);
+        }
+    }
+
+    /**
+     * Канал включают этим запросом, и проверки для той конфигурации, которую
+     * включают, не было. Уже включённый канал под это не попадает: правка домена
+     * или токена сохраняется как раньше.
+     *
+     * @return ответ 400 или {@code null}, если включать можно
+     */
+    private Response requireSuccessfulTest(Map<String, String> body) {
+        for (NotificationChannel channel : NotificationChannel.values()) {
+            boolean turningOn = "true".equals(body.get(channel.enabledKey()))
+                    && !Boolean.parseBoolean(adminSettingsService.get(channel.enabledKey(), "false"));
+            if (!turningOn) {
+                continue;
+            }
+            String tested = adminSettingsService.get(testedKey(channel), "");
+            if (!fingerprint(channel, body).equals(tested)) {
+                return UserSettingsResource.badRequest("Отправьте проверку канала "
+                        + channel + " с этими настройками — без успешной проверки включить его нельзя");
+            }
+        }
+        return null;
+    }
+
     private static Map<String, String> formSettings(Map<String, String> fromForm) {
         if (fromForm == null) {
             return Map.of();
@@ -296,6 +418,18 @@ public class AdminSettingsResource {
                     adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).key();
         }
         return "";
+    }
+
+    /**
+     * Ищет пользователя по логину, а если не нашёлся — по ключу: администратор
+     * копирует то, что видит в профиле, а это разные строки.
+     */
+    private ApplicationUser resolveUser(String nameOrKey) {
+        if (nameOrKey.isEmpty()) {
+            return null;
+        }
+        ApplicationUser found = userManager.getUserByName(nameOrKey);
+        return found != null ? found : userManager.getUserByKey(nameOrKey);
     }
 
     /**

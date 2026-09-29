@@ -12,10 +12,12 @@ import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationSender;
 import ru.my.model.ActionTemplates;
+import org.mockito.ArgumentCaptor;
 import ru.my.model.ChannelKeys;
 import ru.my.model.CommentTextMode;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
+import ru.my.model.TestMessages;
 
 import javax.ws.rs.core.Response;
 import java.util.List;
@@ -31,6 +33,7 @@ public class AdminSettingsResourceTest {
     @Mock private GlobalPermissionManager globalPermissionManager;
     @Mock private AdminSettingsService adminSettingsService;
     @Mock private NotificationSender telegramSender;
+    @Mock private com.atlassian.jira.user.util.UserManager userManager;
 
     private AdminSettingsResource resource;
     private final MockApplicationUser admin = new MockApplicationUser("admin");
@@ -40,7 +43,7 @@ public class AdminSettingsResourceTest {
     public void setUp() {
         lenient().when(telegramSender.channel()).thenReturn(NotificationChannel.TELEGRAM);
         resource = new AdminSettingsResource(authContext, globalPermissionManager, adminSettingsService,
-                List.of(telegramSender));
+                userManager, List.of(telegramSender));
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, admin)).thenReturn(true);
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, regular)).thenReturn(false);
         when(adminSettingsService.get(anyString(), anyString())).thenReturn("");
@@ -163,12 +166,12 @@ public class AdminSettingsResourceTest {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
         Response response = resource.set(Map.of(
-                "email.enabled", "true",
+                "email.enabled", "false",
                 ChannelKeys.MATTERMOST_TOKEN, "secret123"
         ));
 
         assertEquals(204, response.getStatus());
-        verify(adminSettingsService).set("email.enabled", "true");
+        verify(adminSettingsService).set("email.enabled", "false");
         verify(adminSettingsService).set(ChannelKeys.MATTERMOST_TOKEN, "secret123");
     }
 
@@ -185,8 +188,62 @@ public class AdminSettingsResourceTest {
     public void putAcceptsValidBooleanValues() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        assertEquals(204, resource.set(Map.of("email.enabled", "true")).getStatus());
+        assertEquals(204, resource.set(Map.of(ActionTemplates.WATCHERS_ENABLED_KEY, "true")).getStatus());
         assertEquals(204, resource.set(Map.of("mattermost.enabled", "false")).getStatus());
+    }
+
+    /** Включить канал без проверки нельзя — иначе настройку сохраняют «на глаз». */
+    @Test
+    public void putRejectsEnablingChannelWithoutTest() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Response response = resource.set(Map.of("telegram.enabled", "true"));
+
+        assertEquals(400, response.getStatus());
+        verify(adminSettingsService, never()).set(eq("telegram.enabled"), anyString());
+    }
+
+    /** Проверка прошла с этими же настройками — включаем. */
+    @Test
+    public void putEnablesChannelAfterSuccessfulTest() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("123:ABC");
+        rememberTest(NotificationChannel.TELEGRAM);
+
+        assertEquals(204, resource.set(Map.of("telegram.enabled", "true")).getStatus());
+        verify(adminSettingsService).set("telegram.enabled", "true");
+    }
+
+    /**
+     * Проверили один токен, а включают канал с другим в том же запросе — отпечаток
+     * не сойдётся. Иначе запрет обходился бы одним PUT.
+     */
+    @Test
+    public void putRejectsEnablingWithConfigThatWasNotTested() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")).thenReturn("123:ABC");
+        rememberTest(NotificationChannel.TELEGRAM);
+
+        Response response = resource.set(Map.of(
+                "telegram.enabled", "true",
+                ChannelKeys.TELEGRAM_BOT_TOKEN, "другой:токен"));
+
+        assertEquals(400, response.getStatus());
+        verify(adminSettingsService, never()).set(eq("telegram.enabled"), anyString());
+    }
+
+    /** Уже включённый канал проверки не требует: правка домена не должна её просить. */
+    @Test
+    public void putAllowsEditingAlreadyEnabledChannel() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.get("mattermost.enabled", "false")).thenReturn("true");
+
+        Response response = resource.set(Map.of(
+                "mattermost.enabled", "true",
+                ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com"));
+
+        assertEquals(204, response.getStatus());
+        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
     }
 
     @Test
@@ -352,18 +409,25 @@ public class AdminSettingsResourceTest {
                 Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
 
         assertEquals(200, response.getStatus());
-        verify(telegramSender).sendTest(admin, AdminSettingsResource.TEST_MESSAGE,
+        verify(telegramSender).sendTest(admin, TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName()),
                 Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
     }
 
-    /** Значения из формы не сохраняются: проверка идёт до записи настроек. */
+    /**
+     * Значения из формы не сохраняются: проверка идёт до записи настроек.
+     * Пишется только отметка о том, какая конфигурация проверена — по ней PUT
+     * решает, можно ли включать канал.
+     */
     @Test
-    public void testDoesNotSaveAnything() {
+    public void testSavesOnlyTestedMarker() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
         resource.test(request("TELEGRAM", Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
 
-        verify(adminSettingsService, never()).set(anyString(), anyString());
+        verify(adminSettingsService, never()).set(eq(ChannelKeys.TELEGRAM_BOT_TOKEN), anyString());
+        verify(adminSettingsService, never()).set(eq("telegram.enabled"), anyString());
+        verify(adminSettingsService).set(
+                eq(AdminSettingsResource.testedKey(NotificationChannel.TELEGRAM)), anyString());
     }
 
     /** Через проверку нельзя подсунуть отправщику произвольную настройку. */
@@ -378,8 +442,126 @@ public class AdminSettingsResourceTest {
 
         resource.test(request("TELEGRAM", form));
 
-        verify(telegramSender).sendTest(admin, AdminSettingsResource.TEST_MESSAGE,
+        verify(telegramSender).sendTest(admin, TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName()),
                 Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
+    }
+
+    /** Проверка выбранному пользователю Jira: ищем по логину. */
+    @Test
+    public void testSendsToChosenJiraUser() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        MockApplicationUser target = new MockApplicationUser("jdoe");
+        when(userManager.getUserByName("jdoe")).thenReturn(target);
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "jdoe"));
+
+        assertEquals(200, response.getStatus());
+        verify(telegramSender).sendTest(eq(target), anyString(), anyMap());
+    }
+
+    /** Логина нет — ищем по ключу: админ копирует то, что видит в профиле. */
+    @Test
+    public void testFindsJiraUserByKeyWhenNameDoesNotMatch() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        MockApplicationUser target = new MockApplicationUser("jdoe");
+        when(userManager.getUserByName("JIRAUSER10100")).thenReturn(null);
+        when(userManager.getUserByKey("JIRAUSER10100")).thenReturn(target);
+
+        assertEquals(200, resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "JIRAUSER10100")).getStatus());
+        verify(telegramSender).sendTest(eq(target), anyString(), anyMap());
+    }
+
+    @Test
+    public void testReturns400WhenJiraUserNotFound() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "user", "нет-такого"));
+
+        assertEquals(400, response.getStatus());
+        verify(telegramSender, never()).sendTest(any(), anyString(), anyMap());
+    }
+
+    /** Проверка на произвольный адрес идёт мимо пользователей Jira. */
+    @Test
+    public void testSendsToPlainEmailAddress() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
+
+        assertEquals(200, response.getStatus());
+        verify(telegramSender).sendTestTo(eq("qa@example.com"), anyString(), anyMap());
+    }
+
+    @Test
+    public void testReturns400ForMalformedEmail() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "куда-то"));
+
+        assertEquals(400, response.getStatus());
+        verify(telegramSender, never()).sendTestTo(anyString(), anyString(), anyMap());
+    }
+
+    /** Канал, который не умеет отправку на адрес, отвечает понятным текстом, а не 500. */
+    @Test
+    public void testReturns400WhenChannelCannotSendToAddress() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        doThrow(new UnsupportedOperationException("Канал TELEGRAM умеет проверку только на пользователя Jira"))
+                .when(telegramSender).sendTestTo(anyString(), anyString(), anyMap());
+
+        Response response = resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "email", "qa@example.com"));
+
+        assertEquals(400, response.getStatus());
+        assertEquals("Канал TELEGRAM умеет проверку только на пользователя Jira",
+                ((Map<?, ?>) response.getEntity()).get("error"));
+    }
+
+    @Test
+    public void testReturns400ForUnknownRecipientType() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        assertEquals(400, resource.test(request("TELEGRAM",
+                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"), "всем", "")).getStatus());
+    }
+
+    /** Письмо проверки отличается от уведомления темой и телом. */
+    @Test
+    public void emailTestUsesItsOwnLetter() {
+        String letter = TestMessages.forChannel(NotificationChannel.EMAIL, "Иван");
+
+        assertTrue(TestMessages.EMAIL_SUBJECT.contains("проверка"));
+        assertTrue(letter.contains("Иван"));
+        assertTrue(letter.contains("проверочное письмо"));
+        // каркас как у настоящих писем плагина — см. EmailMessageFormatter
+        assertTrue(letter.startsWith("<html><body"));
+        assertTrue(letter.endsWith("</body></html>"));
+    }
+
+    /** Разметка проверки — своя на канал: Markdown, HTML и письмо не взаимозаменяемы. */
+    @Test
+    public void testMessageMarkupMatchesChannel() {
+        assertTrue(TestMessages.forChannel(NotificationChannel.MATTERMOST, "Иван")
+                .startsWith("**Issue Notifier"));
+        assertTrue(TestMessages.forChannel(NotificationChannel.TELEGRAM, "Иван")
+                .startsWith("<b>Issue Notifier"));
+        assertTrue(TestMessages.forChannel(NotificationChannel.EMAIL, "Иван")
+                .startsWith("<html><body"));
+    }
+
+    /** Угловая скобка в имени сломала бы разбор HTML в Telegram. */
+    @Test
+    public void telegramTestEscapesInitiatorName() {
+        assertTrue(TestMessages.forChannel(NotificationChannel.TELEGRAM, "<Иван>")
+                .contains("&lt;Иван&gt;"));
+        // в Mattermost экранирования нет: обратные слэши получатель бы увидел
+        assertTrue(TestMessages.forChannel(NotificationChannel.MATTERMOST, "<Иван>")
+                .contains("<Иван>"));
     }
 
     /** Ошибку канала показываем администратору текстом, а не 500-й страницей. */
@@ -456,6 +638,26 @@ public class AdminSettingsResourceTest {
         Map<String, String> settings = (Map<String, String>) resource.get().getEntity();
 
         assertEquals(CommentTextMode.HIDDEN.key(), settings.get(CommentTextMode.KEY));
+    }
+
+    /**
+     * Проверка канала прошла с текущими сохранёнными настройками: отметку считает
+     * сам ресурс, поэтому берём её из его же ответа на проверку.
+     */
+    private void rememberTest(NotificationChannel channel) {
+        resource.test(request(channel.name(), Map.of()));
+        ArgumentCaptor<String> marker = ArgumentCaptor.forClass(String.class);
+        verify(adminSettingsService).set(eq(AdminSettingsResource.testedKey(channel)), marker.capture());
+        when(adminSettingsService.get(AdminSettingsResource.testedKey(channel), ""))
+                .thenReturn(marker.getValue());
+    }
+
+    private static ChannelTestDto request(String channel, Map<String, String> settings,
+                                         String recipientType, String recipient) {
+        ChannelTestDto dto = request(channel, settings);
+        dto.setRecipientType(recipientType);
+        dto.setRecipient(recipient);
+        return dto;
     }
 
     private static ChannelTestDto request(String channel, Map<String, String> settings) {

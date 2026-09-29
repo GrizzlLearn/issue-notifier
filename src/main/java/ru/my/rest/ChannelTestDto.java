@@ -19,6 +19,12 @@ public class ChannelTestDto {
     private String channel;
     @JsonProperty
     private Map<String, String> settings;
+    /** {@code me} (по умолчанию), {@code user} — пользователь Jira, {@code email} — адрес. */
+    @JsonProperty
+    private String recipientType;
+    /** Логин или ключ пользователя Jira либо адрес почты — смотря какой {@link #recipientType}. */
+    @JsonProperty
+    private String recipient;
 
     public ChannelTestDto() {}
 
@@ -27,4 +33,10 @@ public class ChannelTestDto {
 
     public Map<String, String> getSettings() { return settings; }
     public void setSettings(Map<String, String> settings) { this.settings = settings; }
+
+    public String getRecipientType() { return recipientType; }
+    public void setRecipientType(String recipientType) { this.recipientType = recipientType; }
+
+    public String getRecipient() { return recipient; }
+    public void setRecipient(String recipient) { this.recipient = recipient; }
 }

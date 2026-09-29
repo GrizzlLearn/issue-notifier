@@ -34,6 +34,12 @@ public class MattermostNotificationSender implements NotificationSender {
         client.sendTest(email(recipient), message, settings);
     }
 
+    /** Mattermost и так адресует по email, поэтому пользователь Jira здесь не нужен. */
+    @Override
+    public void sendTestTo(String email, String message, Map<String, String> settings) {
+        client.sendTest(email, message, settings);
+    }
+
     /** Получателя в Mattermost ищут по email из Jira — без него отправлять некуда. */
     private static String email(ApplicationUser recipient) {
         String email = recipient.getEmailAddress();

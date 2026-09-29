@@ -8,6 +8,7 @@ import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.NotificationSender;
 import ru.my.model.NotificationChannel;
+import ru.my.model.TestMessages;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -41,13 +42,30 @@ public class EmailNotificationSender implements NotificationSender {
     }
 
     /**
-     * Своих настроек у канала нет, поэтому проверка — обычная отправка.
+     * Своих настроек у канала нет, поэтому проверка — та же отправка, но своей
+     * темой и телом (см. {@link TestMessages}): в ящике письмо лежит рядом с
+     * настоящими уведомлениями и должно от них отличаться.
+     * <p>
      * Письмо попадает в почтовую очередь Jira: успех здесь означает, что оно
      * принято в очередь, а не что дошло до ящика.
      */
     @Override
     public void sendTest(ApplicationUser recipient, String message, Map<String, String> settings) {
-        send(recipient, message);
+        String address = recipient.getEmailAddress();
+        if (address == null || address.isBlank()) {
+            throw new IllegalStateException(
+                    "У пользователя " + recipient.getDisplayName() + " не указан email в Jira");
+        }
+        sendTestTo(address, message, settings);
+    }
+
+    @Override
+    public void sendTestTo(String email, String message, Map<String, String> settings) {
+        Email letter = new Email(email);
+        letter.setSubject(TestMessages.EMAIL_SUBJECT);
+        letter.setBody(message);
+        letter.setMimeType("text/html");
+        mailQueue.addItem(new SingleMailQueueItem(letter));
     }
 
     @Override
