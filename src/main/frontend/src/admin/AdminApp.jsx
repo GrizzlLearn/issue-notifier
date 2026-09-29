@@ -196,10 +196,13 @@ function contextAction(context, actionKey) {
   return (context.actions || {})[actionKey] || { enabled: false, recipients: '' };
 }
 
-// Пикер обычных проектов: их в инстансе могут быть сотни, поэтому список целиком
-// не рисуем — фильтруем по вводу и показываем выбранное чипами.
+// Пикер значений из справочника: их могут быть сотни, поэтому список целиком
+// не рисуем — фильтруем по вводу и показываем выбранное чипами. Так выбираются
+// и проекты, и категории: в обоих случаях перечислять всё галками нельзя.
 // Список подсказок управляется с клавиатуры: ↑/↓ — перебор, Enter — выбрать, Esc — закрыть.
-function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
+// id обязателен и должен быть уникальным на странице: пикеров на ней столько же,
+// сколько контекстов, а aria-controls ссылается на конкретный список.
+function ItemPicker({ id, items, selected, labels, onAdd, onRemove, placeholder, chosenText }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [closed, setClosed] = useState(false);
@@ -213,7 +216,7 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
 
   const text = query.trim().toLowerCase();
   const suggestions = text && !closed
-    ? projects
+    ? items
         .filter(p => !selected.includes(p.value)
           && (p.value.toLowerCase().includes(text) || p.label.toLowerCase().includes(text)))
         .slice(0, MAX_SUGGESTIONS)
@@ -270,26 +273,28 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
       )}
 
       <input
+        id={id}
         className="text"
         type="text"
         value={query}
         onChange={e => changeQuery(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Начните вводить ключ или название проекта"
+        placeholder={placeholder}
         style={{ width: '100%' }}
         role="combobox"
         aria-expanded={suggestions.length > 0}
         aria-autocomplete="list"
-        aria-controls="in-project-suggestions"
-        aria-activedescendant={suggestions.length > 0 ? `in-project-option-${active}` : undefined}
+        // список есть в DOM только когда есть подсказки, иначе ссылка висела бы в пустоту
+        aria-controls={suggestions.length > 0 ? `${id}-suggestions` : undefined}
+        aria-activedescendant={suggestions.length > 0 ? `${id}-option-${active}` : undefined}
       />
 
       {suggestions.length > 0 && (
-        <ul className="in-suggestions" id="in-project-suggestions" role="listbox" ref={listRef}>
+        <ul className="in-suggestions" id={`${id}-suggestions`} role="listbox" ref={listRef}>
           {suggestions.map((item, index) => (
             <li
               key={item.value}
-              id={`in-project-option-${index}`}
+              id={`${id}-option-${index}`}
               role="option"
               aria-selected={index === active}
               className={'in-suggestion' + (index === active ? ' is-active' : '')}
@@ -305,9 +310,9 @@ function ProjectPicker({ projects, selected, labels, onAdd, onRemove }) {
 
       {text && suggestions.length === 0 && !closed && (
         <div style={{ ...hintStyle, marginTop: 4 }}>
-          {projects.some(p => selected.includes(p.value)
+          {items.some(p => selected.includes(p.value)
             && (p.value.toLowerCase().includes(text) || p.label.toLowerCase().includes(text)))
-            ? 'Проект уже выбран.'
+            ? chosenText
             : 'Ничего не найдено.'}
         </div>
       )}
@@ -336,12 +341,7 @@ function ContextCard({ context, projects, labels, onChange, onRemove }) {
 
   const setSelected = next => onChange({ ...context, projects: next });
 
-  function toggleCategory(id, checked) {
-    onChange({
-      ...context,
-      categories: checked ? [...chosenCategories, id] : chosenCategories.filter(c => c !== id),
-    });
-  }
+  const setCategories = next => onChange({ ...context, categories: next });
 
   if (context.id === DEFAULT_CONTEXT) {
     return (
@@ -349,7 +349,7 @@ function ContextCard({ context, projects, labels, onChange, onRemove }) {
         <legend>Остальные проекты</legend>
         <div style={hintStyle}>
           Встроенный контекст: сюда попадают задачи проектов, которых нет ни в одном
-          контексте выше. Удалить его нельзя. Какие действия в нём включены — на вкладке «Действия».
+          контексте выше. Удалить его нельзя. Какие действия в нём включены — смотри на вкладке «Действия».
         </div>
       </fieldset>
     );
@@ -373,22 +373,24 @@ function ContextCard({ context, projects, labels, onChange, onRemove }) {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории проектов</div>
+        <label className="label" htmlFor={`in-ctx-categories-${context.id}`}>
+          Категории проектов
+        </label>
         {categories.length === 0 && <div style={hintStyle}>Категорий проектов в инстансе нет.</div>}
-        <div className="in-check-grid">
-          {categories.map(c => (
-            <label key={c.value} className="in-check">
-              <input
-                type="checkbox"
-                checked={chosenCategories.includes(c.value)}
-                onChange={e => toggleCategory(c.value, e.target.checked)}
-              />
-              <span>{c.label}</span>
-            </label>
-          ))}
-        </div>
+        {categories.length > 0 && (
+          <ItemPicker
+            id={`in-ctx-categories-${context.id}`}
+            items={categories}
+            selected={chosenCategories}
+            labels={CATEGORY_LABELS}
+            onAdd={value => setCategories([...chosenCategories, value])}
+            onRemove={value => setCategories(chosenCategories.filter(c => c !== value))}
+            placeholder="Начните вводить название категории"
+            chosenText="Категория уже выбрана."
+          />
+        )}
         <div style={hintStyle}>
-          Проект, добавленный в отмеченную категорию позже, попадёт в контекст сам —
+          Проект, добавленный в выбранную категорию позже, попадёт в контекст сам —
           но закрывающие статусы для него всё равно нужно выбрать на вкладке «Действия».
         </div>
       </div>
@@ -418,12 +420,15 @@ function ContextCard({ context, projects, labels, onChange, onRemove }) {
 
       <div>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>Остальные проекты</div>
-        <ProjectPicker
-          projects={projects}
+        <ItemPicker
+          id={`in-ctx-projects-${context.id}`}
+          items={projects}
           selected={otherSelected}
           labels={labels}
           onAdd={key => setSelected([...selected, key])}
           onRemove={key => setSelected(selected.filter(k => k !== key))}
+          placeholder="Начните вводить ключ или название проекта"
+          chosenText="Проект уже выбран."
         />
         {otherViaCategory.length > 0 && (
           <div style={{ ...hintStyle, marginTop: 6 }}>
@@ -781,6 +786,7 @@ function ActionsPanel({ actions, labels, context, statuses, values, setValue, se
 
 // Справочники уже в PAGE_DATA, загружать на вкладках нечего.
 const PROJECT_LABELS = Object.fromEntries(PAGE_DATA.projects.map(p => [p.value, p.label]));
+const CATEGORY_LABELS = Object.fromEntries((PAGE_DATA.categories || []).map(c => [c.value, c.label]));
 
 // Вкладка «Контекст проектов»: сколько контекстов и что в каждом.
 function ContextsTab({ contexts, setContexts }) {
@@ -897,11 +903,16 @@ function IssueChangesSection({ values, setValue }) {
   );
 }
 
-// Вкладка «Действия»: выбранный контекст и его настройки плюс общие настройки инстанса.
+// Что включено в контексте — строкой в свёрнутой шапке, чтобы не раскрывать
+// каждый контекст ради ответа «а тут что-нибудь настроено?».
+function enabledActionTitles(context) {
+  return (PAGE_DATA.actions || [])
+    .filter(action => contextAction(context, action.key).enabled)
+    .map(action => action.title);
+}
+
+// Вкладка «Действия»: все контексты списком, каждый раскрывается по клику.
 function ActionsTab({ values, setValue, contexts, setContexts, errors }) {
-  const [contextId, setContextId] = useState(DEFAULT_CONTEXT);
-  // контекст мог быть удалён на соседней вкладке, пока эта помнила его id
-  const context = contexts.find(c => c.id === contextId) || contexts[contexts.length - 1];
 
   return (
     <>
@@ -928,38 +939,50 @@ function ActionsTab({ values, setValue, contexts, setContexts, errors }) {
       </fieldset>
 
       <fieldset className="in-section">
-        <legend>Действия контекста</legend>
-        <div className="field-group" style={{ marginBottom: 12 }}>
-          <label className="label" htmlFor="in-context-select">Контекст проектов</label>
-          <select
-            id="in-context-select"
-            className="select"
-            value={context ? context.id : DEFAULT_CONTEXT}
-            onChange={e => setContextId(e.target.value)}
-          >
-            {contexts.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.id === DEFAULT_CONTEXT ? 'Остальные проекты' : (c.name || 'Новый контекст')}
-              </option>
-            ))}
-          </select>
-          <div style={hintStyle}>
-            Контексты и их состав — на вкладке «Контекст проектов».
-          </div>
+        <legend>Действия по контекстам</legend>
+        <div style={{ ...hintStyle, marginBottom: 12 }}>
+          Каждый контекст настраивается отдельно. Состав контекстов — на вкладке
+          «Контекст проектов».
         </div>
 
-        {context && (
-          <ActionsPanel
-            actions={PAGE_DATA.actions}
-            labels={PROJECT_LABELS}
-            context={context}
-            statuses={PAGE_DATA.statuses}
-            values={values}
-            setValue={setValue}
-            setContext={next => setContexts(contexts.map(c => (c.id === context.id ? next : c)))}
-            errors={errors}
-          />
-        )}
+        {contexts.map(context => {
+          const enabled = enabledActionTitles(context);
+          const isDefault = context.id === DEFAULT_CONTEXT;
+          const projects = contextProjects(context);
+
+          return (
+            // <details> вместо своего состояния: раскрытие, фокус и клавиатура —
+            // штатное поведение браузера, а контекстов у админа может быть много
+            <details key={context.id} className="in-context">
+              <summary className="in-context-head">
+                <span className="in-context-title">
+                  {isDefault ? 'Остальные проекты' : (context.name || 'Новый контекст')}
+                </span>
+                <span className="in-context-scope">
+                  {isDefault
+                    ? 'проекты вне других контекстов'
+                    : `проектов: ${projects.length}`}
+                </span>
+                <span className={'in-context-state' + (enabled.length ? ' in-on' : '')}>
+                  {enabled.length ? enabled.join(', ') : 'ничего не включено'}
+                </span>
+              </summary>
+
+              <div className="in-context-body">
+                <ActionsPanel
+                  actions={PAGE_DATA.actions}
+                  labels={PROJECT_LABELS}
+                  context={context}
+                  statuses={PAGE_DATA.statuses}
+                  values={values}
+                  setValue={setValue}
+                  setContext={next => setContexts(contexts.map(c => (c.id === context.id ? next : c)))}
+                  errors={errors}
+                />
+              </div>
+            </details>
+          );
+        })}
       </fieldset>
     </>
   );

@@ -102,6 +102,31 @@ public class UserSettingsResourceTest {
         assertEquals(204, resource.save(dto).getStatus());
     }
 
+    /**
+     * Пустой список — это «ни все проекты, ни выбранные». В БД он ложится пустой
+     * строкой, а она при чтении означает «все проекты», поэтому настройка молча
+     * стала бы своей противоположностью.
+     */
+    @Test
+    public void putReturns400WhenProjectListIsEmpty() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+
+        assertEquals(400, resource.save(
+                new UserSettingsDto(true, List.of(), List.of("EMAIL"), null, null)).getStatus());
+        verify(userSettingsService, never()).saveSettings(any(), any());
+    }
+
+    /** Поля вообще нет в теле — это «не меняли», подставляются все проекты. */
+    @Test
+    public void putAcceptsMissingProjectList() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+
+        assertEquals(204, resource.save(
+                new UserSettingsDto(true, null, List.of("EMAIL"), null, null)).getStatus());
+        verify(userSettingsService).saveSettings(eq(user), argThat(s ->
+                s.getProjects().contains("*")));
+    }
+
     @Test
     public void putReturns400WhenTooManyProjects() {
         when(authContext.getLoggedInUser()).thenReturn(user);

@@ -309,3 +309,19 @@
     padding-left: 8px;
     color: #42526e;
 }
+
+/* Вкладки модалки лежат друг на друге в одной ячейке сетки: так высота тела
+   определяется самой высокой вкладкой и окно не меняет размер при переключении.
+   display:none здесь не подходит — скрытая вкладка перестала бы занимать место. */
+.in-tab-stack {
+    display: grid;
+}
+
+.in-tab-layer {
+    grid-area: 1 / 1;
+    visibility: hidden;
+}
+
+.in-tab-layer.in-active {
+    visibility: visible;
+}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   getUserSettings, saveUserSettings,
   getDelegation, saveDelegation, removeDelegation,
-  resolveUser, apiBase,
+  resolveProject, resolveUser, apiBase,
 } from '../api';
 import AjsMultiSelect from '../shared/AjsMultiSelect';
 
@@ -57,7 +57,7 @@ const COMMENT_TEXT_OPTIONS = [
     id: 'with',
     hidden: false,
     title: 'С текстом комментария',
-    note: 'В сообщении будет цитата комментария.',
+    note: 'В уведомление попадёт текст комментария — до 500 символов.',
     quote: 'Проверила на стенде: округление ломается на суммах больше 10 000. '
       + 'Посмотри, пожалуйста, до релиза.',
   },
@@ -65,7 +65,7 @@ const COMMENT_TEXT_OPTIONS = [
     id: 'without',
     hidden: true,
     title: 'Без текста комментария',
-    note: 'Только факт: комментарий добавлен, самого текста нет.',
+    note: 'Придёт только факт: комментарий добавлен, без текста.',
     quote: null,
   },
 ];
@@ -75,7 +75,7 @@ function CommentTextChoice({ hidden, onChange }) {
     <fieldset className="in-choice">
       <legend className="in-choice-legend">Текст комментария в уведомлениях</legend>
       <div className="description">
-        Так будет выглядеть сообщение в Mattermost. Точный текст задаёт администратор.
+        Образец: как именно выглядит сообщение, задаёт администратор в шаблоне.
       </div>
       <div className="in-choice-grid">
         {COMMENT_TEXT_OPTIONS.map(opt => (
@@ -122,10 +122,36 @@ function CommentTextChoice({ hidden, onChange }) {
   );
 }
 
-function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
+// Сохранение настроек одно на все вкладки: PUT принимает объект целиком, а
+// настройки лежат выше, в модалке, поэтому кнопка на любой вкладке пишет всё сразу.
+function useSaveSettings(settings, onSaved) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
+
+  async function save(problem) {
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await saveUserSettings(settings);
+      onSaved(settings);
+      showSuccess();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return { saving, error, success, save };
+}
+
+function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
+  const { saving, error, success, save } = useSaveSettings(settings, onSaved);
 
   // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
   const channels = settings.channels ?? [];
@@ -152,22 +178,9 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
     onChange({ ...settings, channels: next });
   }
 
-  async function handleSave() {
-    if (chatIdInvalid) {
-      setError('Telegram Chat ID — это число, его присылает бот в ответ на /start.');
-      return;
-    }
-    setSaving(true); setError(null);
-    try {
-      await saveUserSettings(settings);
-      onSaved(settings);
-      showSuccess();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
+  const handleSave = () => save(chatIdInvalid
+    ? 'Telegram Chat ID — это число, его присылает бот в ответ на /start.'
+    : null);
 
   return (
     <div>
@@ -240,6 +253,78 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
       <div className="in-actions">
         <StatusBanner error={error} success={success} />
         <button type="button" className="aui-button aui-button-primary in-actions-end" onClick={handleSave} disabled={saving}>
+          {saving ? 'Сохранение…' : 'Сохранить'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Вкладка «Наблюдение»: в каких проектах получать уведомления об изменениях задач,
+// за которыми пользователь наблюдает. Появляется только когда администратор включил
+// эту рассылку — иначе ограничивать нечего.
+function WatchingTab({ settings, onChange, projectItems, onSaved }) {
+  const { saving, error, success, save } = useSaveSettings(settings, onSaved);
+
+  const projects = settings.projects ?? ['*'];
+  const allProjects = projects.length === 1 && projects[0] === '*';
+
+  // Конкретный список проектов храним отдельно от settings.projects — пока включено
+  // "Все проекты", settings.projects равен ['*'], и при выключении чекбокса без этого
+  // стейта список оказался бы потерян (пикер спрятан через CSS, но жив и хранит свой
+  // выбор сам — читать его оттуда напрямую нечем, поэтому синхронизация через стейт)
+  const [explicitProjects, setExplicitProjects] = useState(allProjects ? [] : projects);
+
+  function handleProjectsChange(keys) {
+    setExplicitProjects(keys);
+    onChange({ ...settings, projects: keys });
+  }
+
+  function toggleAllProjects(checked) {
+    onChange({ ...settings, projects: checked ? ['*'] : explicitProjects });
+  }
+
+  // «Все проекты» снято и не выбрано ни одного — сохранять нельзя: сервер такое
+  // тело отклоняет, потому что пустой список в БД читается как «все проекты»
+  const nothingChosen = !allProjects && projects.length === 0;
+
+  return (
+    <div>
+      <div className="field-group">
+        <label className="label" htmlFor="in-projects">Проекты — уведомления об изменениях задач</label>
+        <div className="description" style={{ marginBottom: 6 }}>
+          Ограничивает только уведомления об изменениях в задачах, за которыми вы наблюдаете:
+          правки описания, полей, срока. Упоминания через @ и остальные уведомления
+          приходят независимо от этого списка.
+        </div>
+        <label className="in-check" style={{ marginBottom: 6 }}>
+          <input
+            type="checkbox"
+            checked={allProjects}
+            onChange={e => toggleAllProjects(e.target.checked)}
+          />
+          <span>Все проекты</span>
+        </label>
+        {/* смонтирован всегда (даже под "Все проекты" скрыт через CSS) — чтобы не терять
+            уже введённый набор проектов при переключении чекбокса туда-обратно */}
+        <div style={{ display: allProjects ? 'none' : 'block' }}>
+          <AjsMultiSelect id="in-projects" initialItems={projectItems} url={`${apiBase()}/projects`}
+                          ariaLabel="Проекты" onChange={handleProjectsChange} />
+        </div>
+        {nothingChosen && (
+          <div className="aui-message aui-message-warning" style={{ marginTop: 8 }}>
+            Выберите проекты или отметьте «Все проекты» — иначе настройку не сохранить.
+          </div>
+        )}
+      </div>
+
+      <div className="in-actions">
+        <StatusBanner error={error} success={success} />
+        <button type="button" className="aui-button aui-button-primary in-actions-end"
+                onClick={() => save(nothingChosen
+                  ? 'Выберите хотя бы один проект или отметьте «Все проекты».'
+                  : null)}
+                disabled={saving}>
           {saving ? 'Сохранение…' : 'Сохранить'}
         </button>
       </div>
@@ -371,6 +456,7 @@ export default function UserSettingsModal({ onClose }) {
   const [tab, setTab] = useState('settings');
   const [settings, setSettings] = useState(null);
   const [delegation, setDelegation] = useState(null);
+  const [projectItems, setProjectItems] = useState([]);
   const [delegateItems, setDelegateItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -378,9 +464,9 @@ export default function UserSettingsModal({ onClose }) {
   const dialogRef = useRef(null);
   const savedSettingsRef = useRef('');
 
-  // Загрузка данных с отменой при размонтировании. Лейблы для уже сохранённых делегатов
-  // резолвим здесь же, до первого рендера пикера — виджет читает начальные
-  // <option selected> только один раз, при инициализации.
+  // Загрузка данных с отменой при размонтировании. Лейблы для уже сохранённых ключей
+  // (проекты/делегаты) резолвим здесь же, до первого рендера пикеров — виджет читает
+  // начальные <option selected> только один раз, при инициализации.
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
@@ -388,10 +474,15 @@ export default function UserSettingsModal({ onClose }) {
       getDelegation(controller.signal),
     ])
       .then(async ([s, d]) => {
-        const delItems = await resolveItems(d.toUserKeys || [], resolveUser, controller.signal);
+        const projectKeys = (s.projects || []).filter(k => k !== '*');
+        const [projItems, delItems] = await Promise.all([
+          resolveItems(projectKeys, resolveProject, controller.signal),
+          resolveItems(d.toUserKeys || [], resolveUser, controller.signal),
+        ]);
         setSettings(s);
         savedSettingsRef.current = JSON.stringify(s);
         setDelegation(d);
+        setProjectItems(projItems);
         setDelegateItems(delItems);
         setLoading(false);
       })
@@ -457,25 +548,44 @@ export default function UserSettingsModal({ onClose }) {
     }
   }
 
+  // «Наблюдение» показываем только когда администратор включил рассылку
+  // об изменениях задач: иначе на вкладке нечего настраивать
+  const tabs = [
+    ['settings', 'Настройки'],
+    ...(settings?.watchersEnabled === true ? [['watching', 'Наблюдение']] : []),
+    ['delegation', 'Делегирование'],
+  ];
+
   function renderBody() {
     if (loading) return <div className="in-loading">Загрузка…</div>;
     if (loadError) return <div className="aui-message aui-message-error">{loadError}</div>;
     // Оба таба остаются смонтированными — переключение скрывает их через CSS,
     // не размонтируя, чтобы не терять незасохранённые правки
     return (
-      <>
+      // обе панели в одной ячейке сетки: высота считается по самой высокой,
+      // поэтому окно не скачет при переключении вкладок. Скрытая панель
+      // спрятана через visibility — так она не ловит фокус и не читается
+      // скринридером, но продолжает занимать место
+      <div className="in-tab-stack">
         <div role="tabpanel" id="in-panel-settings" aria-labelledby="in-tab-settings"
-             hidden={tab !== 'settings'}>
+             className={'in-tab-layer' + (tab === 'settings' ? ' in-active' : '')}>
           <SettingsTab settings={settings} onChange={setSettings}
-                       telegramBotUsername={settings?.telegramBotUsername}
+                       telegramBotUsername={settings?.telegramBotUsername} projectItems={projectItems}
                        onSaved={saved => { savedSettingsRef.current = JSON.stringify(saved); }} />
         </div>
+        {settings?.watchersEnabled === true && (
+          <div role="tabpanel" id="in-panel-watching" aria-labelledby="in-tab-watching"
+               className={'in-tab-layer' + (tab === 'watching' ? ' in-active' : '')}>
+            <WatchingTab settings={settings} onChange={setSettings} projectItems={projectItems}
+                         onSaved={saved => { savedSettingsRef.current = JSON.stringify(saved); }} />
+          </div>
+        )}
         <div role="tabpanel" id="in-panel-delegation" aria-labelledby="in-tab-delegation"
-             hidden={tab !== 'delegation'}>
+             className={'in-tab-layer' + (tab === 'delegation' ? ' in-active' : '')}>
           <DelegationTab delegation={delegation} delegateItems={delegateItems} onSaved={setDelegation}
                          onDirtyChange={setDelegationDirty} />
         </div>
-      </>
+      </div>
     );
   }
 
@@ -502,7 +612,7 @@ export default function UserSettingsModal({ onClose }) {
         </div>
 
         <div className="in-dialog-tabs" role="tablist">
-          {[['settings', 'Настройки'], ['delegation', 'Делегирование']].map(([id, label]) => (
+          {tabs.map(([id, label]) => (
             <button
               key={id}
               type="button"
