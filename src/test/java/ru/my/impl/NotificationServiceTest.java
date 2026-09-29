@@ -77,6 +77,14 @@ public class NotificationServiceTest {
         Map<NotificationChannel, NotificationSender> senders = new EnumMap<>(NotificationChannel.class);
         senders.put(NotificationChannel.MATTERMOST, sender);
 
+        // рассылка наблюдателям выключена по умолчанию — в тестах processEvent включаем,
+        // кроме теста, который эту дефолтную выключенность и проверяет.
+        // Матчер на дефолтное значение любой: иначе смена дефолта в коде оставила бы
+        // мок без стаба, processEvent тихо выходил бы, а негативные тесты остались
+        // бы зелёными по неверной причине
+        lenient().when(adminSettingsService.get(eq(ActionTemplates.WATCHERS_ENABLED_KEY), anyString()))
+                .thenReturn("true");
+
         // право видеть задачу есть у всех, кроме отдельно оговорённых тестов
         lenient().when(permissionManager.hasPermission(
                 eq(ProjectPermissions.BROWSE_PROJECTS), any(Issue.class), any(ApplicationUser.class)))
@@ -116,7 +124,18 @@ public class NotificationServiceTest {
 
     @Test
     public void skipsEventWhenWatcherNotificationsDisabledByAdmin() {
-        when(adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false")).thenReturn("true");
+        when(adminSettingsService.get(eq(ActionTemplates.WATCHERS_ENABLED_KEY), anyString())).thenReturn("false");
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(watcherManager, never()).getWatchers(any(), any());
+        verify(sender, never()).send(any(), any());
+    }
+
+    /** Записи в настройках нет — рассылка наблюдателям не идёт: это дефолт плагина. */
+    @Test
+    public void skipsEventWhenWatcherNotificationsNotConfigured() {
+        when(adminSettingsService.get(eq(ActionTemplates.WATCHERS_ENABLED_KEY), anyString())).thenReturn("");
 
         service.processEvent(issue, null, NON_EMPTY_DIFF);
 

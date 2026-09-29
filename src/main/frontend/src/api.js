@@ -67,6 +67,9 @@ export async function removeDelegation() {
 // Резолв уже сохранённых ключей (проект/пользователь) в человекочитаемые лейблы для
 // пред-заполнения пикеров — через собственный REST (см. ProjectPickerResource/UserPickerResource),
 // фронтенд не ходит в REST API самой Jira напрямую.
+// resolveProject сейчас никто не вызывает: блок выбора проектов убран из модалки вместе
+// с отключением рассылки наблюдателям. Оставлен парой к эндпоинту ProjectPickerResource —
+// вернётся блок, вернётся и вызов.
 export async function resolveProject(key, signal) {
   const resp = await fetch(`${apiBase()}/projects/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
   if (!resp.ok) return null;

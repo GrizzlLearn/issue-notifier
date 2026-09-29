@@ -395,6 +395,40 @@ public class AdminSettingsResourceTest {
         assertEquals("Токен не подошёл", ((Map<?, ?>) response.getEntity()).get("error"));
     }
 
+    // --- рассылка наблюдателям ---
+
+    /**
+     * Записи нет — админка должна показать снятую галку, а не унаследованное «включено».
+     * Проверяется дефолт, с которым ресурс спрашивает настройку: сам ответ в этом тесте
+     * приходит от мока, а не от сервиса (см. общий стаб в setUp).
+     */
+    @Test
+    public void getAsksWatchersSettingWithDisabledDefault() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.get();
+
+        verify(adminSettingsService).get(ActionTemplates.WATCHERS_ENABLED_KEY, "false");
+    }
+
+    @Test
+    public void putSavesWatchersEnabled() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        assertEquals(204, resource.set(Map.of(ActionTemplates.WATCHERS_ENABLED_KEY, "true")).getStatus());
+        verify(adminSettingsService).set(ActionTemplates.WATCHERS_ENABLED_KEY, "true");
+    }
+
+    /** Старый инвертированный ключ больше не известен — запись по нему не проходит. */
+    @Test
+    public void putIgnoresLegacyWatchersDisabledKey() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+
+        resource.set(Map.of("watchers.disabled", "true"));
+
+        verify(adminSettingsService, never()).set(eq("watchers.disabled"), any());
+    }
+
     // --- режим текста комментария ---
 
     @Test

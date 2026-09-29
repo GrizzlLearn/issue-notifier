@@ -156,7 +156,7 @@ public class NotificationServiceImpl implements NotificationService {
         if (diff.isEmpty()) {
             return;
         }
-        if (Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false"))) {
+        if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.WATCHERS_ENABLED_KEY, "false"))) {
             return;
         }
 

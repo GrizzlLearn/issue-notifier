@@ -38,8 +38,8 @@ const SECTIONS = [
 
 const PROJECTS_KEY = 'sd.projects';
 const CATEGORIES_KEY = 'sd.categories';
-// Инвертированный ключ: пустая настройка — уведомляем, как плагин работал раньше.
-const WATCHERS_DISABLED_KEY = 'watchers.disabled';
+// Положительный ключ: пустая настройка — не уведомляем (рассылка по всем полям шумная).
+const WATCHERS_ENABLED_KEY = 'watchers.enabled';
 const COMMENT_TEXT_MODE_KEY = 'comment.textMode';
 const WATCHED_FIELDS_KEY = 'watchers.fields';
 
@@ -801,7 +801,7 @@ function watchedGroups(values) {
 // Рассылка наблюдателям об изменениях задач: общий выключатель и группы полей,
 // которые считаются поводом для уведомления.
 function IssueChangesSection({ values, setValue }) {
-  const on = values[WATCHERS_DISABLED_KEY] !== 'true';
+  const on = values[WATCHERS_ENABLED_KEY] === 'true';
   const groups = watchedGroups(values);
 
   function toggleGroup(value, checked) {
@@ -816,14 +816,14 @@ function IssueChangesSection({ values, setValue }) {
         <input
           type="checkbox"
           checked={on}
-          onChange={e => setValue(WATCHERS_DISABLED_KEY, e.target.checked ? 'false' : 'true')}
+          onChange={e => setValue(WATCHERS_ENABLED_KEY, e.target.checked ? 'true' : 'false')}
         />
         <span>Уведомлять наблюдателей об изменениях задач</span>
       </label>
       <div style={hintStyle}>
-        Выключено — рассылка об изменении полей не идёт, и выбор проектов в настройках
-        пользователя скрыт. Уведомления о действиях ниже работают независимо, включая
-        те, где получателями выбраны наблюдатели.
+        По умолчанию выключено. Пока выключено — рассылка об изменении полей не идёт.
+        Уведомления о действиях ниже работают независимо, включая те, где получателями
+        выбраны наблюдатели.
       </div>
 
       {on && (

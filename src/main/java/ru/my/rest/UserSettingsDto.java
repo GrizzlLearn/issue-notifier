@@ -30,8 +30,14 @@ public class UserSettingsDto {
     private boolean commentTextHidden;
     @JsonProperty
     private String commentTextMode; // read-only: режим текста комментария из админки
+    /**
+     * read-only: включены ли в админке уведомления наблюдателям. Фронтенд поле пока
+     * не читает — блок выбора проектов из модалки убран, показывать по этому флагу
+     * нечего. Поле оставлено намеренно: это готовый признак для UI, а убрать его
+     * значит потом менять контракт REST обратно.
+     */
     @JsonProperty
-    private boolean watchersEnabled; // read-only: включены ли в админке уведомления наблюдателям
+    private boolean watchersEnabled;
 
     public UserSettingsDto() {}
 

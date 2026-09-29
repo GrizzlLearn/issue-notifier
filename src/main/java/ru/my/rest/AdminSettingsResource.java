@@ -73,7 +73,7 @@ public class AdminSettingsResource {
                 PortalProjects.CATEGORIES_KEY,
                 ClosingStatuses.KEY,
                 ActionTemplates.HIDE_COMMENT_TEXT_KEY,
-                ActionTemplates.WATCHERS_DISABLED_KEY,
+                ActionTemplates.WATCHERS_ENABLED_KEY,
                 WatchedFields.KEY,
                 CommentTextMode.KEY));
         for (NotificationChannel channel : NotificationChannel.values()) {
@@ -108,7 +108,7 @@ public class AdminSettingsResource {
 
     private static Set<String> buildBooleanKeys() {
         Set<String> keys = new LinkedHashSet<>(Set.of(
-                ActionTemplates.HIDE_COMMENT_TEXT_KEY, ActionTemplates.WATCHERS_DISABLED_KEY));
+                ActionTemplates.HIDE_COMMENT_TEXT_KEY, ActionTemplates.WATCHERS_ENABLED_KEY));
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }

@@ -62,8 +62,8 @@ public class UserSettingsResource {
         CommentTextMode commentTextMode = CommentTextMode.resolve(
                 adminSettingsService.get(CommentTextMode.KEY, ""),
                 adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
-        boolean watchersEnabled = !Boolean.parseBoolean(
-                adminSettingsService.get(ActionTemplates.WATCHERS_DISABLED_KEY, "false"));
+        boolean watchersEnabled = Boolean.parseBoolean(
+                adminSettingsService.get(ActionTemplates.WATCHERS_ENABLED_KEY, "false"));
         return Response.ok(UserSettingsDto.from(
                 userSettingsService.getSettings(user), botUsername, enabledChannels,
                 commentTextMode, watchersEnabled)).build();
@@ -79,6 +79,9 @@ public class UserSettingsResource {
         if (chatId != null && !chatId.isBlank() && !CHAT_ID.matcher(chatId.trim()).matches()) {
             return badRequest("Telegram chat_id — это число; его присылает бот в ответ на /start");
         }
+        // модалка список проектов больше не отправляет (блок убран вместе с отключением
+        // рассылки наблюдателям), но проверка остаётся: REST открыт любому авторизованному
+        // клиенту, а не только нашему фронтенду
         if (dto.getProjects() != null && dto.getProjects().size() > MAX_PROJECTS) {
             return badRequest("Слишком много проектов: не больше " + MAX_PROJECTS);
         }

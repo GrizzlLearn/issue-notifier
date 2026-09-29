@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.UserSettingsService;
+import ru.my.model.ActionTemplates;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
 
@@ -16,6 +17,8 @@ import javax.ws.rs.core.Response;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.*;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -109,6 +112,28 @@ public class UserSettingsResourceTest {
         assertEquals(400, resource.save(
                 new UserSettingsDto(true, projects, List.of(), null, null)).getStatus());
         verify(userSettingsService, never()).saveSettings(any(), any());
+    }
+
+    /** Записи в настройках нет — рассылка наблюдателям выключена, это дефолт плагина. */
+    @Test
+    public void getReportsWatchersDisabledWhenNotConfigured() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        when(userSettingsService.getSettings(user)).thenReturn(UserSettings.defaultSettings());
+
+        UserSettingsDto dto = (UserSettingsDto) resource.get().getEntity();
+
+        assertFalse(dto.isWatchersEnabled());
+    }
+
+    @Test
+    public void getReportsWatchersEnabledWhenAdminTurnedItOn() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        when(userSettingsService.getSettings(user)).thenReturn(UserSettings.defaultSettings());
+        when(adminSettingsService.get(eq(ActionTemplates.WATCHERS_ENABLED_KEY), anyString())).thenReturn("true");
+
+        UserSettingsDto dto = (UserSettingsDto) resource.get().getEntity();
+
+        assertTrue(dto.isWatchersEnabled());
     }
 
     @Test

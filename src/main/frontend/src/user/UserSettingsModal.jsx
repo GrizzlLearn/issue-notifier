@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   getUserSettings, saveUserSettings,
   getDelegation, saveDelegation, removeDelegation,
-  resolveProject, resolveUser, apiBase,
+  resolveUser, apiBase,
 } from '../api';
 import AjsMultiSelect from '../shared/AjsMultiSelect';
 
@@ -48,40 +48,23 @@ function StatusBanner({ error, success }) {
   return null;
 }
 
-function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, onSaved }) {
+function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
 
   // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
-  const projects = settings.projects ?? ['*'];
   const channels = settings.channels ?? [];
-  const allProjects = projects.length === 1 && projects[0] === '*';
   // Каналы, выключенные администратором, не показываем — выбрать их всё равно нельзя,
   // уведомления по ним не уйдут (см. AdminSettingsService.isChannelEnabled)
   const enabledChannels = settings.enabledChannels ?? CHANNELS.map(ch => ch.id);
   const visibleChannels = CHANNELS.filter(ch => enabledChannels.includes(ch.id));
-
-  // Конкретный список проектов храним отдельно от settings.projects — пока включено
-  // "Все проекты", settings.projects равен ['*'], и при выключении чекбокса без этого
-  // стейта список оказался бы потерян (пикер спрятан через CSS, но жив и хранит свой
-  // выбор сам — читать его оттуда напрямую нечем, поэтому синхронизация через стейт)
-  const [explicitProjects, setExplicitProjects] = useState(allProjects ? [] : projects);
 
   const chatId = (settings.telegramChatId || '').trim();
   const chatIdInvalid = channels.includes('TELEGRAM') && chatId !== '' && !/^-?\d+$/.test(chatId);
   // конфигурации, при которых не придёт ничего — админ-страница предупреждает так же
   const noChannels = channels.length === 0;
   const telegramWithoutChatId = channels.includes('TELEGRAM') && chatId === '';
-
-  function handleProjectsChange(keys) {
-    setExplicitProjects(keys);
-    onChange({ ...settings, projects: keys });
-  }
-
-  function toggleAllProjects(checked) {
-    onChange({ ...settings, projects: checked ? ['*'] : explicitProjects });
-  }
 
   function toggleChannel(id) {
     const next = channels.includes(id)
@@ -189,30 +172,6 @@ function SettingsTab({ settings, onChange, telegramBotUsername, projectItems, on
               : 'Найдите бота плагина в Telegram, напишите /start — он ответит вашим числовым ID. Имя бота уточните у администратора.'}
           </div>
         </div>
-      )}
-
-      {settings.watchersEnabled !== false && (
-      <div className="field-group">
-        <label className="label" htmlFor="in-projects">Проекты — уведомления об изменениях задач</label>
-        <div className="description" style={{ marginBottom: 6 }}>
-          Ограничивает только уведомления об изменениях в задачах, за которыми вы наблюдаете.
-          Упоминания через @ и другие уведомления о действиях приходят независимо от этого списка.
-        </div>
-        <label className="in-check" style={{ marginBottom: 6 }}>
-          <input
-            type="checkbox"
-            checked={allProjects}
-            onChange={e => toggleAllProjects(e.target.checked)}
-          />
-          <span>Все проекты</span>
-        </label>
-        {/* смонтирован всегда (даже под "Все проекты" скрыт через CSS) — чтобы не терять
-            уже введённый набор проектов при переключении чекбокса туда-обратно */}
-        <div style={{ display: allProjects ? 'none' : 'block' }}>
-          <AjsMultiSelect id="in-projects" initialItems={projectItems} url={`${apiBase()}/projects`}
-                          ariaLabel="Проекты" onChange={handleProjectsChange} />
-        </div>
-      </div>
       )}
 
       {/* статус рядом с кнопкой: тело модалки скроллится, баннер наверху был бы не виден */}
@@ -350,7 +309,6 @@ export default function UserSettingsModal({ onClose }) {
   const [tab, setTab] = useState('settings');
   const [settings, setSettings] = useState(null);
   const [delegation, setDelegation] = useState(null);
-  const [projectItems, setProjectItems] = useState([]);
   const [delegateItems, setDelegateItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -358,9 +316,9 @@ export default function UserSettingsModal({ onClose }) {
   const dialogRef = useRef(null);
   const savedSettingsRef = useRef('');
 
-  // Загрузка данных с отменой при размонтировании. Лейблы для уже сохранённых ключей
-  // (проекты/делегаты) резолвим здесь же, до первого рендера пикеров — виджет читает
-  // начальные <option selected> только один раз, при инициализации.
+  // Загрузка данных с отменой при размонтировании. Лейблы для уже сохранённых делегатов
+  // резолвим здесь же, до первого рендера пикера — виджет читает начальные
+  // <option selected> только один раз, при инициализации.
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
@@ -368,15 +326,10 @@ export default function UserSettingsModal({ onClose }) {
       getDelegation(controller.signal),
     ])
       .then(async ([s, d]) => {
-        const projectKeys = (s.projects || []).filter(k => k !== '*');
-        const [projItems, delItems] = await Promise.all([
-          resolveItems(projectKeys, resolveProject, controller.signal),
-          resolveItems(d.toUserKeys || [], resolveUser, controller.signal),
-        ]);
+        const delItems = await resolveItems(d.toUserKeys || [], resolveUser, controller.signal);
         setSettings(s);
         savedSettingsRef.current = JSON.stringify(s);
         setDelegation(d);
-        setProjectItems(projItems);
         setDelegateItems(delItems);
         setLoading(false);
       })
@@ -452,7 +405,7 @@ export default function UserSettingsModal({ onClose }) {
         <div role="tabpanel" id="in-panel-settings" aria-labelledby="in-tab-settings"
              hidden={tab !== 'settings'}>
           <SettingsTab settings={settings} onChange={setSettings}
-                       telegramBotUsername={settings?.telegramBotUsername} projectItems={projectItems}
+                       telegramBotUsername={settings?.telegramBotUsername}
                        onSaved={saved => { savedSettingsRef.current = JSON.stringify(saved); }} />
         </div>
         <div role="tabpanel" id="in-panel-delegation" aria-labelledby="in-tab-delegation"
