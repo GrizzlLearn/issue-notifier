@@ -84,6 +84,11 @@ public final class AdminPageData {
                         + ",\"templateKeyNoText\":" + (action.carriesCommentText()
                                 ? JsonUtil.jsonString(ActionTemplates.templateKeyNoText(action, channel))
                                 : "null")
+                        // тема есть только у письма, у чатов её не бывает
+                        + ",\"subjectKey\":" + (channel == NotificationChannel.EMAIL
+                                ? JsonUtil.jsonString(ActionTemplates.subjectKey(action))
+                                : "null")
+                        + ",\"subjectDefault\":" + JsonUtil.jsonString(ActionTemplates.DEFAULT_EMAIL_SUBJECT)
                         + "}");
             }
 

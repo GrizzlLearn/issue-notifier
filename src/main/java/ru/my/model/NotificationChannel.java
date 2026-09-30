@@ -21,7 +21,7 @@ public enum NotificationChannel {
     TELEGRAM(true),
 
     /** Письмо на email из профиля Jira через стандартный MailQueue. */
-    EMAIL(false);
+    EMAIL(true);
 
     private final boolean supportsActionTemplates;
 
@@ -35,8 +35,8 @@ public enum NotificationChannel {
     }
 
     /**
-     * Каналы, по которым рассылаются уведомления о действиях.
-     * По email уходят только изменения полей, шаблонов действий у него нет.
+     * Каналы, по которым рассылаются уведомления о действиях. У почты шаблон
+     * свой: тело — разметка письма, плюс отдельная тема ({@link ActionTemplates#subjectKey}).
      */
     public static List<NotificationChannel> actionChannels() {
         return ACTION_CHANNELS;

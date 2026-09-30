@@ -1,6 +1,8 @@
 package ru.my.impl.email;
 
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import org.junit.Test;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
@@ -13,7 +15,21 @@ import static org.mockito.Mockito.when;
 
 public class EmailMessageFormatterTest {
 
-    private final EmailMessageFormatter formatter = new EmailMessageFormatter();
+    private final ApplicationProperties applicationProperties = mock(ApplicationProperties.class);
+    private final EmailMessageFormatter formatter = new EmailMessageFormatter(applicationProperties);
+
+    {
+        when(applicationProperties.getBaseUrl(UrlMode.CANONICAL)).thenReturn("https://jira.example.com");
+    }
+
+    /** Из ящика нужно попадать в задачу: ключ в письме — ссылка. */
+    @Test
+    public void headerLinksToIssue() {
+        String html = formatter.format(mockIssue("PROJ-1", "Заголовок"),
+                new DiffResult(List.of(new DiffResult.FieldChange("Status", "Open", "Done"))));
+
+        assertTrue(html.contains("<a href=\"https://jira.example.com/browse/PROJ-1\">"));
+    }
 
     @Test
     public void channelIsEmail() {

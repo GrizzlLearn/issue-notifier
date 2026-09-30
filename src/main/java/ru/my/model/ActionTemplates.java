@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,6 +41,21 @@ public final class ActionTemplates {
     private ActionTemplates() {
     }
 
+    /**
+     * Тема письма, если администратор её не задал. Одна на все действия: ключ
+     * задачи и заголовок в теме важнее формулировки про само действие, а текст
+     * действия виден в теле письма.
+     */
+    public static final String DEFAULT_EMAIL_SUBJECT = "Jira: {issueKey} — {summary}";
+
+    /**
+     * Ключ темы письма, например {@code "action.mention.subject.email"}.
+     * Тема есть только у почты: у чатов темы нет, там всё в одном сообщении.
+     */
+    public static String subjectKey(NotificationAction action) {
+        return "action." + action.key() + ".subject." + NotificationChannel.EMAIL.name().toLowerCase(Locale.ROOT);
+    }
+
     /** Ключ шаблона канала, например {@code "action.mention.template.mattermost"}. */
     public static String templateKey(NotificationAction action, NotificationChannel channel) {
         return "action." + action.key() + ".template." + channel.name().toLowerCase(Locale.ROOT);
@@ -67,6 +83,9 @@ public final class ActionTemplates {
                 ? key.substring(0, key.length() - NO_TEXT_SUFFIX.length())
                 : key;
         for (NotificationAction action : NotificationAction.values()) {
+            if (subjectKey(action).equals(plain)) {
+                return action;
+            }
             for (NotificationChannel channel : NotificationChannel.values()) {
                 if (templateKey(action, channel).equals(plain)) {
                     return action;
@@ -89,6 +108,19 @@ public final class ActionTemplates {
      * @return готовый текст; неизвестные плейсхолдеры остаются в тексте как есть
      */
     public static String render(String template, Map<String, String> values, NotificationChannel channel) {
+        return substitute(template, values, value -> escape(value, channel));
+    }
+
+    /**
+     * То же, но без экранирования: тема письма — обычный текст, и {@code &amp;}
+     * в ней выглядел бы опечаткой, а не разметкой.
+     */
+    public static String renderPlain(String template, Map<String, String> values) {
+        return substitute(template, values, value -> value == null ? "" : value);
+    }
+
+    private static String substitute(String template, Map<String, String> values,
+                                     UnaryOperator<String> prepare) {
         // один проход по шаблону, а не замена значений по очереди: иначе значение,
         // внутри которого оказался текст вида {comment} (например, в summary),
         // подменялось бы следующей итерацией уже как плейсхолдер
@@ -97,7 +129,7 @@ public final class ActionTemplates {
         while (matcher.find()) {
             String name = matcher.group(1);
             String replacement = values.containsKey(name)
-                    ? escape(values.get(name), channel)
+                    ? prepare.apply(values.get(name))
                     : matcher.group();   // неизвестный плейсхолдер остаётся в тексте как есть
             matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
         }
@@ -129,10 +161,9 @@ public final class ActionTemplates {
      * markdown-спецсимволы в свободном тексте безвредны, а обратные слэши были бы
      * видны получателю.
      * <p>
-     * Email в каналы действий сейчас не входит ({@code supportsActionTemplates = false}),
-     * так что шаблон до него не доходит. Экранирование всё равно здесь: включение
-     * email в действия — это одна литера в {@link NotificationChannel}, а валидация
-     * шаблонов к нему уже готова, и без этой строки дыра открылась бы сразу.
+     * Тело письма администратор пишет разметкой сам, поэтому экранируются только
+     * подставляемые значения: заголовок задачи с {@code <b>} не должен стать
+     * разметкой в письме.
      */
     private static String escape(String value, NotificationChannel channel) {
         if (value == null) {

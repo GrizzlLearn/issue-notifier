@@ -83,6 +83,8 @@ public class AdminSettingsResource {
         // enabled, получатели и область живут в контекстах проектов
         // (см. ProjectContextResource) — здесь остаются только шаблоны
         for (NotificationAction action : NotificationAction.values()) {
+            // тема есть только у письма; пусто — берётся дефолт
+            keys.add(ActionTemplates.subjectKey(action));
             for (NotificationChannel channel : NotificationChannel.actionChannels()) {
                 keys.add(ActionTemplates.templateKey(action, channel));
                 if (action.carriesCommentText()) {

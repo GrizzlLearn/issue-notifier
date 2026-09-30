@@ -67,6 +67,8 @@ public class NotificationServiceTest {
     @Mock private AdminSettingsService adminSettingsService;
     @Mock private MessageFormatter formatter;
     @Mock private NotificationSender sender;
+    @Mock private MessageFormatter emailFormatter;
+    @Mock private NotificationSender emailSender;
 
     private NotificationServiceImpl service;
     private ApplicationUser watcher;
@@ -734,6 +736,8 @@ public class NotificationServiceTest {
             lenient().when(adminSettingsService.get(
                     ActionTemplates.templateKeyNoText(action, channel), "")).thenReturn(template);
         }
+        // тема письма по умолчанию не задана: сервис отдаёт дефолт, мок иначе вернул бы null
+        lenient().when(adminSettingsService.get(ActionTemplates.subjectKey(action), "")).thenReturn("");
         when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
     }
 
@@ -896,6 +900,94 @@ public class NotificationServiceTest {
         verify(formatter, times(1)).format(issue, NON_EMPTY_DIFF);
         verify(sender).send(watcher, "текст");
         verify(sender).send(second, "текст");
+    }
+
+    // ---- письмо: тема и тело ---------------------------------------------
+
+    /** Тема письма берётся из настройки администратора и рендерится без экранирования. */
+    @Test
+    public void emailActionUsesConfiguredSubject() {
+        enableAction(NotificationAction.MENTION, "<p>Упомянули в {issueKey}</p>");
+        when(adminSettingsService.get(ActionTemplates.subjectKey(NotificationAction.MENTION), ""))
+                .thenReturn("Jira: упоминание в {issueKey} — {summary}");
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.EMAIL)).thenReturn(true);
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.EMAIL));
+
+        emailService().processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1", "summary", "Заголовок & прочее"));
+
+        verify(emailSender).send(watcher, "Jira: упоминание в PROJ-1 — Заголовок & прочее",
+                "<p>Упомянули в PROJ-1</p>");
+    }
+
+    /** Темы нет в настройках — берётся дефолт с ключом задачи. */
+    @Test
+    public void emailActionFallsBackToDefaultSubject() {
+        enableAction(NotificationAction.MENTION, "<p>Упомянули в {issueKey}</p>");
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.EMAIL)).thenReturn(true);
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.EMAIL));
+
+        emailService().processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1", "summary", "Заголовок"));
+
+        verify(emailSender).send(watcher, "Jira: PROJ-1 — Заголовок", "<p>Упомянули в PROJ-1</p>");
+    }
+
+    /** Значения в теле письма экранируются: заголовок с разметкой не должен стать разметкой. */
+    @Test
+    public void emailBodyEscapesValues() {
+        enableAction(NotificationAction.MENTION, "<p>{summary}</p>");
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.EMAIL)).thenReturn(true);
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.EMAIL));
+
+        emailService().processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1", "summary", "<b>жирно</b>"));
+
+        verify(emailSender).send(watcher, "Jira: PROJ-1 — <b>жирно</b>",
+                "<p>&lt;b&gt;жирно&lt;/b&gt;</p>");
+    }
+
+    /** У чатов темы не бывает — им уходит обычный send, без лишнего параметра. */
+    @Test
+    public void chatChannelsGetNoSubject() {
+        enableAction(NotificationAction.MENTION, "Упомянули в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+
+        service.processAction(issue, null, NotificationAction.MENTION, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(watcher, "Упомянули в PROJ-1");
+        verify(sender, never()).send(any(), any(), any());
+    }
+
+    /** Письмо об изменениях полей: в теме ключ задачи, а не одна константа на всех. */
+    @Test
+    public void fieldChangeEmailSubjectCarriesIssueKey() {
+        when(issue.getKey()).thenReturn("PROJ-1");
+        when(issue.getSummary()).thenReturn("Заголовок");
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher));
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.EMAIL)).build());
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.EMAIL)).thenReturn(true);
+        when(emailFormatter.format(issue, NON_EMPTY_DIFF)).thenReturn("<html/>");
+
+        emailService().processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(emailSender).send(watcher, "Jira: PROJ-1 — Заголовок", "<html/>");
+    }
+
+    /** Сервис с зарегистрированным каналом email — остальные тесты работают на Mattermost. */
+    private NotificationServiceImpl emailService() {
+        Map<NotificationChannel, MessageFormatter> formatters = new EnumMap<>(NotificationChannel.class);
+        formatters.put(NotificationChannel.EMAIL, emailFormatter);
+        Map<NotificationChannel, NotificationSender> senders = new EnumMap<>(NotificationChannel.class);
+        senders.put(NotificationChannel.EMAIL, emailSender);
+        return new NotificationServiceImpl(
+                watcherManager, customFieldManager, permissionManager,
+                commentManager, commentPermissionManager, userSettingsService,
+                delegationService, adminSettingsService, formatters, senders);
     }
 
     private NotificationServiceImpl serviceWithSenders(Map<NotificationChannel, NotificationSender> senders) {

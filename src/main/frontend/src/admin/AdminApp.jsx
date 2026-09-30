@@ -64,7 +64,7 @@ const COMMENT_TEXT_MODES = [
 ];
 const CLOSED_ACTION = 'closed';
 const DEFAULT_CONTEXT = 'default';
-const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram' };
+const CHANNEL_TITLES = { MATTERMOST: 'Mattermost', TELEGRAM: 'Telegram', EMAIL: 'Email (тело письма — разметка HTML)' };
 
 // Ключ флага канала — как в AdminSettingsServiceImpl: имя канала в нижнем регистре + ".enabled".
 const isChannelOn = (values, channel) => values[channel.toLowerCase() + '.enabled'] === 'true';
@@ -76,7 +76,7 @@ function templateErrors(values) {
   const errors = {};
   (PAGE_DATA.actions || []).forEach(action => {
     (action.channels || []).forEach(ch => {
-      [ch.templateKey, ch.templateKeyNoText].filter(Boolean).forEach(key => {
+      [ch.templateKey, ch.templateKeyNoText, ch.subjectKey].filter(Boolean).forEach(key => {
         const unknown = [...new Set([...(values[key] || '').matchAll(/\{([a-zA-Z0-9_]+)}/g)].map(m => m[1]))]
           .filter(name => !action.placeholders.includes(name));
         if (unknown.length) {
@@ -779,6 +779,28 @@ function ActionsPanel({ actions, labels, context, statuses, values, setValue, se
                       {CHANNEL_TITLES[ch.channel] || ch.channel}
                       {channelOff && <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal' }}>канал отключён</span>}
                     </label>
+                    {ch.subjectKey && (
+                      <>
+                        <input
+                          id={ch.subjectKey}
+                          className="text"
+                          type="text"
+                          placeholder={ch.subjectDefault}
+                          value={values[ch.subjectKey] || ''}
+                          readOnly={readOnly}
+                          onChange={readOnly ? undefined : e => setValue(ch.subjectKey, e.target.value)}
+                          aria-invalid={Boolean(errors[ch.subjectKey])}
+                          aria-label="Тема письма"
+                          style={{ width: '100%', marginBottom: 6, background: readOnly ? '#f4f5f7' : undefined }}
+                        />
+                        {errors[ch.subjectKey] && (
+                          <div className="in-field-error">{errors[ch.subjectKey]}</div>
+                        )}
+                        <div style={hintStyle}>
+                          Тема письма. Пусто — {ch.subjectDefault}
+                        </div>
+                      </>
+                    )}
                     <textarea
                       id={ch.templateKey}
                       className="textarea"

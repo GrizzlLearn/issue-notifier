@@ -41,18 +41,28 @@ public class EmailNotificationSender implements NotificationSender {
 
     @Override
     public void send(ApplicationUser recipient, String message) {
+        send(recipient, null, message);
+    }
+
+    /**
+     * Тема приходит от вызывающего: у уведомлений о действиях она своя, настроенная
+     * администратором, у рассылки об изменениях полей — собранная из ключа задачи.
+     * Пустая тема означает «своей нет» — тогда ставим общую.
+     */
+    @Override
+    public void send(ApplicationUser recipient, String subject, String message) {
         String address = recipient.getEmailAddress();
         if (address == null || address.isBlank()) {
             throw new IllegalStateException(
-                    "У пользователя " + recipient.getDisplayName() + " не указан email в Jira");
+                    "У пользователя " + recipient.getKey() + " не указан email в Jira");
         }
         Email email = new Email(address);
-        email.setSubject(SUBJECT);
+        email.setSubject(subject == null || subject.isBlank() ? SUBJECT : subject);
         email.setBody(message);
         email.setMimeType("text/html");
         mailQueue.addItem(new SingleMailQueueItem(email));
         log.debug("Email: письмо для {} поставлено в почтовую очередь Jira ({} символов)",
-                address, message.length());
+                recipient.getKey(), message.length());
     }
 
     /**

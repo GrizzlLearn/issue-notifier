@@ -360,12 +360,61 @@ public class NotificationServiceImpl implements NotificationService {
             return false;
         }
         try {
-            sender.send(recipient, ActionTemplates.render(template, placeholders, channel));
+            deliver(sender, recipient, subjectFor(action, channel, placeholders),
+                    ActionTemplates.render(template, placeholders, channel));
             return true;
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
                     action, channel, recipient.getKey(), describe(e));
             return false;
+        }
+    }
+
+    /**
+     * Тема письма для действия: настроенная администратором либо дефолтная.
+     * Остальные каналы темы не имеют, и настройку для них мы не читаем — это
+     * лишний запрос на каждый канал и каждого получателя.
+     *
+     * @return {@code null} для канала без темы
+     */
+    private String subjectFor(NotificationAction action, NotificationChannel channel,
+                              Map<String, String> placeholders) {
+        if (channel != NotificationChannel.EMAIL) {
+            return null;
+        }
+        String template = adminSettingsService.get(ActionTemplates.subjectKey(action), "");
+        if (template == null || template.isBlank()) {
+            template = ActionTemplates.DEFAULT_EMAIL_SUBJECT;
+        }
+        // тема — обычный текст, без экранирования разметки
+        return ActionTemplates.renderPlain(template, placeholders);
+    }
+
+    /**
+     * Тема письма об изменениях полей. Раньше у всех таких писем была одна
+     * константа, и по ящику нельзя было понять, какая задача изменилась.
+     *
+     * @return {@code null} для канала без темы
+     */
+    private static String subjectFor(Issue issue, NotificationChannel channel) {
+        if (channel != NotificationChannel.EMAIL) {
+            return null;
+        }
+        return ActionTemplates.renderPlain(ActionTemplates.DEFAULT_EMAIL_SUBJECT,
+                Map.of("issueKey", issue.getKey(),
+                       "summary", issue.getSummary() == null ? "" : issue.getSummary()));
+    }
+
+    /**
+     * Отправка: с темой — только туда, где тема есть. У чатов вызываем обычный
+     * {@code send}, чтобы канал не получал параметр, которого у него не бывает.
+     */
+    private static void deliver(NotificationSender sender, ApplicationUser recipient,
+                                String subject, String message) {
+        if (subject == null) {
+            sender.send(recipient, message);
+        } else {
+            sender.send(recipient, subject, message);
         }
     }
 
@@ -515,7 +564,7 @@ public class NotificationServiceImpl implements NotificationService {
 
         try {
             String message = messages.computeIfAbsent(channel, c -> formatter.format(issue, diff));
-            sender.send(recipient, message);
+            deliver(sender, recipient, subjectFor(issue, channel), message);
             log.debug("Задача {}: уведомление отправлено {} через {}",
                     issue.getKey(), recipient.getKey(), channel);
         } catch (Exception e) {

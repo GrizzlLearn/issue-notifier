@@ -26,6 +26,16 @@ public interface NotificationSender {
     void send(ApplicationUser recipient, String message);
 
     /**
+     * То же, но с темой — она нужна письму. Остальные каналы тему игнорируют:
+     * в чате сообщение одно, и заголовок в нём был бы лишней строкой.
+     *
+     * @param subject тема письма; {@code null} или пусто — канал решает сам
+     */
+    default void send(ApplicationUser recipient, String subject, String message) {
+        send(recipient, message);
+    }
+
+    /**
      * Проверочная отправка с админ-страницы: значения настроек канала берутся из
      * {@code settings} (несохранённая форма), а чего там нет — из сохранённых настроек.
      * Ничего не сохраняет. Бросает unchecked-исключение с текстом для администратора.

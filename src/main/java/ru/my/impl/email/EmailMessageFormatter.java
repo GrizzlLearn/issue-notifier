@@ -2,18 +2,29 @@ package ru.my.impl.email;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
+import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import com.atlassian.sal.api.ApplicationProperties;
+import com.atlassian.sal.api.UrlMode;
 import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 
 import ru.my.impl.util.TextLimit;
 import ru.my.impl.util.TextDiff;
+import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.List;
 
 @Named
 @ExportAsService(MessageFormatter.class)
 public class EmailMessageFormatter implements MessageFormatter {
+
+    private final ApplicationProperties applicationProperties;
+
+    @Inject
+    public EmailMessageFormatter(@ComponentImport ApplicationProperties applicationProperties) {
+        this.applicationProperties = applicationProperties;
+    }
 
     /** Суммарная длина from+to, при превышении которой используется diff-вид. */
     static final int DIFF_THRESHOLD = 300;
@@ -28,9 +39,13 @@ public class EmailMessageFormatter implements MessageFormatter {
 
     @Override
     public String format(Issue issue, DiffResult diff) {
+        // ссылка на задачу — в заголовке письма: без неё из ящика до задачи
+        // приходилось добираться поиском по ключу
+        String issueUrl = applicationProperties.getBaseUrl(UrlMode.CANONICAL) + "/browse/" + issue.getKey();
         StringBuilder sb = new StringBuilder(512);
         sb.append("<html><body style=\"font-family:Arial,sans-serif;font-size:14px;\">")
-          .append("<p><strong>").append(esc(issue.getKey())).append("</strong>")
+          .append("<p><a href=\"").append(esc(issueUrl)).append("\"><strong>")
+          .append(esc(issue.getKey())).append("</strong></a>")
           .append(" — ").append(esc(issue.getSummary())).append("</p>")
           .append("<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" style=\"border-collapse:collapse;\">")
           .append("<tr style=\"background:#f5f5f5;\"><th>Поле</th><th>Было</th><th>Стало</th></tr>");
