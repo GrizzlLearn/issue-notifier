@@ -85,7 +85,12 @@ public class MattermostClient {
             return Optional.of(cached);
         }
         Optional<String> channelId = resolveDirectChannelId(email, Map.of());
-        channelId.ifPresent(id -> channelIds.put(email, id));
+        channelId.ifPresentOrElse(
+                id -> {
+                    channelIds.put(email, id);
+                    log.debug("Mattermost: канал для {} найден и закеширован ({})", email, id);
+                },
+                () -> log.debug("Mattermost: пользователь {} не найден", email));
         return channelId;
     }
 
@@ -176,15 +181,31 @@ public class MattermostClient {
                 .build());
     }
 
+    /**
+     * Единственная точка выхода в сеть — здесь и логируется весь обмен с Mattermost.
+     * Тела запросов не пишем: в них уходит текст задач и комментариев.
+     */
     private HttpResponse<String> execute(HttpRequest req) {
+        long startedAt = System.nanoTime();
         try {
-            return http.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            log.debug("Mattermost {} {} → {} за {} мс",
+                    req.method(), req.uri().getPath(), resp.statusCode(), elapsedMs(startedAt));
+            return resp;
         } catch (IOException e) {
+            log.debug("Mattermost {} {} → сбой за {} мс: {}",
+                    req.method(), req.uri().getPath(), elapsedMs(startedAt), e.getMessage());
             throw new MattermostException("Ошибка HTTP-запроса: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            log.debug("Mattermost {} {} прерван за {} мс",
+                    req.method(), req.uri().getPath(), elapsedMs(startedAt));
             throw new MattermostException("HTTP-запрос прерван", e);
         }
+    }
+
+    private static long elapsedMs(long startedAt) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 
     private static void requireSuccess(HttpResponse<String> resp) {

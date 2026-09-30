@@ -91,6 +91,10 @@ public class DelegationServiceImpl implements DelegationService {
                 .filter(DelegationInfo::isActive)
                 .map(d -> resolveDelegates(d.getToUserKeys()))
                 .orElse(List.of());
+        if (!recipients.isEmpty() && log.isDebugEnabled()) {
+            log.debug("Делегирование {} → {}", user.getKey(),
+                    recipients.stream().map(ApplicationUser::getKey).collect(Collectors.joining(", ")));
+        }
         return recipients.isEmpty() ? List.of(user) : recipients;
     }
 
@@ -122,6 +126,8 @@ public class DelegationServiceImpl implements DelegationService {
                         "Нельзя делегировать уведомления самому себе: " + from.getDisplayName());
             }
         }
+        log.debug("{} делегирует уведомления {} получателям до {}",
+                from.getKey(), to.size(), activeUntil == null ? "отмены" : activeUntil);
         String toUserKeysCsv = to.stream()
                 .map(ApplicationUser::getKey)
                 .distinct()
@@ -144,6 +150,7 @@ public class DelegationServiceImpl implements DelegationService {
             return null;
         });
         cache.remove(from.getKey());
+        log.debug("Делегирование {} снято", from.getKey());
     }
 
     @Override

@@ -5,9 +5,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
 
     <modelVersion>4.0.0</modelVersion>
-    <groupId>ru.my</groupId>
-    <artifactId>issue-notifier</artifactId>
-    <version>1.0.48</version>
+    <groupId>ru.noname.atlassian.jira</groupId>
+    <artifactId>in</artifactId>
+    <version>1.0.55</version>
 
     <organization>
         <name>Example Company</name>
@@ -15,7 +15,7 @@
     </organization>
 
     <name>issue-notifier</name>
-    <description>This is the ru.my:issue-notifier plugin for Atlassian JIRA.</description>
+    <description>This is the ru.noname.atlassian.jira:in plugin for Atlassian JIRA.</description>
     <packaging>atlassian-plugin</packaging>
 
     <dependencies>
@@ -23,6 +23,21 @@
             <groupId>com.atlassian.jira</groupId>
             <artifactId>jira-api</artifactId>
             <version>${jira.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- log4j-core: только чтобы приложить свой файловый appender (PluginLogging).
+             Версия — та, что стоит в Jira ${jira.version}; в рантайме класс берётся из хоста. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- PluginRetrievalService: свой Plugin (и его ключ) в рантайме, без хардкода ключа в коде -->
+        <dependency>
+            <groupId>com.atlassian.plugins</groupId>
+            <artifactId>atlassian-plugins-osgi-bridge</artifactId>
+            <version>${atlassian.plugins.version}</version>
             <scope>provided</scope>
         </dependency>
         <!-- Add dependency on jira-core if you want access to JIRA implementation classes as well as the sanctioned API. -->
@@ -177,7 +192,13 @@
                         <id>npm-build</id>
                         <goals><goal>npm</goal></goals>
                         <phase>generate-resources</phase>
-                        <configuration><arguments>run build</arguments></configuration>
+                        <configuration>
+                            <arguments>run build</arguments>
+                            <!-- ключ плагина в JS-бандл: WRM.require требует полный ключ ресурса -->
+                            <environmentVariables>
+                                <PLUGIN_KEY>${atlassian.plugin.key}</PLUGIN_KEY>
+                            </environmentVariables>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -216,6 +237,8 @@
                         <!-- Add package import here -->
                         <Import-Package>
                             org.springframework.osgi.*;resolution:="optional",
+                            <!-- нужен только для своего файла лога (PluginLogging); без него плагин работает -->
+                            org.apache.logging.log4j.core.*;resolution:="optional",
                             org.eclipse.gemini.blueprint.*;resolution:="optional",
                             *
                         </Import-Package>
@@ -276,6 +299,10 @@
         <amps.version>9.1.1</amps.version>
         <plugin.testrunner.version>2.0.9</plugin.testrunner.version>
         <atlassian.spring.scanner.version>2.2.4</atlassian.spring.scanner.version>
+        <!-- версия atlassian-plugins-api, которую тянет jira-api ${jira.version} -->
+        <atlassian.plugins.version>7.1.7</atlassian.plugins.version>
+        <!-- версия log4j2 в Jira ${jira.version}, см. WEB-INF/lib -->
+        <log4j.version>2.17.2</log4j.version>
         <!-- This property ensures consistency between the key in atlassian-plugin.xml and the OSGi bundle's key. -->
         <atlassian.plugin.key>${project.groupId}.${project.artifactId}</atlassian.plugin.key>
         <!-- TestKit version 6.x for JIRA 6.x -->

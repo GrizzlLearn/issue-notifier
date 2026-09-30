@@ -9,6 +9,9 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.GET;
@@ -32,6 +35,8 @@ import java.util.stream.Collectors;
 @Path("/users")
 @Produces(MediaType.APPLICATION_JSON)
 public class UserPickerResource {
+
+    private static final Logger log = LoggerFactory.getLogger(UserPickerResource.class);
 
     private static final int MAX_RESULTS = 20;
 
@@ -58,6 +63,7 @@ public class UserPickerResource {
         if (user == null) return UserSettingsResource.unauthorized();
         // без этой проверки поиск отдавал бы ключи и имена всех активных
         // пользователей любому авторизованному, включая клиентов Service Desk
+        log.debug("{} ищет пользователей по запросу '{}'", user.getKey(), query);
         if (!globalPermissionManager.hasPermission(GlobalPermissionKey.USER_PICKER, user)) {
             return UserSettingsResource.forbidden();
         }
@@ -86,6 +92,7 @@ public class UserPickerResource {
     public Response resolve(@PathParam("key") String key) {
         ApplicationUser current = authContext.getLoggedInUser();
         if (current == null) return UserSettingsResource.unauthorized();
+        log.debug("{} запросил пользователя {}", current.getKey(), key);
         if (!globalPermissionManager.hasPermission(GlobalPermissionKey.USER_PICKER, current)) {
             return UserSettingsResource.forbidden();
         }

@@ -12,6 +12,7 @@ import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationSender;
 import ru.my.model.ActionTemplates;
 import ru.my.model.CommentTextMode;
+import ru.my.model.LoggingSettings.Area;
 import ru.my.model.WatchedFields;
 import ru.my.model.ChannelKeys;
 import ru.my.model.NotificationAction;
@@ -73,6 +74,9 @@ public class AdminSettingsResource {
                 ActionTemplates.WATCHERS_ENABLED_KEY,
                 WatchedFields.KEY,
                 CommentTextMode.KEY));
+        for (Area area : Area.values()) {
+            keys.add(area.key());
+        }
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
@@ -101,6 +105,9 @@ public class AdminSettingsResource {
     private static Set<String> buildBooleanKeys() {
         Set<String> keys = new LinkedHashSet<>(Set.of(
                 ActionTemplates.HIDE_COMMENT_TEXT_KEY, ActionTemplates.WATCHERS_ENABLED_KEY));
+        for (Area area : Area.values()) {
+            keys.add(area.key());
+        }
         for (NotificationChannel channel : NotificationChannel.values()) {
             keys.add(channel.enabledKey());
         }
@@ -171,6 +178,7 @@ public class AdminSettingsResource {
      */
     @PUT
     public Response set(Map<String, String> body) {
+        log.debug("Сохранение настроек плагина: ключей {}", body == null ? 0 : body.size());
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
         if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
@@ -233,6 +241,8 @@ public class AdminSettingsResource {
     @POST
     @Path("/test")
     public Response test(ChannelTestDto request) {
+        log.debug("Проверочная отправка: канал {}",
+                request == null ? "не указан" : request.getChannel());
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
         if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();

@@ -7,6 +7,9 @@ import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import ru.my.api.DelegationService;
 import ru.my.model.DelegationInfo;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.*;
@@ -24,6 +27,8 @@ import java.util.Optional;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class UserDelegationResource {
+
+    private static final Logger log = LoggerFactory.getLogger(UserDelegationResource.class);
 
     private final JiraAuthenticationContext authContext;
     private final DelegationService delegationService;
@@ -44,6 +49,7 @@ public class UserDelegationResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
 
+        log.debug("{} запросил своё делегирование", user.getKey());
         Optional<DelegationInfo> delegation = delegationService.getDelegation(user);
         if (delegation.isEmpty()) {
             return Response.ok(new DelegationDto(List.of(), null)).build();
@@ -64,6 +70,8 @@ public class UserDelegationResource {
     public Response set(DelegationDto dto) {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
+        log.debug("{} настраивает делегирование: получателей {}", user.getKey(),
+                dto == null || dto.getToUserKeys() == null ? 0 : dto.getToUserKeys().size());
         if (dto == null || dto.getToUserKeys() == null || dto.getToUserKeys().isEmpty()) {
             return UserSettingsResource.badRequest("Поле toUserKeys обязательно и не может быть пустым");
         }
@@ -116,6 +124,7 @@ public class UserDelegationResource {
     public Response remove() {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
+        log.debug("{} снимает своё делегирование", user.getKey());
         delegationService.removeDelegation(user);
         return Response.noContent().build();
     }

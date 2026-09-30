@@ -133,6 +133,9 @@ public class IssueEventListener {
         // просит не рассылать, и это относится и к нашим каналам, иначе галка
         // «без уведомлений» в массовой правке ничего не значит
         if (!event.isSendMail()) {
+            log.debug("Событие {} по задаче {}: Jira просила не рассылать уведомления",
+                    event.getEventTypeId(),
+                    event.getIssue() == null ? "?" : event.getIssue().getKey());
             return;
         }
         Issue issue = event.getIssue();
@@ -152,14 +155,18 @@ public class IssueEventListener {
         }
 
         if (isIgnoredEvent(event)) {
+            log.debug("Событие {} по задаче {} не обрабатывается плагином", typeId, issue.getKey());
             return;
         }
         // C1: changelog читается здесь, в потоке Jira-события — OFBiz-ленивая загрузка
         // через getRelated("ChildChangeItem") безопасна только в этом контексте.
         DiffResult diff = DiffFormatter.parse(event.getChangeLog());
         if (diff.isEmpty()) {
+            log.debug("Событие {} по задаче {}: в changelog нет изменений полей", typeId, issue.getKey());
             return;
         }
+        log.debug("Событие {} по задаче {}: изменённых полей {}, взято в обработку",
+                typeId, issue.getKey(), diff.getChanges().size());
         // одна задача на событие: сначала уведомления о действиях, затем рассылка
         // об изменении полей — без тех, кому уже ушло. Настройки и исполнитель
         // читаются здесь же, в рабочем потоке: в потоке Jira-события обращений

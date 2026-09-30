@@ -70,7 +70,10 @@ public class TelegramClient {
      */
     public String getUpdates(long offset) {
         String token = adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "");
-        if (token.isBlank()) return "{\"ok\":true,\"result\":[]}";
+        if (token.isBlank()) {
+            log.debug("Telegram: getUpdates пропущен — токен бота не задан");
+            return "{\"ok\":true,\"result\":[]}";
+        }
 
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(API_BASE + token + "/getUpdates?offset=" + offset))
@@ -163,15 +166,32 @@ public class TelegramClient {
         executor.shutdownNow();
     }
 
+    /**
+     * Единственная точка выхода в сеть — здесь и логируется весь обмен с Bot API.
+     * Путь URL содержит токен бота, поэтому в лог он идёт только через {@link #mask}.
+     * Тела запросов не пишем: в них уходит текст задач и комментариев.
+     */
     private HttpResponse<String> execute(HttpRequest req, String token) {
+        String path = mask(req.uri().getPath(), token);
+        long startedAt = System.nanoTime();
         try {
-            return http.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            log.debug("Telegram {} {} → {} за {} мс",
+                    req.method(), path, resp.statusCode(), elapsedMs(startedAt));
+            return resp;
         } catch (IOException e) {
+            log.debug("Telegram {} {} → сбой за {} мс: {}",
+                    req.method(), path, elapsedMs(startedAt), mask(e.getMessage(), token));
             throw new TelegramException("Ошибка HTTP-запроса: " + mask(e.getMessage(), token), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            log.debug("Telegram {} {} прерван за {} мс", req.method(), path, elapsedMs(startedAt));
             throw new TelegramException("HTTP-запрос прерван", e);
         }
+    }
+
+    private static long elapsedMs(long startedAt) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 
     /**

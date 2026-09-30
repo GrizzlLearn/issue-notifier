@@ -10,6 +10,9 @@ import ru.my.model.NotificationAction;
 import ru.my.model.ProjectContext;
 import ru.my.model.ProjectContexts;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.Consumes;
@@ -42,6 +45,8 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class ProjectContextResource {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectContextResource.class);
+
     /** Длина имени: поле в один ключ настроек, а на вкладке оно должно читаться. */
     static final int MAX_NAME = 100;
 
@@ -67,6 +72,7 @@ public class ProjectContextResource {
         Response denied = requireAdmin();
         if (denied != null) return denied;
 
+        log.debug("Запрошены контексты проектов");
         List<ProjectContextDto> body = new ArrayList<>();
         for (ProjectContext context : contexts()) {
             body.add(ProjectContextDto.from(context));
@@ -78,6 +84,7 @@ public class ProjectContextResource {
     public Response save(List<ProjectContextDto> body) {
         Response denied = requireAdmin();
         if (denied != null) return denied;
+        log.debug("Сохранение контекстов проектов: {}", body == null ? "тело не задано" : body.size());
         if (body == null) return UserSettingsResource.badRequest("Тело запроса не задано");
         if (body.size() > MAX_CONTEXTS) {
             return UserSettingsResource.badRequest("Слишком много контекстов: не больше " + MAX_CONTEXTS);

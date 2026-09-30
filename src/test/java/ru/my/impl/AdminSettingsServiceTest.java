@@ -9,7 +9,11 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import ru.my.ao.AdminSettingsEntity;
+import ru.my.model.LoggingSettings.Area;
 import ru.my.model.NotificationChannel;
+
+import java.util.EnumSet;
+import java.util.Set;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -20,6 +24,8 @@ public class AdminSettingsServiceTest {
 
     @Mock
     private ActiveObjects ao;
+    @Mock
+    private PluginLogging pluginLogging;
 
     private AutoCloseable mocks;
     private AdminSettingsServiceImpl service;
@@ -27,7 +33,7 @@ public class AdminSettingsServiceTest {
     @Before
     public void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        service = new AdminSettingsServiceImpl(ao, new MemoryCacheManager());
+        service = new AdminSettingsServiceImpl(ao, new MemoryCacheManager(), pluginLogging);
     }
 
     @After
@@ -103,5 +109,44 @@ public class AdminSettingsServiceTest {
         service.get("some.key", "");
 
         verify(ao, times(2)).find(eq(AdminSettingsEntity.class), any(Query.class));
+    }
+
+    /** Ни одна область не включена — применяется пустой набор, то есть только INFO и выше. */
+    @Test
+    public void appliesEmptyAreaSetWhenNothingEnabled() {
+        when(ao.executeInTransaction(any())).thenReturn(null);
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[0]);
+
+        service.set(Area.CHANNELS.key(), "false");
+
+        verify(pluginLogging).applyAreas(Set.of());
+    }
+
+    /**
+     * Сохранение галочки области применяет весь набор включённых областей, а не
+     * только изменённую: иначе снятая ранее галочка осталась бы действовать.
+     */
+    @Test
+    public void appliesAllEnabledAreasTogether() {
+        when(ao.executeInTransaction(any())).thenReturn(null);
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenReturn("true");
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+
+        service.set(Area.REST.key(), "true");
+
+        verify(pluginLogging).applyAreas(EnumSet.allOf(Area.class));
+    }
+
+    /** Остальные настройки уровень логирования не трогают. */
+    @Test
+    public void otherSettingsDoNotTouchLoggingLevel() {
+        when(ao.executeInTransaction(any())).thenReturn(null);
+
+        service.set("mattermost.domain", "https://mm.example.com");
+
+        verifyNoInteractions(pluginLogging);
     }
 }

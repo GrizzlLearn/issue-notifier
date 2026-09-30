@@ -10,6 +10,9 @@ import ru.my.model.ChannelKeys;
 import ru.my.model.CommentTextMode;
 import ru.my.model.NotificationChannel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.*;
@@ -26,6 +29,8 @@ import java.util.stream.Collectors;
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class UserSettingsResource {
+
+    private static final Logger log = LoggerFactory.getLogger(UserSettingsResource.class);
 
     /**
      * Telegram chat_id — целое число, у групп со знаком минус. Поле правит
@@ -54,6 +59,7 @@ public class UserSettingsResource {
     public Response get() {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return unauthorized();
+        log.debug("{} открыл свои настройки уведомлений", user.getKey());
         String botUsername = adminSettingsService.get(ChannelKeys.TELEGRAM_BOT_USERNAME, "");
         List<String> enabledChannels = Arrays.stream(NotificationChannel.values())
                 .filter(adminSettingsService::isChannelEnabled)
@@ -74,6 +80,7 @@ public class UserSettingsResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return unauthorized();
         if (dto == null) return badRequest("Тело запроса не задано");
+        log.debug("{} сохраняет свои настройки уведомлений", user.getKey());
 
         String chatId = dto.getTelegramChatId();
         if (chatId != null && !chatId.isBlank() && !CHAT_ID.matcher(chatId.trim()).matches()) {

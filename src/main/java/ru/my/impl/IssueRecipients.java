@@ -6,6 +6,9 @@ import com.atlassian.jira.issue.fields.CustomField;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.user.ApplicationUser;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -23,6 +26,8 @@ import java.util.Map;
  * список работает для разных workflow.
  */
 public final class IssueRecipients {
+
+    private static final Logger log = LoggerFactory.getLogger(IssueRecipients.class);
 
     public static final String REPORTER = "reporter";
     public static final String CREATOR  = "creator";
@@ -67,6 +72,10 @@ public final class IssueRecipients {
                 case NONE -> { /* получатели не выбраны */ }
                 default -> addCustomField(unique, issue, customFieldManager, source);
             }
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("Задача {}: источники получателей {} дали {}", issue.getKey(), sources(raw),
+                    unique.isEmpty() ? "пусто" : String.join(", ", unique.keySet()));
         }
         return List.copyOf(unique.values());
     }

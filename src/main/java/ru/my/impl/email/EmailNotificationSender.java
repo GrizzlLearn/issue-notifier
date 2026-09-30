@@ -6,6 +6,8 @@ import com.atlassian.mail.queue.MailQueue;
 import com.atlassian.mail.queue.SingleMailQueueItem;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import ru.my.api.NotificationSender;
 import ru.my.model.NotificationChannel;
 import ru.my.model.TestMessages;
@@ -17,6 +19,8 @@ import java.util.Map;
 @Named
 @ExportAsService(NotificationSender.class)
 public class EmailNotificationSender implements NotificationSender {
+
+    private static final Logger log = LoggerFactory.getLogger(EmailNotificationSender.class);
 
     private static final String SUBJECT = "Jira: изменения в задаче";
 
@@ -39,6 +43,8 @@ public class EmailNotificationSender implements NotificationSender {
         email.setBody(message);
         email.setMimeType("text/html");
         mailQueue.addItem(new SingleMailQueueItem(email));
+        log.debug("Email: письмо для {} поставлено в почтовую очередь Jira ({} символов)",
+                address, message.length());
     }
 
     /**
@@ -66,6 +72,7 @@ public class EmailNotificationSender implements NotificationSender {
         letter.setBody(message);
         letter.setMimeType("text/html");
         mailQueue.addItem(new SingleMailQueueItem(letter));
+        log.debug("Email: проверочное письмо для {} поставлено в почтовую очередь Jira", email);
     }
 
     @Override

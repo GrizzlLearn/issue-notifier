@@ -76,6 +76,10 @@ public class UserSettingsServiceImpl implements UserSettingsService {
 
     @Override
     public void saveSettings(ApplicationUser user, UserSettings settings) {
+        log.debug("Настройки {}: уведомления {}, каналы {}, проектов {}, текст комментария {}",
+                user.getKey(), settings.isEnabled() ? "включены" : "выключены",
+                settings.getChannels(), settings.getProjects().size(),
+                settings.isCommentTextHidden() ? "скрыт" : "показывается");
         ao.executeInTransaction(() -> {
             UserNotificationSettingsEntity[] rows = ao.find(
                     UserNotificationSettingsEntity.class,

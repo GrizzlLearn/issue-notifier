@@ -5,7 +5,8 @@
 // WRM.require. Раньше в контексте atl.general лежал весь бандл, то есть React
 // разбирался при открытии любой задачи, доски и дашборда.
 
-const BUNDLE = 'wrc!ru.my.issue-notifier:user-settings-resources';
+// __PLUGIN_KEY__ подставляет webpack из pom.xml — см. webpack.config.js
+const BUNDLE = `wrc!${__PLUGIN_KEY__}:user-settings-resources`;
 
 // Патчим href сразу при загрузке скрипта, до любого клика пользователя.
 // Если оставить реальный URL (/jira/), Jira вызывает window.location.href до того,

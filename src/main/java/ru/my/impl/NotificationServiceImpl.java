@@ -152,9 +152,11 @@ public class NotificationServiceImpl implements NotificationService {
     public void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
                              Collection<ApplicationUser> exclude) {
         if (diff.isEmpty()) {
+            log.debug("Задача {}: изменений нет, уведомление не формируем", issue.getKey());
             return;
         }
         if (!Boolean.parseBoolean(adminSettingsService.get(ActionTemplates.WATCHERS_ENABLED_KEY, "false"))) {
+            log.debug("Задача {}: рассылка наблюдателям выключена администратором", issue.getKey());
             return;
         }
 
@@ -163,6 +165,8 @@ public class NotificationServiceImpl implements NotificationService {
         // и снятая галка «Прочие поля» не должна выключать уведомление о назначении.
         DiffResult watched = WatchedFields.filter(adminSettingsService.get(WatchedFields.KEY, ""), diff);
         if (watched.isEmpty()) {
+            log.debug("Задача {}: все изменённые поля исключены настройкой отслеживаемых полей",
+                    issue.getKey());
             return;
         }
         if (formatters.isEmpty()) {
@@ -178,10 +182,16 @@ public class NotificationServiceImpl implements NotificationService {
 
         Set<String> excludedKeys = exclude.stream().map(ApplicationUser::getKey).collect(Collectors.toSet());
 
-        for (Recipient r : collectRecipients(issue, author, watchers, true)) {
+        Collection<Recipient> selected = collectRecipients(issue, author, watchers, true);
+        log.debug("Задача {}: наблюдателей {}, получателей после отбора {}, исключено ранее уведомлённых {}",
+                issue.getKey(), watchers.size(), selected.size(), excludedKeys.size());
+
+        for (Recipient r : selected) {
             // тому, кому по этому событию уже ушло уведомление о действии,
             // второе сообщение об изменении полей не отправляем
             if (excludedKeys.contains(r.user().getKey())) {
+                log.debug("{} уже получил уведомление о действии по задаче {}, изменения полей не дублируем",
+                        r.user().getKey(), issue.getKey());
                 continue;
             }
             sendToRecipient(issue, watched, r.user(), r.settings(), channelCache);
@@ -196,6 +206,8 @@ public class NotificationServiceImpl implements NotificationService {
         // настроек вместо чтения флага, области и получателей по отдельности
         ProjectContext context = contextOf(issue, adminSettingsService);
         if (!context.isEnabled(action)) {
+            log.debug("Задача {}: действие {} выключено в контексте проектов «{}»",
+                    issue.getKey(), action, context.name());
             return List.of();
         }
 
@@ -323,17 +335,22 @@ public class NotificationServiceImpl implements NotificationService {
 
         for (ApplicationUser candidate : candidates) {
             if (!candidate.isActive()) {
+                log.debug("{} отсеян: пользователь неактивен", candidate.getKey());
                 continue;
             }
             if (author != null && Objects.equals(candidate.getKey(), author.getKey())) {
+                log.debug("{} отсеян: это автор изменения", candidate.getKey());
                 continue;
             }
 
             UserSettings candidateSettings = userSettingsService.getSettings(candidate);
             if (!candidateSettings.isEnabled()) {
+                log.debug("{} отсеян: уведомления выключены в личных настройках", candidate.getKey());
                 continue;
             }
             if (applyUserProjectFilter && !isProjectIncluded(candidateSettings, issue)) {
+                log.debug("{} отсеян: проект задачи {} не входит в его список проектов",
+                        candidate.getKey(), issue.getKey());
                 continue;
             }
 
@@ -343,11 +360,13 @@ public class NotificationServiceImpl implements NotificationService {
                 }
                 // делегат мог быть уволен уже после настройки делегирования
                 if (!recipient.isActive()) {
+                    log.debug("Делегат {} отсеян: пользователь неактивен", recipient.getKey());
                     continue;
                 }
                 // автор отсеивается и среди делегатов: иначе B, которому A делегировал
                 // уведомления, получал бы сообщение о своём же комментарии
                 if (author != null && Objects.equals(recipient.getKey(), author.getKey())) {
+                    log.debug("Делегат {} отсеян: это автор изменения", recipient.getKey());
                     continue;
                 }
                 // содержимое задачи уходит только тому, кто и так может её открыть:
@@ -364,9 +383,15 @@ public class NotificationServiceImpl implements NotificationService {
                         : userSettingsService.getSettings(recipient);
 
                 if (!recipientSettings.isEnabled()) {
+                    log.debug("Делегат {} отсеян: уведомления выключены в его личных настройках",
+                            recipient.getKey());
                     continue;
                 }
 
+                if (!Objects.equals(recipient.getKey(), candidate.getKey())) {
+                    log.debug("{} получит уведомление вместо {} (делегирование)",
+                            recipient.getKey(), candidate.getKey());
+                }
                 uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
             }
         }
@@ -396,6 +421,8 @@ public class NotificationServiceImpl implements NotificationService {
         try {
             String message = formatter.format(issue, diff);
             sender.send(recipient, message);
+            log.debug("Задача {}: уведомление отправлено {} через {}",
+                    issue.getKey(), recipient.getKey(), channel);
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления через {} для {}: {}",
                     channel, recipient.getKey(), e.getMessage());

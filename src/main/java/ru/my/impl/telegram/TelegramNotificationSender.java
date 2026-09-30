@@ -2,6 +2,8 @@ package ru.my.impl.telegram;
 
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import ru.my.api.NotificationSender;
 import ru.my.api.UserSettingsService;
 import ru.my.model.NotificationChannel;
@@ -14,6 +16,8 @@ import java.util.Map;
 @ExportAsService(NotificationSender.class)
 public class TelegramNotificationSender implements NotificationSender {
 
+    private static final Logger log = LoggerFactory.getLogger(TelegramNotificationSender.class);
+
     private final TelegramClient client;
     private final UserSettingsService userSettingsService;
 
@@ -25,12 +29,17 @@ public class TelegramNotificationSender implements NotificationSender {
 
     @Override
     public void send(ApplicationUser recipient, String message) {
-        client.sendMessage(chatId(recipient), message);
+        String chatId = chatId(recipient);
+        log.debug("Telegram: уведомление для {} → чат {} ({} символов)",
+                recipient.getName(), chatId, message.length());
+        client.sendMessage(chatId, message);
     }
 
     @Override
     public void sendTest(ApplicationUser recipient, String message, Map<String, String> settings) {
-        client.sendMessage(chatId(recipient), message, settings);
+        String chatId = chatId(recipient);
+        log.debug("Telegram: проверочное сообщение для {} → чат {}", recipient.getName(), chatId);
+        client.sendMessage(chatId, message, settings);
     }
 
     /**

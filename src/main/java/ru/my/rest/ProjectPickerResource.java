@@ -8,6 +8,9 @@ import com.atlassian.jira.security.PermissionManager;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.GET;
@@ -41,6 +44,8 @@ import java.util.stream.Collectors;
 @Produces(MediaType.APPLICATION_JSON)
 public class ProjectPickerResource {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectPickerResource.class);
+
     private static final int MAX_RESULTS = 20;
 
     private final JiraAuthenticationContext authContext;
@@ -62,6 +67,7 @@ public class ProjectPickerResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
 
+        log.debug("{} ищет проекты по запросу '{}'", user.getKey(), query);
         String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         List<PickerItemDto> results = projectManager.getProjectObjects().stream()
                 .filter(p -> permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, p, user))
@@ -82,6 +88,7 @@ public class ProjectPickerResource {
         ApplicationUser user = authContext.getLoggedInUser();
         if (user == null) return UserSettingsResource.unauthorized();
 
+        log.debug("{} запросил проект {}", user.getKey(), key);
         Project project = projectManager.getProjectObjByKey(key);
         if (project == null || !permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, project, user)) {
             return UserSettingsResource.notFound("Проект не найден: " + key);

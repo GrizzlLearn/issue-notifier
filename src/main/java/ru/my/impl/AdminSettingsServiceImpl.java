@@ -10,13 +10,18 @@ import net.java.ao.DBParam;
 import net.java.ao.Query;
 import ru.my.ao.AdminSettingsEntity;
 import ru.my.api.AdminSettingsService;
+import ru.my.model.LoggingSettings.Area;
 import ru.my.model.NotificationChannel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 import javax.inject.Named;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -43,11 +48,14 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     private final ActiveObjects ao;
     private final Cache<String, String> cache;
+    private final PluginLogging pluginLogging;
 
     @Inject
     public AdminSettingsServiceImpl(@ComponentImport ActiveObjects ao,
-                                    @ComponentImport CacheManager cacheManager) {
+                                    @ComponentImport CacheManager cacheManager,
+                                    PluginLogging pluginLogging) {
         this.ao = ao;
+        this.pluginLogging = pluginLogging;
         this.cache = cacheManager.getCache(
                 AdminSettingsServiceImpl.class.getName() + ".settings",
                 null,
@@ -56,6 +64,24 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
                         .expireAfterWrite(60, TimeUnit.SECONDS)
                         .replicateViaInvalidation()
                         .build());
+    }
+
+    /**
+     * Настройки логирования хранятся здесь же, поэтому и применяются отсюда: они
+     * пережили перезапуск Jira — значит уровни надо вернуть до первого уведомления.
+     * {@link #get} сам переживает неготовый AO, так что читать можно уже на старте.
+     */
+    @PostConstruct
+    public void applyLoggingSettings() {
+        pluginLogging.applyAreas(enabledLogAreas());
+    }
+
+    private Set<Area> enabledLogAreas() {
+        Set<Area> enabled = EnumSet.noneOf(Area.class);
+        Arrays.stream(Area.values())
+                .filter(area -> Boolean.parseBoolean(get(area.key(), "false")))
+                .forEach(enabled::add);
+        return enabled;
     }
 
     @Override
@@ -94,6 +120,9 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
             return null;
         });
         cache.remove(key);
+        if (Area.byKey(key).isPresent()) {
+            pluginLogging.applyAreas(enabledLogAreas());
+        }
     }
 
     @Override

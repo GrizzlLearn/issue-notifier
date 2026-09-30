@@ -42,8 +42,8 @@ public class TelegramPollingService implements JobRunner {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramPollingService.class);
 
-    private static final JobRunnerKey RUNNER_KEY = JobRunnerKey.of("ru.my.issue-notifier.telegram-polling");
-    private static final JobId JOB_ID = JobId.of("ru.my.issue-notifier.telegram-polling");
+    private static final JobRunnerKey RUNNER_KEY = JobRunnerKey.of("ru.noname.atlassian.jira.in.telegram-polling");
+    private static final JobId JOB_ID = JobId.of("ru.noname.atlassian.jira.in.telegram-polling");
     private static final long INTERVAL_MS = 5_000;
 
     /** Первый опрос не сразу: на старте плагина AO и настройки ещё поднимаются. */
@@ -80,6 +80,8 @@ public class TelegramPollingService implements JobRunner {
                     .withRunMode(RunMode.RUN_ONCE_PER_CLUSTER)
                     .withSchedule(Schedule.forInterval(
                             INTERVAL_MS, new Date(System.currentTimeMillis() + INITIAL_DELAY_MS))));
+            log.info("Опрос Telegram запланирован: каждые {} мс, первый запуск через {} мс",
+                    INTERVAL_MS, INITIAL_DELAY_MS);
         } catch (SchedulerServiceException e) {
             log.error("Не удалось запланировать опрос Telegram: {}", e.getMessage(), e);
         }
@@ -89,6 +91,7 @@ public class TelegramPollingService implements JobRunner {
     public void destroy() {
         schedulerService.unscheduleJob(JOB_ID);
         schedulerService.unregisterJobRunner(RUNNER_KEY);
+        log.info("Опрос Telegram остановлен");
     }
 
     @Nullable
@@ -101,6 +104,7 @@ public class TelegramPollingService implements JobRunner {
     void pollOnce() {
         // канал выключен администратором — бот не отвечает и на /start
         if (!adminSettings.isChannelEnabled(NotificationChannel.TELEGRAM)) {
+            log.debug("Опрос Telegram пропущен — канал выключен администратором");
             return;
         }
         try {
@@ -135,6 +139,7 @@ public class TelegramPollingService implements JobRunner {
             // пишем только когда offset реально сдвинулся — иначе запись в БД на каждый опрос
             if (nextOffset != offset) {
                 adminSettings.set(OFFSET_KEY, String.valueOf(nextOffset));
+                log.debug("Опрос Telegram: offset {} → {}", offset, nextOffset);
             }
         } catch (Exception e) {
             log.warn("Ошибка опроса Telegram getUpdates: {}", e.getMessage());

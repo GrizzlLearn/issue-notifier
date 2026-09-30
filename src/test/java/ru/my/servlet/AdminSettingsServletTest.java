@@ -7,6 +7,8 @@ import com.atlassian.jira.project.ProjectManager;
 import com.atlassian.jira.security.GlobalPermissionManager;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.MockApplicationUser;
+import com.atlassian.plugin.Plugin;
+import com.atlassian.plugin.osgi.bridge.external.PluginRetrievalService;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -38,17 +40,22 @@ public class AdminSettingsServletTest {
     @Mock private ProjectManager projectManager;
     @Mock private ConstantsManager constantsManager;
     @Mock private CustomFieldManager customFieldManager;
+    @Mock private PluginRetrievalService pluginRetrievalService;
+    @Mock private Plugin plugin;
     @Mock private HttpServletRequest request;
     @Mock private HttpServletResponse response;
 
     private AdminSettingsServlet servlet;
+    private static final String PLUGIN_KEY = "ru.example.test-key";
     private final MockApplicationUser user = new MockApplicationUser("jdoe");
     private final StringWriter body = new StringWriter();
 
     @Before
     public void setUp() {
+        when(pluginRetrievalService.getPlugin()).thenReturn(plugin);
+        when(plugin.getKey()).thenReturn(PLUGIN_KEY);
         servlet = new AdminSettingsServlet(authContext, globalPermissionManager,
-                projectManager, constantsManager, customFieldManager);
+                projectManager, constantsManager, customFieldManager, pluginRetrievalService);
     }
 
     @Test
@@ -91,5 +98,7 @@ public class AdminSettingsServletTest {
         String html = body.toString();
         assertTrue(html.contains("issue-notifier-admin-root"));
         assertTrue(html.contains("window.ISSUE_NOTIFIER_DATA"));
+        assertTrue(html.contains("/download/resources/" + PLUGIN_KEY + ":admin-settings-resources"));
+        assertTrue(html.contains("content=\"" + PLUGIN_KEY + ":issue-notifier-admin-link\""));
     }
 }
