@@ -7,9 +7,9 @@ package ru.my.impl.util;
  * ячейка письма, пост Mattermost и сообщение Telegram, — и все они режут по
  * индексу UTF-16, где граница может попасть в середину суррогатной пары.
  */
-public final class Text {
+public final class TextLimit {
 
-    private Text() {
+    private TextLimit() {
     }
 
     /**

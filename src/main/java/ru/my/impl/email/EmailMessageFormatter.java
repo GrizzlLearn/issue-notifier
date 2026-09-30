@@ -6,7 +6,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationChannel;
 
-import ru.my.impl.util.Text;
+import ru.my.impl.util.TextLimit;
 import ru.my.impl.util.TextDiff;
 import javax.inject.Named;
 import java.util.List;
@@ -64,7 +64,7 @@ public class EmailMessageFormatter implements MessageFormatter {
     }
 
     private static String trim(String value) {
-        return value.length() <= MAX_CELL ? value : Text.cut(value, MAX_CELL) + "…";
+        return value.length() <= MAX_CELL ? value : TextLimit.cut(value, MAX_CELL) + "…";
     }
 
     private static void appendDiffRow(StringBuilder sb, String field, String from, String to) {

@@ -3,7 +3,7 @@ package ru.my.impl.telegram;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
-import ru.my.impl.util.Text;
+import ru.my.impl.util.TextLimit;
 import ru.my.model.ChannelKeys;
 import ru.my.model.JsonUtil;
 
@@ -143,7 +143,7 @@ public class TelegramClient {
         if (html == null || html.length() <= MESSAGE_LIMIT) {
             return html;
         }
-        String cut = Text.cut(html, MESSAGE_LIMIT - ELLIPSIS.length());
+        String cut = TextLimit.cut(html, MESSAGE_LIMIT - ELLIPSIS.length());
         int lastOpen = cut.lastIndexOf('<');
         if (lastOpen > cut.lastIndexOf('>')) {
             cut = cut.substring(0, lastOpen);

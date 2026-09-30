@@ -3,19 +3,20 @@ package ru.my.impl.util;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-public class TextTest {
+public class TextLimitTest {
 
     @Test
     public void shortTextIsNotTouched() {
-        assertEquals("коротко", Text.cut("коротко", 100));
-        assertEquals(null, Text.cut(null, 10));
+        assertEquals("коротко", TextLimit.cut("коротко", 100));
+        assertNull(TextLimit.cut(null, 10));
     }
 
     @Test
     public void cutsToLimit() {
-        assertEquals("абвг", Text.cut("абвгде", 4));
+        assertEquals("абвг", TextLimit.cut("абвгде", 4));
     }
 
     /** Эмодзи — суррогатная пара: половина ломает JSON и приезжает знаком замены. */
@@ -23,7 +24,7 @@ public class TextTest {
     public void doesNotSplitSurrogatePair() {
         String text = "аб😀вг";          // 😀 занимает два char
 
-        String cut = Text.cut(text, 3);  // граница попадает внутрь пары
+        String cut = TextLimit.cut(text, 3);  // граница попадает внутрь пары
 
         assertEquals("аб", cut);
         assertTrue(cut.codePoints().allMatch(Character::isDefined));
@@ -31,6 +32,6 @@ public class TextTest {
 
     @Test
     public void keepsWholePairWhenItFits() {
-        assertEquals("аб😀", Text.cut("аб😀вг", 4));
+        assertEquals("аб😀", TextLimit.cut("аб😀вг", 4));
     }
 }
