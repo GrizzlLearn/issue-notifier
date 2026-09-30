@@ -39,6 +39,10 @@ public class MattermostClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final Pattern ID_PATTERN = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
 
+    /** Предел длины поста Mattermost — 16383 символа; берём с запасом. */
+    static final int MESSAGE_LIMIT = 16_000;
+    private static final String ELLIPSIS = "\n…";
+
     private final AdminSettingsService adminSettings;
     private final HttpClient http;
     private final ExecutorService executor;
@@ -80,18 +84,29 @@ public class MattermostClient {
      * Возвращает empty если пользователь с таким email не найден в Mattermost.
      */
     public Optional<String> findDirectChannelId(String email) {
-        String cached = channelIds.getIfPresent(email);
+        String key = cacheKey(email, Map.of());
+        String cached = channelIds.getIfPresent(key);
         if (cached != null) {
             return Optional.of(cached);
         }
         Optional<String> channelId = resolveDirectChannelId(email, Map.of());
         channelId.ifPresentOrElse(
                 id -> {
-                    channelIds.put(email, id);
+                    channelIds.put(key, id);
                     log.debug("Mattermost: канал для {} найден и закеширован ({})", email, id);
                 },
                 () -> log.debug("Mattermost: пользователь {} не найден", email));
         return channelId;
+    }
+
+    /**
+     * Ключ кеша канала: адрес получателя плюс сервер и бот, от которых этот id
+     * получен. Без них смена домена или бота-отправителя оставляла бы в кеше
+     * до 12 часов id каналов чужого сервера.
+     */
+    private String cacheKey(String email, Map<String, String> settings) {
+        return value(ChannelKeys.MATTERMOST_DOMAIN, settings) + '\u0000'
+                + value(ChannelKeys.MATTERMOST_BOT_ID, settings) + '\u0000' + email;
     }
 
     /**
@@ -102,7 +117,7 @@ public class MattermostClient {
     public void sendTest(String email, String text, Map<String, String> settings) {
         String channelId = resolveDirectChannelId(email, settings)
                 .orElseThrow(() -> new MattermostException(
-                        "Пользователь с email " + email + " не найден в Mattermost"));
+                        "Пользователь с таким email не найден в Mattermost"));
         postMessage(value(ChannelKeys.MATTERMOST_DOMAIN, settings),
                 value(ChannelKeys.MATTERMOST_TOKEN, settings), channelId, text);
     }
@@ -139,7 +154,7 @@ public class MattermostClient {
      * и тогда сохранённый id перестаёт работать до следующего резолва.
      */
     public void forgetChannel(String email) {
-        channelIds.invalidate(email);
+        channelIds.invalidate(cacheKey(email, Map.of()));
     }
 
     /** Отправляет сообщение в канал. Бросает {@link MattermostException} при сбое. */
@@ -150,7 +165,7 @@ public class MattermostClient {
 
     private void postMessage(String domain, String token, String channelId, String text) {
         String body = "{\"channel_id\":" + JsonUtil.jsonString(channelId)
-                + ",\"message\":" + JsonUtil.jsonString(text) + "}";
+                + ",\"message\":" + JsonUtil.jsonString(trimToLimit(text)) + "}";
         requireSuccess(post(domain, token, "/api/v4/posts", body));
         log.debug("Сообщение отправлено в канал {}", channelId);
     }
@@ -208,19 +223,49 @@ public class MattermostClient {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 
+    /**
+     * Тело ответа в текст исключения не попадает: оно уходит администратору в поле
+     * {@code error} проверочной отправки и в plugin.log, а домен задаёт он же —
+     * это превращало проверку канала в чтение ответов произвольного хоста.
+     */
     private static void requireSuccess(HttpResponse<String> resp) {
         int status = resp.statusCode();
         if (status < 200 || status >= 300) {
-            throw new MattermostException("Mattermost API вернул статус " + status + ": " + resp.body());
+            throw new MattermostException("Mattermost API вернул статус " + status);
         }
     }
 
     static String extractId(String json) {
         Matcher m = ID_PATTERN.matcher(json);
         if (!m.find()) {
-            throw new MattermostException("Поле 'id' не найдено в ответе: " + json);
+            throw new MattermostException("Ответ не похож на ответ Mattermost: поля 'id' в нём нет");
         }
         return m.group(1);
+    }
+
+    /**
+     * Обрезает сообщение под предел поста Mattermost: длинное правка описания
+     * иначе даёт 400 на каждом получателе. Если обрезали внутри блока кода,
+     * забор закрывается — иначе остаток сообщения рендерится как код.
+     */
+    static String trimToLimit(String text) {
+        if (text == null || text.length() <= MESSAGE_LIMIT) {
+            return text;
+        }
+        String cut = text.substring(0, MESSAGE_LIMIT - ELLIPSIS.length());
+        StringBuilder sb = new StringBuilder(cut).append(ELLIPSIS);
+        if (countFences(cut) % 2 != 0) {
+            sb.append("\n```");
+        }
+        return sb.toString();
+    }
+
+    private static int countFences(String text) {
+        int count = 0;
+        for (int i = text.indexOf("```"); i >= 0; i = text.indexOf("```", i + 3)) {
+            count++;
+        }
+        return count;
     }
 
     public static class MattermostException extends RuntimeException {

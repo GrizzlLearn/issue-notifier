@@ -2,6 +2,9 @@ package ru.my.impl;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.CustomFieldManager;
+import com.atlassian.jira.issue.comments.Comment;
+import com.atlassian.jira.issue.comments.CommentManager;
+import com.atlassian.jira.issue.comments.CommentPermissionManager;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.permission.ProjectPermissions;
 import com.atlassian.jira.security.PermissionManager;
@@ -41,6 +44,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import ru.my.model.ActionTemplates;
+import ru.my.model.CommentScope;
 import ru.my.model.CommentTextMode;
 import ru.my.model.WatchedFields;
 import ru.my.model.ProjectContext;
@@ -56,6 +60,8 @@ public class NotificationServiceTest {
     @Mock private WatcherManager watcherManager;
     @Mock private CustomFieldManager customFieldManager;
     @Mock private PermissionManager permissionManager;
+    @Mock private CommentManager commentManager;
+    @Mock private CommentPermissionManager commentPermissionManager;
     @Mock private UserSettingsService userSettingsService;
     @Mock private DelegationService delegationService;
     @Mock private AdminSettingsService adminSettingsService;
@@ -92,7 +98,8 @@ public class NotificationServiceTest {
                 .thenReturn(true);
 
         service = new NotificationServiceImpl(
-                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                watcherManager, customFieldManager, permissionManager,
+                commentManager, commentPermissionManager, userSettingsService,
                 delegationService, adminSettingsService, formatters, senders);
 
         watcher = new MockApplicationUser("alice", "Alice", "alice@example.com");
@@ -114,7 +121,8 @@ public class NotificationServiceTest {
     public void skipsWhenNoFormattersRegistered() {
         // Пустые карты — гонка инициализации или незарегистрированные каналы
         NotificationServiceImpl emptyService = new NotificationServiceImpl(
-                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                watcherManager, customFieldManager, permissionManager,
+                commentManager, commentPermissionManager, userSettingsService,
                 delegationService, adminSettingsService, Map.of(), Map.of());
 
         emptyService.processEvent(issue, null, NON_EMPTY_DIFF);
@@ -776,11 +784,120 @@ public class NotificationServiceTest {
         verify(sender, never()).send(any(), any());
     }
 
+    // ---- ограничения комментария (К3) -----------------------------------
+
+    /**
+     * Комментарий с ограничением по группе: получателю, который в эту группу не
+     * входит, уведомление не уходит вовсе. Раньше проверялось только право на
+     * проект задачи, и текст резался у всех разом.
+     */
+    @Test
+    public void skipsRecipientWithoutPermissionOnComment() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        Comment comment = mock(Comment.class);
+        when(commentManager.getCommentById(7L)).thenReturn(comment);
+        when(commentPermissionManager.hasBrowsePermission(watcher, comment)).thenReturn(false);
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, false));
+
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void sendsToRecipientWithPermissionOnComment() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        Comment comment = mock(Comment.class);
+        when(commentManager.getCommentById(7L)).thenReturn(comment);
+        when(commentPermissionManager.hasBrowsePermission(watcher, comment)).thenReturn(true);
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, false));
+
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /**
+     * Внутренний комментарий Service Desk делегату не пересылается: право видеть
+     * его даёт роль агента, а делегат её не обязан иметь — поэтому делегирование
+     * по такому комментарию вообще не спрашивается.
+     */
+    @Test
+    public void internalServiceDeskCommentIsNotDelegated() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        when(userSettingsService.getSettings(watcher))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST)).build());
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, true));
+
+        verify(delegationService, never()).getEffectiveRecipients(any());
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    /** Комментарий удалили, пока событие ждало в очереди — рассылка идёт по правам на задачу. */
+    @Test
+    public void missingCommentDoesNotBlockNotification() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(commentManager.getCommentById(7L)).thenReturn(null);
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
+                Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, false));
+
+        verify(sender).send(watcher, "Комментарий в PROJ-1");
+    }
+
+    // ---- изоляция сбоев и повторное использование сообщения --------------
+
+    /** Сбой на одном получателе не должен стоить уведомления остальным (С7). */
+    @Test
+    public void failureOnOneRecipientDoesNotStopOthers() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        MockApplicationUser second = new MockApplicationUser("bob", "Bob", "bob@example.com");
+        when(userSettingsService.getSettings(watcher))
+                .thenThrow(new RuntimeException("БД недоступна"));
+        when(userSettingsService.getSettings(second))
+                .thenReturn(UserSettings.builder().projects(List.of("*"))
+                        .channels(List.of(NotificationChannel.MATTERMOST)).build());
+        when(delegationService.getEffectiveRecipients(second)).thenReturn(List.of(second));
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher, second),
+                Map.of("issueKey", "PROJ-1"));
+
+        verify(sender).send(second, "Комментарий в PROJ-1");
+    }
+
+    /** Сообщение об изменениях одинаково для всех: форматтер зовём один раз на канал (С12). */
+    @Test
+    public void formatsMessageOncePerChannel() {
+        MockApplicationUser second = new MockApplicationUser("bob", "Bob", "bob@example.com");
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, second));
+        UserSettings settings = UserSettings.builder().projects(List.of("*"))
+                .channels(List.of(NotificationChannel.MATTERMOST)).build();
+        when(userSettingsService.getSettings(watcher)).thenReturn(settings);
+        when(userSettingsService.getSettings(second)).thenReturn(settings);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(delegationService.getEffectiveRecipients(second)).thenReturn(List.of(second));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(issue, NON_EMPTY_DIFF)).thenReturn("текст");
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF);
+
+        verify(formatter, times(1)).format(issue, NON_EMPTY_DIFF);
+        verify(sender).send(watcher, "текст");
+        verify(sender).send(second, "текст");
+    }
+
     private NotificationServiceImpl serviceWithSenders(Map<NotificationChannel, NotificationSender> senders) {
         Map<NotificationChannel, MessageFormatter> formatters = new EnumMap<>(NotificationChannel.class);
         formatters.put(NotificationChannel.MATTERMOST, formatter);
         return new NotificationServiceImpl(
-                watcherManager, customFieldManager, permissionManager, userSettingsService,
+                watcherManager, customFieldManager, permissionManager,
+                commentManager, commentPermissionManager, userSettingsService,
                 delegationService, adminSettingsService, formatters, senders);
     }
 

@@ -173,4 +173,28 @@ public class UserSettingsResourceTest {
                 && s.getChannels().contains(NotificationChannel.EMAIL)
         ));
     }
+
+    /**
+     * Список проектов ограничен не только количеством: без проверки ключа любой
+     * авторизованный писал бы в хранилище пятьсот строк произвольной длины (С19).
+     */
+    @Test
+    public void rejectsProjectKeyThatIsNotAProjectKey() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        UserSettingsDto dto = new UserSettingsDto();
+        dto.setProjects(java.util.List.of("x".repeat(5000)));
+
+        Response response = resource.save(dto);
+
+        assertEquals(400, response.getStatus());
+    }
+
+    @Test
+    public void acceptsNormalProjectKeys() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        UserSettingsDto dto = new UserSettingsDto();
+        dto.setProjects(java.util.List.of("PROJ", "SD_2"));
+
+        assertEquals(204, resource.save(dto).getStatus());
+    }
 }

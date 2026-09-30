@@ -89,11 +89,20 @@ public final class ActionTemplates {
      * @return готовый текст; неизвестные плейсхолдеры остаются в тексте как есть
      */
     public static String render(String template, Map<String, String> values, NotificationChannel channel) {
-        String result = template;
-        for (Map.Entry<String, String> e : values.entrySet()) {
-            result = result.replace("{" + e.getKey() + "}", escape(e.getValue(), channel));
+        // один проход по шаблону, а не замена значений по очереди: иначе значение,
+        // внутри которого оказался текст вида {comment} (например, в summary),
+        // подменялось бы следующей итерацией уже как плейсхолдер
+        Matcher matcher = PLACEHOLDER.matcher(template);
+        StringBuilder result = new StringBuilder(template.length());
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            String replacement = values.containsKey(name)
+                    ? escape(values.get(name), channel)
+                    : matcher.group();   // неизвестный плейсхолдер остаётся в тексте как есть
+            matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
         }
-        return result;
+        matcher.appendTail(result);
+        return result.toString();
     }
 
     /**
@@ -116,8 +125,9 @@ public final class ActionTemplates {
 
     /**
      * Telegram и письмо — разметка HTML, поэтому спецсимволы в значениях экранируются.
-     * Для Mattermost экранирования нет: markdown-спецсимволы в свободном тексте
-     * безвредны, а обратные слэши были бы видны получателю.
+     * Для Mattermost экранируется только забор блока кода: остальные
+     * markdown-спецсимволы в свободном тексте безвредны, а обратные слэши были бы
+     * видны получателю.
      * <p>
      * Email в каналы действий сейчас не входит ({@code supportsActionTemplates = false}),
      * так что шаблон до него не доходит. Экранирование всё равно здесь: включение
@@ -131,6 +141,22 @@ public final class ActionTemplates {
         if (channel == NotificationChannel.TELEGRAM || channel == NotificationChannel.EMAIL) {
             return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
         }
+        if (channel == NotificationChannel.MATTERMOST) {
+            return breakCodeFence(value);
+        }
         return value;
+    }
+
+    /**
+     * Нейтрализует забор блока кода Mattermost. Три обратные кавычки в значении
+     * закрывают блок ```` ```diff ````, который ставит форматтер или шаблон, и дальше
+     * текст задачи рендерится как разметка — вплоть до картинки с внешнего хоста
+     * в личном сообщении получателя.
+     * <p>
+     * ponytail: между кавычками вставляется символ нулевой ширины — получатель
+     * видит тот же текст, а забором эта последовательность быть перестаёт.
+     */
+    public static String breakCodeFence(String value) {
+        return value == null ? "" : value.replace("```", "`\u200B``");
     }
 }

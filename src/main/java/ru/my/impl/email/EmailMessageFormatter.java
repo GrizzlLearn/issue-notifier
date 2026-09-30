@@ -17,6 +17,14 @@ public class EmailMessageFormatter implements MessageFormatter {
     /** Суммарная длина from+to, при превышении которой используется diff-вид. */
     static final int DIFF_THRESHOLD = 300;
 
+    /**
+     * Пределы на одно поле: правка большого описания иначе уходит письмом
+     * в несколько сотен килобайт каждому получателю через почтовую очередь Jira.
+     * Остальное всё равно смотрят в задаче — в письме на неё есть ссылка.
+     */
+    static final int MAX_CELL = 2_000;
+    static final int MAX_DIFF_LINES = 200;
+
     @Override
     public String format(Issue issue, DiffResult diff) {
         StringBuilder sb = new StringBuilder(512);
@@ -49,9 +57,13 @@ public class EmailMessageFormatter implements MessageFormatter {
     private static void appendSimpleRow(StringBuilder sb, String field, String from, String to) {
         sb.append("<tr>")
           .append("<td>").append(esc(field)).append("</td>")
-          .append("<td>").append(esc(from)).append("</td>")
-          .append("<td>").append(esc(to)).append("</td>")
+          .append("<td>").append(esc(trim(from))).append("</td>")
+          .append("<td>").append(esc(trim(to))).append("</td>")
           .append("</tr>");
+    }
+
+    private static String trim(String value) {
+        return value.length() <= MAX_CELL ? value : value.substring(0, MAX_CELL) + "…";
     }
 
     private static void appendDiffRow(StringBuilder sb, String field, String from, String to) {
@@ -63,11 +75,17 @@ public class EmailMessageFormatter implements MessageFormatter {
           .append("<pre style=\"font-size:12px;background:#f8f8f8;padding:8px;")
           .append("white-space:pre-wrap;margin:0;\">");
 
+        int shown = 0;
         for (TextDiff.Line line : lines) {
+            if (shown++ == MAX_DIFF_LINES) {
+                sb.append("… ещё ").append(lines.size() - MAX_DIFF_LINES)
+                  .append(" строк — смотрите задачу\n");
+                break;
+            }
             switch (line.marker()) {
-                case '-' -> sb.append("<span style=\"color:#c00\">- ").append(esc(line.text())).append("</span>\n");
-                case '+' -> sb.append("<span style=\"color:#060\">+ ").append(esc(line.text())).append("</span>\n");
-                default  -> sb.append("  ").append(esc(line.text())).append("\n");
+                case '-' -> sb.append("<span style=\"color:#c00\">- ").append(esc(trim(line.text()))).append("</span>\n");
+                case '+' -> sb.append("<span style=\"color:#060\">+ ").append(esc(trim(line.text()))).append("</span>\n");
+                default  -> sb.append("  ").append(esc(trim(line.text()))).append("\n");
             }
         }
 

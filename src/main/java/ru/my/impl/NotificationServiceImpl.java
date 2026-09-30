@@ -2,6 +2,9 @@ package ru.my.impl;
 
 import com.atlassian.jira.issue.CustomFieldManager;
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.comments.Comment;
+import com.atlassian.jira.issue.comments.CommentManager;
+import com.atlassian.jira.issue.comments.CommentPermissionManager;
 import com.atlassian.jira.issue.watchers.WatcherManager;
 import com.atlassian.jira.permission.ProjectPermissions;
 import com.atlassian.jira.security.PermissionManager;
@@ -16,6 +19,7 @@ import ru.my.api.MessageFormatter;
 import ru.my.api.NotificationSender;
 import ru.my.api.NotificationService;
 import ru.my.api.UserSettingsService;
+import ru.my.model.CommentScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
@@ -71,10 +75,11 @@ public class NotificationServiceImpl implements NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
-    /** Ключ типа проектов, которые создаёт Jira Service Desk. */
     private final WatcherManager watcherManager;
     private final CustomFieldManager customFieldManager;
     private final PermissionManager permissionManager;
+    private final CommentManager commentManager;
+    private final CommentPermissionManager commentPermissionManager;
     private final UserSettingsService userSettingsService;
     private final DelegationService delegationService;
     private final AdminSettingsService adminSettingsService;
@@ -87,6 +92,8 @@ public class NotificationServiceImpl implements NotificationService {
             @ComponentImport WatcherManager watcherManager,
             @ComponentImport CustomFieldManager customFieldManager,
             @ComponentImport PermissionManager permissionManager,
+            @ComponentImport CommentManager commentManager,
+            @ComponentImport CommentPermissionManager commentPermissionManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
@@ -95,6 +102,8 @@ public class NotificationServiceImpl implements NotificationService {
         this.watcherManager = watcherManager;
         this.customFieldManager = customFieldManager;
         this.permissionManager = permissionManager;
+        this.commentManager = commentManager;
+        this.commentPermissionManager = commentPermissionManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -109,6 +118,8 @@ public class NotificationServiceImpl implements NotificationService {
             WatcherManager watcherManager,
             CustomFieldManager customFieldManager,
             PermissionManager permissionManager,
+            CommentManager commentManager,
+            CommentPermissionManager commentPermissionManager,
             UserSettingsService userSettingsService,
             DelegationService delegationService,
             AdminSettingsService adminSettingsService,
@@ -117,6 +128,8 @@ public class NotificationServiceImpl implements NotificationService {
         this.watcherManager = watcherManager;
         this.customFieldManager = customFieldManager;
         this.permissionManager = permissionManager;
+        this.commentManager = commentManager;
+        this.commentPermissionManager = commentPermissionManager;
         this.userSettingsService = userSettingsService;
         this.delegationService = delegationService;
         this.adminSettingsService = adminSettingsService;
@@ -182,7 +195,12 @@ public class NotificationServiceImpl implements NotificationService {
 
         Set<String> excludedKeys = exclude.stream().map(ApplicationUser::getKey).collect(Collectors.toSet());
 
-        Collection<Recipient> selected = collectRecipients(issue, author, watchers, true);
+        Collection<Recipient> selected = collectRecipients(issue, author, watchers, true,
+                CommentScope.NONE, null);
+
+        // текст сообщения одинаков для всех получателей канала, а построчный diff
+        // считается алгоритмом LCS — форматируем один раз на канал, а не на получателя
+        Map<NotificationChannel, String> messages = new EnumMap<>(NotificationChannel.class);
         log.debug("Задача {}: наблюдателей {}, получателей после отбора {}, исключено ранее уведомлённых {}",
                 issue.getKey(), watchers.size(), selected.size(), excludedKeys.size());
 
@@ -194,14 +212,14 @@ public class NotificationServiceImpl implements NotificationService {
                         r.user().getKey(), issue.getKey());
                 continue;
             }
-            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache);
+            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache, messages);
         }
     }
 
     @Override
     public List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
                                                List<ApplicationUser> recipients, Map<String, String> placeholders,
-                                               Collection<ApplicationUser> exclude) {
+                                               Collection<ApplicationUser> exclude, CommentScope scope) {
         // всё про «где и кому» лежит в контексте проектов задачи: одно чтение
         // настроек вместо чтения флага, области и получателей по отдельности
         ProjectContext context = contextOf(issue, adminSettingsService);
@@ -230,29 +248,57 @@ public class NotificationServiceImpl implements NotificationService {
                 adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
         boolean textAllowed = placeholders.containsKey("comment") && textMode != CommentTextMode.HIDDEN;
 
+        // комментарий с ограничением по группе или роли виден не всем: каждый
+        // получатель проверяется на право видеть именно этот комментарий, а не
+        // только проект задачи
+        Comment comment = commentOf(scope);
+
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
-        for (Recipient r : collectRecipients(issue, author, base, false)) {
+        for (Recipient r : collectRecipients(issue, author, base, false, scope, comment)) {
             if (excludedKeys.contains(r.user().getKey())) {
                 continue;
             }
-            // в режиме SHOWN личная настройка не спрашивается: текст получают все
-            boolean withText = textAllowed
-                    && (textMode == CommentTextMode.SHOWN || !r.settings().isCommentTextHidden());
-            Map<String, String> values = withText ? placeholders : withoutCommentText(placeholders);
+            // сбой у одного получателя не должен обрывать рассылку остальным
+            try {
+                // в режиме SHOWN личная настройка не спрашивается: текст получают все
+                boolean withText = textAllowed
+                        && (textMode == CommentTextMode.SHOWN || !r.settings().isCommentTextHidden());
+                Map<String, String> values = withText ? placeholders : withoutCommentText(placeholders);
 
-            boolean sent = false;
-            // Set защищает от двойной отправки при дублях в List<NotificationChannel>
-            for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
-                if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                    sent |= sendAction(action, channel, r.user(), values, withText);
+                boolean sent = false;
+                // Set защищает от двойной отправки при дублях в List<NotificationChannel>
+                for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
+                    if (Boolean.TRUE.equals(channelCache.get(channel))) {
+                        sent |= sendAction(action, channel, r.user(), values, withText);
+                    }
                 }
-            }
-            if (sent) {
-                notified.add(r.user());
+                if (sent) {
+                    notified.add(r.user());
+                }
+            } catch (Exception e) {
+                log.warn("Задача {}: уведомление о действии {} для {} не отправлено: {}",
+                        issue.getKey(), action, r.user().getKey(), e.getMessage());
             }
         }
         return List.copyOf(notified);
+    }
+
+    /**
+     * Комментарий события — один запрос в БД на всю рассылку, а не на получателя.
+     * Комментарий могли удалить, пока событие ждало в очереди: тогда проверять
+     * нечего, и рассылка идёт по правам на задачу.
+     */
+    private Comment commentOf(CommentScope scope) {
+        if (scope == null || scope.commentId() == null) {
+            return null;
+        }
+        try {
+            return commentManager.getCommentById(scope.commentId());
+        } catch (RuntimeException e) {
+            log.debug("Комментарий {} не прочитан: {}", scope.commentId(), e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -323,93 +369,132 @@ public class NotificationServiceImpl implements NotificationService {
      * имеет по определению, а делегат, упомянутый через {@code [~user]} и
      * пользователь из кастомного поля — нет, и без проверки содержимое закрытой
      * задачи ушло бы человеку без доступа к проекту.
+     * <p>
+     * Если событие про комментарий, итоговый получатель проверяется ещё и на право
+     * видеть сам комментарий: ограничение по группе или роли проекта правами на
+     * задачу не проверяется. По внутреннему комментарию Service Desk делегирование
+     * не применяется — делегат агентом быть не обязан.
      *
      * @param applyUserProjectFilter учитывать ли список проектов в настройках
      *                               получателя; он относится только к уведомлениям
      *                               об изменениях задач, за которыми тот наблюдает
+     * @param scope   ограничения комментария события
+     * @param comment сам комментарий или {@code null}, если событие не про комментарий
      */
     private Collection<Recipient> collectRecipients(Issue issue, ApplicationUser author,
                                                     List<ApplicationUser> candidates,
-                                                    boolean applyUserProjectFilter) {
+                                                    boolean applyUserProjectFilter,
+                                                    CommentScope scope, Comment comment) {
         Map<String, Recipient> uniqueRecipients = new LinkedHashMap<>();
 
+        boolean allowDelegation = scope == null || !scope.blocksDelegation();
+
         for (ApplicationUser candidate : candidates) {
-            if (!candidate.isActive()) {
-                log.debug("{} отсеян: пользователь неактивен", candidate.getKey());
-                continue;
-            }
-            if (author != null && Objects.equals(candidate.getKey(), author.getKey())) {
-                log.debug("{} отсеян: это автор изменения", candidate.getKey());
-                continue;
-            }
-
-            UserSettings candidateSettings = userSettingsService.getSettings(candidate);
-            if (!candidateSettings.isEnabled()) {
-                log.debug("{} отсеян: уведомления выключены в личных настройках", candidate.getKey());
-                continue;
-            }
-            if (applyUserProjectFilter && !isProjectIncluded(candidateSettings, issue)) {
-                log.debug("{} отсеян: проект задачи {} не входит в его список проектов",
-                        candidate.getKey(), issue.getKey());
-                continue;
-            }
-
-            for (ApplicationUser recipient : delegationService.getEffectiveRecipients(candidate)) {
-                if (uniqueRecipients.containsKey(recipient.getKey())) {
-                    continue;
-                }
-                // делегат мог быть уволен уже после настройки делегирования
-                if (!recipient.isActive()) {
-                    log.debug("Делегат {} отсеян: пользователь неактивен", recipient.getKey());
-                    continue;
-                }
-                // автор отсеивается и среди делегатов: иначе B, которому A делегировал
-                // уведомления, получал бы сообщение о своём же комментарии
-                if (author != null && Objects.equals(recipient.getKey(), author.getKey())) {
-                    log.debug("Делегат {} отсеян: это автор изменения", recipient.getKey());
-                    continue;
-                }
-                // содержимое задачи уходит только тому, кто и так может её открыть:
-                // делегат и упомянутый в комментарии наблюдателями не являются
-                if (!permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, issue, recipient)) {
-                    log.debug("У {} нет прав на задачу {}, уведомление не отправляем",
-                            recipient.getKey(), issue.getKey());
-                    continue;
-                }
-
-                // переиспользуем настройки кандидата, если делегирования нет
-                UserSettings recipientSettings = Objects.equals(recipient.getKey(), candidate.getKey())
-                        ? candidateSettings
-                        : userSettingsService.getSettings(recipient);
-
-                if (!recipientSettings.isEnabled()) {
-                    log.debug("Делегат {} отсеян: уведомления выключены в его личных настройках",
-                            recipient.getKey());
-                    continue;
-                }
-
-                if (!Objects.equals(recipient.getKey(), candidate.getKey())) {
-                    log.debug("{} получит уведомление вместо {} (делегирование)",
-                            recipient.getKey(), candidate.getKey());
-                }
-                uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
+            try {
+                collectCandidate(issue, author, candidate, applyUserProjectFilter,
+                        allowDelegation, comment, uniqueRecipients);
+            } catch (Exception e) {
+                // сбой у одного кандидата (чтение настроек, делегирование, права)
+                // не должен стоить уведомлений всем остальным
+                log.warn("Задача {}: кандидат {} пропущен из-за ошибки: {}",
+                        issue.getKey(), candidate.getKey(), e.getMessage());
             }
         }
         return uniqueRecipients.values();
     }
 
+    private void collectCandidate(Issue issue, ApplicationUser author, ApplicationUser candidate,
+                                  boolean applyUserProjectFilter, boolean allowDelegation,
+                                  Comment comment, Map<String, Recipient> uniqueRecipients) {
+        if (!candidate.isActive()) {
+            log.debug("{} отсеян: пользователь неактивен", candidate.getKey());
+            return;
+        }
+        if (author != null && Objects.equals(candidate.getKey(), author.getKey())) {
+            log.debug("{} отсеян: это автор изменения", candidate.getKey());
+            return;
+        }
+
+        UserSettings candidateSettings = userSettingsService.getSettings(candidate);
+        if (!candidateSettings.isEnabled()) {
+            log.debug("{} отсеян: уведомления выключены в личных настройках", candidate.getKey());
+            return;
+        }
+        if (applyUserProjectFilter && !isProjectIncluded(candidateSettings, issue)) {
+            log.debug("{} отсеян: проект задачи {} не входит в его список проектов",
+                    candidate.getKey(), issue.getKey());
+            return;
+        }
+
+        // внутренний комментарий Service Desk делегату не уходит: право видеть
+        // его даёт роль агента, а делегат её не обязан иметь
+        List<ApplicationUser> effective = allowDelegation
+                ? delegationService.getEffectiveRecipients(candidate)
+                : List.of(candidate);
+
+        for (ApplicationUser recipient : effective) {
+            if (uniqueRecipients.containsKey(recipient.getKey())) {
+                continue;
+            }
+            // делегат мог быть уволен уже после настройки делегирования
+            if (!recipient.isActive()) {
+                log.debug("Делегат {} отсеян: пользователь неактивен", recipient.getKey());
+                continue;
+            }
+            // автор отсеивается и среди делегатов: иначе B, которому A делегировал
+            // уведомления, получал бы сообщение о своём же комментарии
+            if (author != null && Objects.equals(recipient.getKey(), author.getKey())) {
+                log.debug("Делегат {} отсеян: это автор изменения", recipient.getKey());
+                continue;
+            }
+            // содержимое задачи уходит только тому, кто и так может её открыть:
+            // делегат и упомянутый в комментарии наблюдателями не являются
+            if (!permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, issue, recipient)) {
+                log.debug("У {} нет прав на задачу {}, уведомление не отправляем",
+                        recipient.getKey(), issue.getKey());
+                continue;
+            }
+            // ограничение комментария по группе или роли проекта правами на задачу
+            // не проверяется: без этого текст ограниченного комментария уходил бы
+            // тому, кто в эту группу не входит
+            if (comment != null && !commentPermissionManager.hasBrowsePermission(recipient, comment)) {
+                log.debug("У {} нет прав на комментарий по задаче {}, уведомление не отправляем",
+                        recipient.getKey(), issue.getKey());
+                continue;
+            }
+
+            // переиспользуем настройки кандидата, если делегирования нет
+            UserSettings recipientSettings = Objects.equals(recipient.getKey(), candidate.getKey())
+                    ? candidateSettings
+                    : userSettingsService.getSettings(recipient);
+
+            if (!recipientSettings.isEnabled()) {
+                log.debug("Делегат {} отсеян: уведомления выключены в его личных настройках",
+                        recipient.getKey());
+                continue;
+            }
+
+            if (!Objects.equals(recipient.getKey(), candidate.getKey())) {
+                log.debug("{} получит уведомление вместо {} (делегирование)",
+                        recipient.getKey(), candidate.getKey());
+            }
+            uniqueRecipients.put(recipient.getKey(), new Recipient(recipient, recipientSettings));
+        }
+    }
+
     private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
-                                 UserSettings settings, Map<NotificationChannel, Boolean> channelCache) {
+                                 UserSettings settings, Map<NotificationChannel, Boolean> channelCache,
+                                 Map<NotificationChannel, String> messages) {
         // Set защищает от двойной отправки при дублях в List<NotificationChannel>
         for (NotificationChannel channel : new LinkedHashSet<>(settings.getChannels())) {
             if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                sendViaChannel(issue, diff, recipient, channel);
+                sendViaChannel(issue, diff, recipient, channel, messages);
             }
         }
     }
 
     private void sendViaChannel(Issue issue, DiffResult diff, ApplicationUser recipient,
-                                NotificationChannel channel) {
+                                NotificationChannel channel, Map<NotificationChannel, String> messages) {
         MessageFormatter formatter = formatters.get(channel);
         NotificationSender sender = senders.get(channel);
 
@@ -419,7 +504,7 @@ public class NotificationServiceImpl implements NotificationService {
         }
 
         try {
-            String message = formatter.format(issue, diff);
+            String message = messages.computeIfAbsent(channel, c -> formatter.format(issue, diff));
             sender.send(recipient, message);
             log.debug("Задача {}: уведомление отправлено {} через {}",
                     issue.getKey(), recipient.getKey(), channel);

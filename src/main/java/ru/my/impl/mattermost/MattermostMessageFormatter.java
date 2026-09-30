@@ -7,6 +7,7 @@ import com.atlassian.sal.api.ApplicationProperties;
 import com.atlassian.sal.api.UrlMode;
 import ru.my.api.MessageFormatter;
 import ru.my.model.DiffResult;
+import ru.my.model.ActionTemplates;
 import ru.my.model.NotificationChannel;
 
 import ru.my.impl.util.ChangeSplitter;
@@ -48,10 +49,14 @@ public class MattermostMessageFormatter implements MessageFormatter {
             }
         }
 
+        // внутри блока ```diff разметка не экранируется, но забор блока
+        // нейтрализуется: иначе строка с тремя кавычками закрывает блок, и дальше
+        // текст задачи рендерится как разметка (ссылки, картинка с внешнего хоста)
         for (DiffResult.FieldChange c : longChanges) {
-            sb.append("\n**").append(c.fieldName()).append(":**\n```diff\n");
+            sb.append("\n**").append(mdEsc(c.fieldName())).append(":**\n```diff\n");
             for (TextDiff.Line line : TextDiff.diff(c.fromValue(), c.toValue())) {
-                sb.append(line.marker()).append(' ').append(line.text()).append('\n');
+                sb.append(line.marker()).append(' ')
+                  .append(ActionTemplates.breakCodeFence(line.text())).append('\n');
             }
             sb.append("```\n");
         }

@@ -69,8 +69,10 @@ public class ProjectPickerResource {
 
         log.debug("{} ищет проекты по запросу '{}'", user.getKey(), query);
         String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
-        List<PickerItemDto> results = projectManager.getProjectObjects().stream()
-                .filter(p -> permissionManager.hasPermission(ProjectPermissions.BROWSE_PROJECTS, p, user))
+        // getProjects сразу отдаёт доступные пользователю проекты; hasPermission
+        // на каждый проект инстанса выполнялся на каждое нажатие клавиши в пикере
+        List<PickerItemDto> results = permissionManager
+                .getProjects(ProjectPermissions.BROWSE_PROJECTS, user).stream()
                 .filter(p -> q.isEmpty()
                         || p.getKey().toLowerCase(Locale.ROOT).contains(q)
                         || p.getName().toLowerCase(Locale.ROOT).contains(q))

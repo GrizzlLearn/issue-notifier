@@ -41,6 +41,14 @@ public class UserSettingsResource {
     /** Разумный предел для списка проектов: поле хранится одной строкой в AO. */
     static final int MAX_PROJECTS = 500;
 
+    /**
+     * Ключ проекта Jira: заглавные латинские буквы, цифры и подчёркивание, до 10
+     * символов. Звёздочка — «все проекты». Предела на количество недостаточно:
+     * список склеивается в колонку без ограничения длины, и без этой проверки
+     * любой авторизованный пишет в хранилище пятьсот строк произвольного размера.
+     */
+    private static final Pattern PROJECT_KEY = Pattern.compile("\\*|[A-Za-z][A-Za-z0-9_]{0,9}");
+
     private final JiraAuthenticationContext authContext;
     private final UserSettingsService userSettingsService;
     private final AdminSettingsService adminSettingsService;
@@ -91,6 +99,13 @@ public class UserSettingsResource {
         if (dto.getProjects() != null && dto.getProjects().size() > MAX_PROJECTS) {
             return badRequest("Слишком много проектов: не больше " + MAX_PROJECTS);
         }
+        if (dto.getProjects() != null) {
+            for (String key : dto.getProjects()) {
+                if (key == null || !PROJECT_KEY.matcher(key).matches()) {
+                    return badRequest("Это не похоже на ключ проекта: " + abbreviate(key));
+                }
+            }
+        }
         // пустой список — состояние «ни все проекты, ни выбранные». Хранить его нельзя:
         // в БД он ложится пустой строкой, а она при чтении означает «все проекты»,
         // то есть настройка молча превратилась бы в свою противоположность.
@@ -101,6 +116,14 @@ public class UserSettingsResource {
 
         userSettingsService.saveSettings(user, dto.toModel());
         return Response.noContent().build();
+    }
+
+    /** В ответ не возвращаем присланное целиком: оно могло быть килобайтами мусора. */
+    private static String abbreviate(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return value.length() <= 20 ? value : value.substring(0, 20) + "…";
     }
 
     static Response unauthorized() {

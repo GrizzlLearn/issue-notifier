@@ -263,6 +263,13 @@ public class AdminSettingsResource {
                 ? "me" : request.getRecipientType().trim();
         String target = request.getRecipient() == null ? "" : request.getRecipient().trim();
         Map<String, String> settings = formSettings(request.getSettings());
+        // домен приходит из формы и уходит в HTTP-запрос: без проверки проверочная
+        // отправка ходила бы по любому адресу, включая внутренние (PUT его проверяет)
+        Response invalidDomain = validateDomain(ChannelKeys.MATTERMOST_DOMAIN,
+                settings.get(ChannelKeys.MATTERMOST_DOMAIN));
+        if (invalidDomain != null) {
+            return invalidDomain;
+        }
         // разметка у каналов разная: Markdown в Mattermost, HTML в Telegram, письмо в почте
         String message = TestMessages.forChannel(channel, user.getDisplayName());
 

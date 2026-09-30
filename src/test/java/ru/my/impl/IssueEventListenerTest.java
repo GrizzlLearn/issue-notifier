@@ -21,6 +21,7 @@ import org.ofbiz.core.entity.GenericValue;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.model.DiffResult;
+import ru.my.model.CommentScope;
 import ru.my.model.NotificationAction;
 
 import java.util.Collections;
@@ -28,7 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
@@ -156,17 +159,17 @@ public class IssueEventListenerTest {
         org.mockito.Mockito.when(userManager.getUserByName("ipetrov")).thenReturn(mentioned);
 
         org.mockito.Mockito.when(notificationService.processAction(
-                        any(), any(), eq(NotificationAction.MENTION), any(), anyMap()))
+                        any(), any(), eq(NotificationAction.MENTION), any(), anyMap(), any(), any()))
                 .thenReturn(List.of(mentioned));
 
         listener.onIssueEvent(commentEvent("[~ipetrov] посмотри пожалуйста"));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap());
+                any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap(), any(), any());
         // упомянутый уже уведомлён — в рассылке о комментарии он исключён
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(),
-                eq(List.of(mentioned)));
+                eq(List.of(mentioned)), any());
     }
 
     @Test
@@ -175,7 +178,7 @@ public class IssueEventListenerTest {
 
         // пустой список получателей — сервис берёт их из настройки действия
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()));
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any());
     }
 
     @Test
@@ -185,7 +188,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(commentEvent("[~nobody] ау"));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()));
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any());
     }
 
     /** Внутренний комментарий Service Desk виден только команде — уведомляем исполнителя. */
@@ -199,10 +202,47 @@ public class IssueEventListenerTest {
 
         listener.onIssueEvent(commentEvent("внутренняя заметка", 42L, assignee));
 
+        ArgumentCaptor<CommentScope> scope = ArgumentCaptor.forClass(CommentScope.class);
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)), anyMap());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)), anyMap(),
+                eq(List.of()), scope.capture());
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), any(), any());
+        // сервис должен знать, что комментарий внутренний: по нему не применяется
+        // делегирование, иначе делегат исполнителя увидит внутреннюю переписку
+        assertTrue(scope.getValue().isServiceDeskInternal());
+        assertTrue(scope.getValue().blocksDelegation());
+        assertEquals(Long.valueOf(42L), scope.getValue().commentId());
+    }
+
+    /**
+     * Внутренний комментарий Service Desk с ограничением по группе: текст не идёт
+     * в значения даже исполнителю — раньше эта ветка ограничение обходила.
+     */
+    @Test
+    public void serviceDeskInternalCommentRespectsGroupRestriction() {
+        ApplicationUser assignee = mock(ApplicationUser.class);
+        EntityProperty property = mock(EntityProperty.class);
+        org.mockito.Mockito.when(property.getValue()).thenReturn("{\"internal\": true}");
+        org.mockito.Mockito.when(entityProperties.get("CommentProperty", 42L, "sd.public.comment"))
+                .thenReturn(property);
+
+        Issue issue = mock(Issue.class);
+        org.mockito.Mockito.when(issue.getAssignee()).thenReturn(assignee);
+        Comment comment = mock(Comment.class);
+        org.mockito.Mockito.when(comment.getBody()).thenReturn("секрет");
+        org.mockito.Mockito.when(comment.getId()).thenReturn(42L);
+        org.mockito.Mockito.when(comment.getGroupLevel()).thenReturn("jira-developers");
+
+        listener.onIssueEvent(new IssueEvent(issue, mock(ApplicationUser.class), comment, null, null,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)),
+                values.capture(), eq(List.of()), any());
+        assertFalse(values.getValue().containsKey("comment"));
     }
 
     /** Комментарий с ограничением по группе уходит всем, но без текста. */
@@ -219,7 +259,7 @@ public class IssueEventListenerTest {
         @SuppressWarnings("unchecked") // ArgumentCaptor не умеет generic-типы иначе
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any(), any());
         assertFalse(values.getValue().containsKey("comment"));
     }
 
@@ -233,6 +273,7 @@ public class IssueEventListenerTest {
 
         verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap());
         verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any());
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any(), any());
     }
 
     /** Закрывающим считается только статус, выбранный для этого проекта. */

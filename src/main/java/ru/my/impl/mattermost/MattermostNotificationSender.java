@@ -24,14 +24,17 @@ public class MattermostNotificationSender implements NotificationSender {
         this.client = client;
     }
 
+    // В логах и в тексте исключений — ключ пользователя, а не email и не имя:
+    // сообщение об ошибке отправки уходит в plugin.log на WARN, а связка
+    // «кто получает уведомления + его email» доступна всем, кто читает логи Jira
     @Override
     public void send(ApplicationUser recipient, String message) {
         String email = email(recipient);
         String channelId = client.findDirectChannelId(email)
                 .orElseThrow(() -> new IllegalStateException(
-                        "Пользователь с email " + email + " не найден в Mattermost"));
+                        "Пользователь " + recipient.getKey() + " не найден в Mattermost по своему email"));
         log.debug("Mattermost: уведомление для {} → канал {} ({} символов)",
-                recipient.getName(), channelId, message.length());
+                recipient.getKey(), channelId, message.length());
         sendOrForget(email, channelId, message);
     }
 
@@ -51,7 +54,7 @@ public class MattermostNotificationSender implements NotificationSender {
         String email = recipient.getEmailAddress();
         if (email == null || email.isBlank()) {
             throw new IllegalStateException(
-                    "У пользователя " + recipient.getDisplayName() + " не указан email в Jira");
+                    "У пользователя " + recipient.getKey() + " не указан email в Jira");
         }
         return email;
     }

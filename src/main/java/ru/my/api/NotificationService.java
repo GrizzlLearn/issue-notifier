@@ -2,6 +2,7 @@ package ru.my.api;
 
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
+import ru.my.model.CommentScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 
@@ -67,7 +68,21 @@ public interface NotificationService {
      *
      * @param exclude получатели, которых нужно пропустить
      */
+    default List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                                                List<ApplicationUser> recipients, Map<String, String> placeholders,
+                                                Collection<ApplicationUser> exclude) {
+        return processAction(issue, author, action, recipients, placeholders, exclude, CommentScope.NONE);
+    }
+
+    /**
+     * То же, но с ограничениями комментария, из-за которого идёт рассылка.
+     * Каждый получатель проверяется на право видеть этот комментарий, а по
+     * внутреннему комментарию Service Desk не применяется делегирование.
+     *
+     * @param scope ограничения комментария; {@link CommentScope#NONE} — событие
+     *              не про комментарий
+     */
     List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
                                         List<ApplicationUser> recipients, Map<String, String> placeholders,
-                                        Collection<ApplicationUser> exclude);
+                                        Collection<ApplicationUser> exclude, CommentScope scope);
 }

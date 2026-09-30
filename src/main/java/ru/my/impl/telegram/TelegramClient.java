@@ -43,6 +43,13 @@ public class TelegramClient {
     /** Теги, которые ставит форматтер: {@code <b>}, {@code <s>}, {@code <pre>}. */
     private static final Pattern TAG = Pattern.compile("<(/?)([a-zA-Z]+)[^>]*>");
 
+    /**
+     * Токен бота имеет вид {@code 123456:AAH...}. Проверяем до сборки URL: пробел
+     * или перевод строки в токене роняет {@code URI.create} исключением, в текст
+     * которого JDK вкладывает весь URL — то есть сам токен, и он уезжает в лог.
+     */
+    private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9:_-]{10,200}");
+
     private final AdminSettingsService adminSettings;
     private final HttpClient http;
     private final ExecutorService executor;
@@ -75,6 +82,7 @@ public class TelegramClient {
             return "{\"ok\":true,\"result\":[]}";
         }
 
+        requireValidToken(token);
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(API_BASE + token + "/getUpdates?offset=" + offset))
                 .timeout(TIMEOUT)
@@ -104,6 +112,7 @@ public class TelegramClient {
         if (token.isBlank()) {
             throw new TelegramException("Токен Telegram-бота не задан");
         }
+        requireValidToken(token);
 
         String body = "{\"chat_id\":" + JsonUtil.jsonString(chatId)
                 + ",\"text\":" + JsonUtil.jsonString(trimToLimit(htmlText))
@@ -160,6 +169,19 @@ public class TelegramClient {
         return stack;
     }
 
+    /**
+     * Токен, которым нельзя собрать URL, до сети не доводим: сообщение
+     * {@link IllegalArgumentException} от {@code URI.create} содержит весь URL
+     * вместе с токеном и маскированию уже не подлежит.
+     */
+    private static void requireValidToken(String token) {
+        if (!TOKEN.matcher(token).matches()) {
+            throw new TelegramException(
+                    "Токен Telegram-бота содержит недопустимые символы — проверьте, "
+                    + "что он скопирован без пробелов и переводов строки");
+        }
+    }
+
     /** ponytail: HttpClient в Java 17 не закрывается — гасим хотя бы его пул потоков. */
     @PreDestroy
     public void destroy() {
@@ -182,7 +204,9 @@ public class TelegramClient {
         } catch (IOException e) {
             log.debug("Telegram {} {} → сбой за {} мс: {}",
                     req.method(), path, elapsedMs(startedAt), mask(e.getMessage(), token));
-            throw new TelegramException("Ошибка HTTP-запроса: " + mask(e.getMessage(), token), e);
+            // cause не тащим: в сообщении исходного IOException остаётся URL с токеном,
+            // и log.error(..., e) выше по стеку напечатал бы его вместе со стектрейсом
+            throw new TelegramException("Ошибка HTTP-запроса: " + mask(e.getMessage(), token));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.debug("Telegram {} {} прерван за {} мс", req.method(), path, elapsedMs(startedAt));

@@ -99,4 +99,29 @@ public class MattermostMessageFormatterTest {
         when(issue.getSummary()).thenReturn(summary);
         return issue;
     }
+
+    /**
+     * Из блока ```diff нельзя выйти строкой с тремя кавычками: иначе дальше
+     * рендерится разметка, включая картинку с внешнего хоста (С17).
+     */
+    @Test
+    public void cannotEscapeDiffBlockWithBackticks() {
+        String longText = "строка\n".repeat(60);
+        DiffResult diff = new DiffResult(List.of(new DiffResult.FieldChange(
+                "description", longText, longText + "```\n![x](https://evil.example.com/x.png)")));
+
+        String message = formatter.format(mockIssue("Задача"), diff);
+
+        // заборов два — открывающий ```diff и закрывающий
+        assertEquals(2, countFences(message));
+        assertTrue(message.contains("evil.example.com"));
+    }
+
+    private static int countFences(String text) {
+        int count = 0;
+        for (int i = text.indexOf("```"); i >= 0; i = text.indexOf("```", i + 3)) {
+            count++;
+        }
+        return count;
+    }
 }

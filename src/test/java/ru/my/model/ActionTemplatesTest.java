@@ -50,4 +50,29 @@ public class ActionTemplatesTest {
                 ActionTemplates.unknownPlaceholders("{issuekey} {summary} {foo}", NotificationAction.MENTION));
         assertTrue(ActionTemplates.unknownPlaceholders("{issueKey} {comment}", NotificationAction.MENTION).isEmpty());
     }
+
+    /**
+     * Значение, внутри которого встретился текст вида {@code {comment}}, не должно
+     * стать плейсхолдером на следующей итерации подстановки: иначе заголовок задачи
+     * подменялся бы текстом комментария (С4).
+     */
+    @Test
+    public void valueThatLooksLikePlaceholderIsNotSubstituted() {
+        String rendered = ActionTemplates.render("{summary} / {comment}",
+                Map.of("summary", "правка {comment}", "comment", "секретный текст"),
+                NotificationChannel.MATTERMOST);
+
+        assertEquals("правка {comment} / секретный текст", rendered);
+    }
+
+    /** Три обратные кавычки в значении не должны закрывать блок кода Mattermost (С17). */
+    @Test
+    public void codeFenceInValueIsNeutralizedForMattermost() {
+        String rendered = ActionTemplates.render("{comment}",
+                Map.of("comment", "```\n![x](https://evil.example.com/x.png)"),
+                NotificationChannel.MATTERMOST);
+
+        assertFalse(rendered.contains("```"));
+        assertTrue(rendered.contains("evil.example.com"));   // сам текст остаётся читаемым
+    }
 }

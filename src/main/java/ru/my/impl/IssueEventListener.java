@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.impl.util.MentionParser;
+import ru.my.model.CommentScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 
@@ -172,17 +173,25 @@ public class IssueEventListener {
         // читаются здесь же, в рабочем потоке: в потоке Jira-события обращений
         // к БД быть не должно.
         submit(typeId, () -> {
+            // шаги изолированы: сбой в уведомлении о назначении не должен стоить
+            // уведомления о закрытии и рассылки наблюдателям
             List<ApplicationUser> notified = new ArrayList<>();
             DiffResult.FieldChange assigneeChange = changeOf(diff, "assignee");
             if (assigneeChange != null) {
-                notified.addAll(notifyAssigned(issue, author, assigneeChange));
+                step(issue, "назначение исполнителя",
+                        () -> notified.addAll(notifyAssigned(issue, author, assigneeChange)));
             }
             DiffResult.FieldChange statusChange = changeOf(diff, "status");
-            if (statusChange != null && isClosingTransition(issue, statusChange.toId())) {
-                notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
-                        List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue()))));
+            if (statusChange != null) {
+                step(issue, "переход в закрывающий статус", () -> {
+                    if (isClosingTransition(issue, statusChange.toId())) {
+                        notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
+                                List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue()))));
+                    }
+                });
             }
-            notificationService.processEvent(issue, author, diff, notified);
+            step(issue, "рассылка наблюдателям",
+                    () -> notificationService.processEvent(issue, author, diff, notified));
         });
     }
 
@@ -199,32 +208,45 @@ public class IssueEventListener {
     private void processComment(Issue issue, ApplicationUser author, String body,
                                 Long commentId, boolean restrictedByLevel) {
         // свойство комментария — запрос в БД, поэтому читается в рабочем потоке
-        if (CommentVisibility.isServiceDeskInternal(commentId, entityProperties)) {
-            notifyAssigneeOnly(issue, author, body);
-            return;
-        }
+        boolean internal = CommentVisibility.isServiceDeskInternal(commentId, entityProperties);
+        CommentScope scope = new CommentScope(commentId, internal);
 
+        // текст комментария с ограничением по группе или роли не идёт в значения
+        // ни в одной ветке: получателя проверяет сервис, но шаблон «без текста»
+        // выбирается здесь — и раньше внутренний комментарий Service Desk это
+        // ограничение обходил, уходя с текстом целиком
         Map<String, String> values = restrictedByLevel
                 ? placeholders(issue, author)
                 : placeholders(issue, author, "comment", truncate(body));
 
+        if (internal) {
+            notifyAssigneeOnly(issue, author, values, scope);
+            return;
+        }
+
         List<ApplicationUser> mentioned = resolveUsers(MentionParser.parse(body));
         List<ApplicationUser> notified = mentioned.isEmpty()
                 ? List.of()
-                : notificationService.processAction(issue, author, NotificationAction.MENTION, mentioned, values);
+                : notificationService.processAction(issue, author, NotificationAction.MENTION,
+                        mentioned, values, List.of(), scope);
 
         notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
-                List.of(), values, notified);
+                List.of(), values, notified, scope);
     }
 
-    /** Внутренний комментарий Service Desk виден только команде — уведомляем исполнителя. */
-    private void notifyAssigneeOnly(Issue issue, ApplicationUser author, String body) {
+    /**
+     * Внутренний комментарий Service Desk виден только команде — уведомляем
+     * исполнителя. Делегирование к такому комментарию не применяется: этим
+     * занимается {@link CommentScope#blocksDelegation()}.
+     */
+    private void notifyAssigneeOnly(Issue issue, ApplicationUser author,
+                                    Map<String, String> values, CommentScope scope) {
         ApplicationUser assignee = issue.getAssignee();
         if (assignee == null) {
             return;
         }
         notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
-                List.of(assignee), placeholders(issue, author, "comment", truncate(body)));
+                List.of(assignee), values, List.of(), scope);
     }
 
     /** Резолвит имена из упоминаний в пользователей; неизвестные имена отбрасываются. */
@@ -314,6 +336,15 @@ public class IssueEventListener {
             return "";
         }
         return text.length() <= COMMENT_LIMIT ? text : text.substring(0, COMMENT_LIMIT) + "…";
+    }
+
+    /** Шаг обработки события: его сбой логируется и не касается остальных шагов. */
+    private void step(Issue issue, String what, Runnable action) {
+        try {
+            action.run();
+        } catch (Exception e) {
+            log.warn("Задача {}: шаг «{}» не выполнен: {}", issue.getKey(), what, e.getMessage());
+        }
     }
 
     private void submit(Long typeId, Runnable task) {

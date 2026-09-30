@@ -61,4 +61,24 @@ public class TelegramClientTest {
         }
         return count;
     }
+
+    /**
+     * Токен с пробелом до сети не доводится: {@code URI.create} вложил бы весь URL
+     * вместе с токеном в текст исключения, а тот уходит в plugin.log (С13).
+     */
+    @Test
+    public void rejectsTokenWithWhitespaceWithoutLeakingIt() {
+        ru.my.api.AdminSettingsService settings = org.mockito.Mockito.mock(ru.my.api.AdminSettingsService.class);
+        String token = "123456:AAH secret";
+        org.mockito.Mockito.when(settings.get(ru.my.model.ChannelKeys.TELEGRAM_BOT_TOKEN, ""))
+                .thenReturn(token);
+        TelegramClient client = new TelegramClient(settings);
+
+        try {
+            client.sendMessage("42", "текст");
+            org.junit.Assert.fail("ожидали отказ из-за недопустимого токена");
+        } catch (TelegramClient.TelegramException expected) {
+            org.junit.Assert.assertFalse(expected.getMessage().contains("secret"));
+        }
+    }
 }
