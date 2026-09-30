@@ -830,6 +830,9 @@ public class NotificationServiceTest {
         when(userSettingsService.getSettings(watcher))
                 .thenReturn(UserSettings.builder().projects(List.of("*"))
                         .channels(List.of(NotificationChannel.MATTERMOST)).build());
+        Comment comment = mock(Comment.class);
+        when(commentManager.getCommentById(7L)).thenReturn(comment);
+        when(commentPermissionManager.hasBrowsePermission(watcher, comment)).thenReturn(true);
 
         service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
                 Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, true));
@@ -838,17 +841,20 @@ public class NotificationServiceTest {
         verify(sender).send(watcher, "Комментарий в PROJ-1");
     }
 
-    /** Комментарий удалили, пока событие ждало в очереди — рассылка идёт по правам на задачу. */
+    /**
+     * Комментарий удалили или не прочитали, пока событие ждало в очереди:
+     * рассказывать не о чем, а рассылка без комментария осталась бы без проверки
+     * прав на него.
+     */
     @Test
-    public void missingCommentDoesNotBlockNotification() {
+    public void doesNotNotifyWhenCommentCannotBeRead() {
         enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
-        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
         when(commentManager.getCommentById(7L)).thenReturn(null);
 
         service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher),
                 Map.of("issueKey", "PROJ-1"), List.of(), new CommentScope(7L, false));
 
-        verify(sender).send(watcher, "Комментарий в PROJ-1");
+        verify(sender, never()).send(any(), any());
     }
 
     // ---- изоляция сбоев и повторное использование сообщения --------------

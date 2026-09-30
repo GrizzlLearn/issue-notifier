@@ -157,6 +157,9 @@ public final class ActionTemplates {
      * видит тот же текст, а забором эта последовательность быть перестаёт.
      */
     public static String breakCodeFence(String value) {
-        return value == null ? "" : value.replace("```", "`\u200B``");
+        // символ нулевой ширины ставится после каждой кавычки, у которой следом ещё
+        // две: простой replace("```", …) на четырёх кавычках оставлял три подряд
+        // в хвосте, то есть забор по-прежнему закрывался
+        return value == null ? "" : value.replaceAll("`(?=``)", "`\u200B");
     }
 }

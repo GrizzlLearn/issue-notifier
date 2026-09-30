@@ -252,6 +252,13 @@ public class NotificationServiceImpl implements NotificationService {
         // получатель проверяется на право видеть именно этот комментарий, а не
         // только проект задачи
         Comment comment = commentOf(scope);
+        if (scope != null && scope.commentId() != null && comment == null) {
+            // комментарий удалён или не прочитан: рассказывать не о чем, а рассылка
+            // без него молча осталась бы без проверки прав на него
+            log.debug("Задача {}: комментарий {} недоступен, уведомления о действии {} не рассылаем",
+                    issue.getKey(), scope.commentId(), action);
+            return List.of();
+        }
 
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
@@ -278,7 +285,7 @@ public class NotificationServiceImpl implements NotificationService {
                 }
             } catch (Exception e) {
                 log.warn("Задача {}: уведомление о действии {} для {} не отправлено: {}",
-                        issue.getKey(), action, r.user().getKey(), e.getMessage());
+                        issue.getKey(), action, r.user().getKey(), describe(e));
             }
         }
         return List.copyOf(notified);
@@ -286,8 +293,11 @@ public class NotificationServiceImpl implements NotificationService {
 
     /**
      * Комментарий события — один запрос в БД на всю рассылку, а не на получателя.
-     * Комментарий могли удалить, пока событие ждало в очереди: тогда проверять
-     * нечего, и рассылка идёт по правам на задачу.
+     *
+     * @return {@code null}, если комментария нет в событии, его удалили или его
+     *         не удалось прочитать; во втором и третьем случае вызывающий
+     *         прекращает рассылку, иначе проверка прав на комментарий просто
+     *         не выполнилась бы
      */
     private Comment commentOf(CommentScope scope) {
         if (scope == null || scope.commentId() == null) {
@@ -354,7 +364,7 @@ public class NotificationServiceImpl implements NotificationService {
             return true;
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
-                    action, channel, recipient.getKey(), e.getMessage());
+                    action, channel, recipient.getKey(), describe(e));
             return false;
         }
     }
@@ -397,7 +407,7 @@ public class NotificationServiceImpl implements NotificationService {
                 // сбой у одного кандидата (чтение настроек, делегирование, права)
                 // не должен стоить уведомлений всем остальным
                 log.warn("Задача {}: кандидат {} пропущен из-за ошибки: {}",
-                        issue.getKey(), candidate.getKey(), e.getMessage());
+                        issue.getKey(), candidate.getKey(), describe(e));
             }
         }
         return uniqueRecipients.values();
@@ -510,7 +520,7 @@ public class NotificationServiceImpl implements NotificationService {
                     issue.getKey(), recipient.getKey(), channel);
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления через {} для {}: {}",
-                    channel, recipient.getKey(), e.getMessage());
+                    channel, recipient.getKey(), describe(e));
         }
     }
 
@@ -537,6 +547,14 @@ public class NotificationServiceImpl implements NotificationService {
             return false;
         }
         return projects.contains(project.getKey());
+    }
+
+    /**
+     * Причина сбоя для лога. У {@code NullPointerException} и ряда сетевых
+     * исключений сообщения нет, и в логе оставалось бы «не отправлено: null».
+     */
+    private static String describe(Exception e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     /** Пара (получатель, его настройки) для однократной отправки. */

@@ -3,6 +3,7 @@ package ru.my.impl.telegram;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
+import ru.my.impl.util.Text;
 import ru.my.model.ChannelKeys;
 import ru.my.model.JsonUtil;
 
@@ -142,7 +143,7 @@ public class TelegramClient {
         if (html == null || html.length() <= MESSAGE_LIMIT) {
             return html;
         }
-        String cut = html.substring(0, MESSAGE_LIMIT - ELLIPSIS.length());
+        String cut = Text.cut(html, MESSAGE_LIMIT - ELLIPSIS.length());
         int lastOpen = cut.lastIndexOf('<');
         if (lastOpen > cut.lastIndexOf('>')) {
             cut = cut.substring(0, lastOpen);
@@ -206,7 +207,10 @@ public class TelegramClient {
                     req.method(), path, elapsedMs(startedAt), mask(e.getMessage(), token));
             // cause не тащим: в сообщении исходного IOException остаётся URL с токеном,
             // и log.error(..., e) выше по стеку напечатал бы его вместе со стектрейсом
-            throw new TelegramException("Ошибка HTTP-запроса: " + mask(e.getMessage(), token));
+            // класс исключения остаётся в тексте: у ConnectException и
+            // HttpTimeoutException сообщение часто пустое, а причина нужна админу
+            throw new TelegramException("Ошибка HTTP-запроса (" + e.getClass().getSimpleName() + "): "
+                    + mask(e.getMessage(), token));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.debug("Telegram {} {} прерван за {} мс", req.method(), path, elapsedMs(startedAt));

@@ -75,4 +75,17 @@ public class ActionTemplatesTest {
         assertFalse(rendered.contains("```"));
         assertTrue(rendered.contains("evil.example.com"));   // сам текст остаётся читаемым
     }
+
+    /**
+     * Серия любой длины: четыре и пять кавычек тоже закрывают блок кода,
+     * а простая замена «три на три с разделителем» оставляла три подряд в хвосте.
+     */
+    @Test
+    public void longerBacktickRunsAreAlsoNeutralized() {
+        for (int count = 3; count <= 8; count++) {
+            String value = "`".repeat(count);
+            assertFalse("серия из " + count + " кавычек осталась забором",
+                    ActionTemplates.breakCodeFence(value).contains("```"));
+        }
+    }
 }

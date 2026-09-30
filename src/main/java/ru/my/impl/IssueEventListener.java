@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.impl.util.MentionParser;
+import ru.my.impl.util.Text;
 import ru.my.model.CommentScope;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
@@ -335,7 +336,7 @@ public class IssueEventListener {
         if (text == null) {
             return "";
         }
-        return text.length() <= COMMENT_LIMIT ? text : text.substring(0, COMMENT_LIMIT) + "…";
+        return text.length() <= COMMENT_LIMIT ? text : Text.cut(text, COMMENT_LIMIT) + "…";
     }
 
     /** Шаг обработки события: его сбой логируется и не касается остальных шагов. */
@@ -343,7 +344,9 @@ public class IssueEventListener {
         try {
             action.run();
         } catch (Exception e) {
-            log.warn("Задача {}: шаг «{}» не выполнен: {}", issue.getKey(), what, e.getMessage());
+            // со стектрейсом: раньше такая ошибка доходила до log.error(..., e),
+            // а у NullPointerException сообщения нет вовсе
+            log.warn("Задача {}: шаг «{}» не выполнен", issue.getKey(), what, e);
         }
     }
 

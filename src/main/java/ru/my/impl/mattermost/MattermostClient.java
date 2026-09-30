@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
 import ru.my.model.ChannelKeys;
+import ru.my.impl.util.Text;
 import ru.my.model.JsonUtil;
 
 import javax.annotation.PreDestroy;
@@ -252,7 +253,7 @@ public class MattermostClient {
         if (text == null || text.length() <= MESSAGE_LIMIT) {
             return text;
         }
-        String cut = text.substring(0, MESSAGE_LIMIT - ELLIPSIS.length());
+        String cut = Text.cut(text, MESSAGE_LIMIT - ELLIPSIS.length());
         StringBuilder sb = new StringBuilder(cut).append(ELLIPSIS);
         if (countFences(cut) % 2 != 0) {
             sb.append("\n```");

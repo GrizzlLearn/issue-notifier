@@ -3,6 +3,7 @@ package ru.my.impl.email;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.mail.queue.MailQueue;
 import com.atlassian.mail.queue.MailQueueItem;
+import com.atlassian.jira.mail.settings.MailSettings;
 import com.atlassian.mail.server.MailServerManager;
 import com.atlassian.mail.server.SMTPMailServer;
 import org.junit.Test;
@@ -18,13 +19,17 @@ public class EmailNotificationSenderTest {
 
     private final MailQueue mailQueue = mock(MailQueue.class);
     private final MailServerManager mailServerManager = mock(MailServerManager.class);
+    private final MailSettings mailSettings = mock(MailSettings.class);
+    private final MailSettings.Send sendSettings = mock(MailSettings.Send.class);
     private final EmailNotificationSender sender =
-            new EmailNotificationSender(mailQueue, mailServerManager);
+            new EmailNotificationSender(mailQueue, mailServerManager, mailSettings);
 
-    /** Проверка канала требует настроенной исходящей почты — по умолчанию она есть. */
+    /** Проверка канала требует настроенной и включённой исходящей почты. */
     @org.junit.Before
     public void smtpConfigured() {
         when(mailServerManager.getDefaultSMTPMailServer()).thenReturn(mock(SMTPMailServer.class));
+        when(mailSettings.send()).thenReturn(sendSettings);
+        when(sendSettings.isDisabled()).thenReturn(false);
     }
 
     @Test
@@ -78,6 +83,20 @@ public class EmailNotificationSenderTest {
             org.junit.Assert.fail("ожидали отказ из-за ненастроенной почты");
         } catch (IllegalStateException expected) {
             org.junit.Assert.assertTrue(expected.getMessage().contains("SMTP"));
+        }
+        verify(mailQueue, never()).addItem(any(MailQueueItem.class));
+    }
+
+    /** SMTP настроен, но отправка отключена: очередь письмо примет и никуда не отправит. */
+    @Test
+    public void testFailsWhenSendingIsDisabled() {
+        when(sendSettings.isDisabled()).thenReturn(true);
+
+        try {
+            sender.sendTestTo("alice@example.com", "проверка", Map.of());
+            org.junit.Assert.fail("ожидали отказ из-за отключённой отправки");
+        } catch (IllegalStateException expected) {
+            org.junit.Assert.assertTrue(expected.getMessage().contains("отключена"));
         }
         verify(mailQueue, never()).addItem(any(MailQueueItem.class));
     }

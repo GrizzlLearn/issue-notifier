@@ -4,6 +4,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.mail.Email;
 import com.atlassian.mail.queue.MailQueue;
 import com.atlassian.mail.queue.SingleMailQueueItem;
+import com.atlassian.jira.mail.settings.MailSettings;
 import com.atlassian.mail.server.MailServerManager;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
@@ -27,12 +28,15 @@ public class EmailNotificationSender implements NotificationSender {
 
     private final MailQueue mailQueue;
     private final MailServerManager mailServerManager;
+    private final MailSettings mailSettings;
 
     @Inject
     public EmailNotificationSender(@ComponentImport MailQueue mailQueue,
-                                   @ComponentImport MailServerManager mailServerManager) {
+                                   @ComponentImport MailServerManager mailServerManager,
+                                   @ComponentImport MailSettings mailSettings) {
         this.mailQueue = mailQueue;
         this.mailServerManager = mailServerManager;
+        this.mailSettings = mailSettings;
     }
 
     @Override
@@ -92,6 +96,15 @@ public class EmailNotificationSender implements NotificationSender {
             throw new IllegalStateException(
                     "В Jira не настроен исходящий SMTP-сервер — письма отправлять некуда "
                     + "(Администрирование → Система → Исходящая почта)");
+        }
+        // сервер настроен, но отправка выключена флагом запуска (-Datlassian.mail.senddisabled)
+        // или из интерфейса: очередь примет письмо и никуда его не отправит.
+        // Спрашиваем MailSettings Jira, а не статический MailFactory: тот вне
+        // контейнера тянет конфигурацию OFBiz и падает
+        if (mailSettings.send().isDisabled()) {
+            throw new IllegalStateException(
+                    "Исходящая почта Jira отключена — включите отправку, иначе письма "
+                    + "останутся в очереди");
         }
     }
 
