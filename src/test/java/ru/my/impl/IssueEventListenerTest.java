@@ -142,8 +142,9 @@ public class IssueEventListenerTest {
 
     @Test
     public void doesNotPropagateRejectedExecution() {
-        // Симулируем завершённый executor (shutdown race): submit бросает RejectedExecutionException.
-        // Listener должен поглотить её и не дойти до notificationService.
+        // Завершённый executor: submit бросает RejectedExecutionException, и слушатель
+        // должен её поглотить. Переполнение очереди — другой случай, настоящий пул
+        // исключение там не бросает; это проверяет IssueEventListenerPoolTest.
         IssueEvent event = eventWithChanges(EventType.ISSUE_UPDATED_ID);
         org.mockito.Mockito.doThrow(new java.util.concurrent.RejectedExecutionException("full"))
                 .when(executor).submit(any(Runnable.class));
@@ -170,6 +171,37 @@ public class IssueEventListenerTest {
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(),
                 eq(List.of(mentioned)), any());
+    }
+
+    /** Обычный комментарий уходит с текстом — ограничений у него нет. */
+    @Test
+    public void plainCommentCarriesItsText() {
+        listener.onIssueEvent(commentEvent("посмотри пожалуйста"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()),
+                values.capture(), eq(List.of()), any());
+        assertEquals("посмотри пожалуйста", values.getValue().get("comment"));
+    }
+
+    /** Комментарий с ограничением по роли проекта — без текста, как и по группе. */
+    @Test
+    public void commentRestrictedByRoleGoesWithoutText() {
+        Comment comment = mock(Comment.class);
+        org.mockito.Mockito.when(comment.getBody()).thenReturn("секрет");
+        org.mockito.Mockito.when(comment.getRoleLevelId()).thenReturn(10100L);
+
+        listener.onIssueEvent(new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
+        verify(notificationService).processAction(
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()),
+                values.capture(), any(), any());
+        assertFalse(values.getValue().containsKey("comment"));
     }
 
     @Test
@@ -365,6 +397,10 @@ public class IssueEventListenerTest {
     private IssueEvent commentEvent(String body, Long commentId, ApplicationUser assignee) {
         Comment comment = mock(Comment.class);
         org.mockito.Mockito.when(comment.getBody()).thenReturn(body);
+        // у мока getRoleLevelId() отдаёт 0, а не null, то есть комментарий без
+        // явного стаба считался ограниченным по роли — и «обычные» комментарии
+        // в тестах шли без текста, чего никто не замечал
+        org.mockito.Mockito.when(comment.getRoleLevelId()).thenReturn(null);
         if (commentId != null) {
             org.mockito.Mockito.when(comment.getId()).thenReturn(commentId);
         }
