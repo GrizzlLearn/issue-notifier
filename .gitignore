@@ -130,6 +130,7 @@ fabric.properties
 # Claude
 .claude
 CLAUDE.md
+AGENTS.md
 docs
 
 # Mobile Tools for Java (J2ME)
