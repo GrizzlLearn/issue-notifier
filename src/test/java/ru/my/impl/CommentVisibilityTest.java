@@ -67,9 +67,9 @@ public class CommentVisibilityTest {
         verify(properties).get("CommentProperty", 42L, "sd.public.comment");
     }
 
-    @Test
-    public void propertyWithoutValueIsExternal() {
-        assertFalse(CommentVisibility.isServiceDeskInternal(42L, propertyValued(null)));
+    @Test(expected = IllegalStateException.class)
+    public void propertyWithoutValueStopsNotification() {
+        CommentVisibility.isServiceDeskInternal(42L, propertyValued(null));
     }
 
     @Test
@@ -95,4 +95,27 @@ public class CommentVisibilityTest {
         when(properties.get("CommentProperty", 42L, "sd.public.comment")).thenReturn(property);
         return properties;
     }
+
+    @Test
+    public void readsRootBooleanRegardlessOfFormatting() {
+        assertTrue(CommentVisibility.isServiceDeskInternal(42L,
+                propertyValued("{\n\"internal\":\t\ntrue,\"nested\":{\"internal\":false}}")));
+        assertFalse(CommentVisibility.isServiceDeskInternal(42L,
+                propertyValued("{\"nested\":{\"internal\":true},\"internal\":false}")));
+    }
+
+    @Test
+    public void rejectsInvalidVisibilityWithoutLeakingProperty() {
+        for (String json : new String[]{"{", "null", "[]", "{}",
+                "{\"nested\":{\"internal\":true}}", "{\"internal\":\"true\"}",
+                "{\"internal\":null}", "{\"internal\":1}", "private invalid text"}) {
+            try {
+                CommentVisibility.isServiceDeskInternal(42L, propertyValued(json));
+                org.junit.Assert.fail("Expected invalid visibility to stop notification");
+            } catch (IllegalStateException expected) {
+                assertFalse(expected.getMessage().contains(json));
+            }
+        }
+    }
+
 }

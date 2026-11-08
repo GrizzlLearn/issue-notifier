@@ -137,4 +137,55 @@ public class TelegramPollingServiceTest {
 
         service.pollOnce(); // не должен бросать исключение
     }
+
+    @Test
+    public void ignoresQuotedCommandAndUsesCurrentChatWithReorderedFields() {
+        when(client.getUpdates(0)).thenReturn("{\"ok\":true,\"result\":["
+                + "{\"update_id\":1,\"message\":{\"reply_to_message\":{\"text\":\"/start\",\"chat\":{\"id\":999}},"
+                + "\"text\":\"hello\",\"chat\":{\"id\":1}}},"
+                + "{\"update_id\":2,\"message\":{\"reply_to_message\":{\"text\":\"/start\",\"chat\":{\"id\":999}},"
+                + "\"text\":\"/sta\\u0072t@MyBot argument\",\"chat\":{\"type\":\"group\",\"id\":-42}}}]}");
+        service.pollOnce();
+        verify(client).sendMessage(eq("-42"), contains("-42"));
+        verify(client, times(1)).sendMessage(anyString(), anyString());
+        verify(adminSettings).set(TelegramPollingService.OFFSET_KEY, "3");
+    }
+
+    @Test
+    public void rejectsStartLikeWordsAndSkipsInvalidMessageButAdvancesOffset() {
+        when(client.getUpdates(0)).thenReturn("{\"ok\":true,\"result\":["
+                + "{\"update_id\":1,\"message\":{\"text\":\"/start-other\",\"chat\":{\"id\":1}}},"
+                + "{\"update_id\":2,\"message\":{\"text\":\"/start\",\"chat\":{\"id\":\"42\"}}},"
+                + "{\"update_id\":3,\"message\":{\"text\":null}},"
+                + "{\"update_id\":4,\"callback_query\":{\"message\":{\"text\":\"/start\",\"chat\":{\"id\":999}}}}]}");
+        service.pollOnce();
+        verify(client, never()).sendMessage(anyString(), anyString());
+        verify(adminSettings).set(TelegramPollingService.OFFSET_KEY, "5");
+    }
+
+    @Test
+    public void invalidResponsesDoNotAdvanceOffsetOrSendReplies() {
+        for (String json : new String[]{null, "{", "null", "{\"ok\":false,\"result\":[]}",
+                "{\"ok\":true,\"result\":null}", "{\"ok\":true,\"result\":{}}",
+                "{\"ok\":true,\"result\":[{\"update_id\":\"1\"}]}",
+                "{\"ok\":true,\"result\":[{\"update_id\":9223372036854775808}]}",
+                "{\"ok\":true,\"result\":[{\"update_id\":1},null]}"}) {
+            when(client.getUpdates(0)).thenReturn(json);
+            service.pollOnce();
+        }
+        verify(adminSettings, never()).set(anyString(), anyString());
+        verify(client, never()).sendMessage(anyString(), anyString());
+    }
+
+    @Test
+    public void continuesWithLaterUpdatesAfterReplyFailure() {
+        when(client.getUpdates(0)).thenReturn("{\"ok\":true,\"result\":["
+                + "{\"update_id\":1,\"message\":{\"text\":\"/start\",\"chat\":{\"id\":1}}},"
+                + "{\"update_id\":2,\"message\":{\"text\":\"/start\",\"chat\":{\"id\":2}}}]}");
+        doThrow(new TelegramClient.TelegramException("blocked")).when(client).sendMessage(eq("1"), anyString());
+        service.pollOnce();
+        verify(client).sendMessage(eq("2"), anyString());
+        verify(adminSettings).set(TelegramPollingService.OFFSET_KEY, "3");
+    }
+
 }

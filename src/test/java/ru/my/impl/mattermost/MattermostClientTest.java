@@ -46,4 +46,24 @@ public class MattermostClientTest {
 
         assertTrue(trimmed.endsWith("```"));
     }
+
+    @Test
+    public void readsOnlyRootIdAndDecodesEscapes() {
+        assertEquals("root", MattermostClient.extractId(
+                "{\"nested\":{\"id\":\"wrong\"},\"id\":\n\t\"r\\u006fot\"}"));
+    }
+
+    @Test
+    public void rejectsInvalidIdsWithoutLeakingResponse() {
+        for (String json : new String[]{null, "null", "[]", "{", "{\"id\":null}",
+                "{\"id\":123}", "{\"id\":\" \"}", "{\"nested\":{\"id\":\"wrong\"}}"}) {
+            try {
+                MattermostClient.extractId(json);
+                fail("Expected invalid id to be rejected");
+            } catch (MattermostClient.MattermostException expected) {
+                if (json != null) assertFalse(expected.getMessage().contains(json));
+            }
+        }
+    }
+
 }

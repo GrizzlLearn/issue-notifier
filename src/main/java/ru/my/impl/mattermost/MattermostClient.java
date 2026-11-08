@@ -25,8 +25,8 @@ import java.util.concurrent.Executors;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.map.ObjectMapper;
 
 /**
  * HTTP-клиент для Mattermost API.
@@ -38,7 +38,7 @@ public class MattermostClient {
 
     private static final Logger log = LoggerFactory.getLogger(MattermostClient.class);
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
-    private static final Pattern ID_PATTERN = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** Предел длины поста Mattermost — 16383 символа; берём с запасом. */
     static final int MESSAGE_LIMIT = 16_000;
@@ -237,11 +237,16 @@ public class MattermostClient {
     }
 
     static String extractId(String json) {
-        Matcher m = ID_PATTERN.matcher(json);
-        if (!m.find()) {
-            throw new MattermostException("Ответ не похож на ответ Mattermost: поля 'id' в нём нет");
+        try {
+            JsonNode root = json == null ? null : MAPPER.readTree(json);
+            JsonNode id = root == null ? null : root.get("id");
+            if (id != null && id.isTextual() && !id.getTextValue().isBlank()) {
+                return id.getTextValue();
+            }
+        } catch (IOException e) {
+            // Не включаем ответ сервера в исключение.
         }
-        return m.group(1);
+        throw new MattermostException("Некорректный ответ Mattermost: ожидается строковое поле 'id'");
     }
 
     /**

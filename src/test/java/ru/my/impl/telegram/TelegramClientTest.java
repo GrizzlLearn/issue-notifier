@@ -81,4 +81,20 @@ public class TelegramClientTest {
             org.junit.Assert.assertFalse(expected.getMessage().contains("secret"));
         }
     }
+
+    @Test
+    public void validatesResponseEnvelopeWithoutLeakingBody() {
+        assertTrue(TelegramClient.parseResponse("{\"result\":[],\"ok\":true}").path("result").isArray());
+        for (String json : new String[]{null, "null", "[]", "{", "{}", "{\"ok\":\"true\"}",
+                "{\"ok\":null}", "{\"ok\":1}", "{\"ok\":false,\"description\":\"secret-token\"}"}) {
+            try {
+                TelegramClient.parseResponse(json);
+                fail("Expected invalid response to be rejected");
+            } catch (TelegramClient.TelegramException expected) {
+                assertFalse(expected.getMessage().contains("secret-token"));
+                assertNull(expected.getCause());
+            }
+        }
+    }
+
 }

@@ -3,6 +3,9 @@ package ru.my.impl;
 import com.atlassian.jira.entity.property.EntityProperty;
 import com.atlassian.jira.entity.property.JsonEntityPropertyManager;
 import com.atlassian.jira.issue.comments.Comment;
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.map.ObjectMapper;
+import java.io.IOException;
 
 /**
  * Кому можно рассказать о комментарии.
@@ -21,6 +24,8 @@ public final class CommentVisibility {
     private static final String SD_PROPERTY_ENTITY = "CommentProperty";
     private static final String SD_PROPERTY_KEY = "sd.public.comment";
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private CommentVisibility() {
     }
 
@@ -33,10 +38,6 @@ public final class CommentVisibility {
      * Внутренний ли комментарий Service Desk. Комментарий без свойства считается
      * внешним: так его показывает и сама Jira.
      * <p>
-     * ponytail: значение свойства разбираем поиском подстроки — это
-     * {@code {"internal":true}} и ничего больше; полноценный парсер понадобится,
-     * если Atlassian начнёт класть туда что-то ещё.
-     *
      * @param commentId id комментария; {@code null} — считаем внешним
      */
     public static boolean isServiceDeskInternal(Long commentId, JsonEntityPropertyManager properties) {
@@ -44,9 +45,19 @@ public final class CommentVisibility {
             return false;
         }
         EntityProperty property = properties.get(SD_PROPERTY_ENTITY, commentId, SD_PROPERTY_KEY);
-        if (property == null || property.getValue() == null) {
+        if (property == null) {
             return false;
         }
-        return property.getValue().replace(" ", "").contains("\"internal\":true");
+        try {
+            JsonNode value = property.getValue() == null ? null : MAPPER.readTree(property.getValue());
+            JsonNode internal = value == null ? null : value.get("internal");
+            if (internal == null || !internal.isBoolean()) {
+                throw new IllegalStateException("Некорректный признак видимости комментария " + commentId);
+            }
+            return internal.getBooleanValue();
+        } catch (IOException e) {
+            // Тело свойства и ошибка парсера не должны попасть в лог вместе с данными.
+            throw new IllegalStateException("Не удалось прочитать видимость комментария " + commentId);
+        }
     }
 }

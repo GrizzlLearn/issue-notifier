@@ -1,5 +1,7 @@
 package ru.my.impl.telegram;
 
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
@@ -34,6 +36,7 @@ import java.util.regex.Pattern;
 public class TelegramClient {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramClient.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private static final String API_BASE = "https://api.telegram.org/bot";
 
@@ -91,7 +94,10 @@ public class TelegramClient {
                 .build();
         HttpResponse<String> resp = execute(req, token);
         if (resp.statusCode() != 200) {
-            throw new TelegramException("getUpdates вернул статус " + resp.statusCode() + ": " + resp.body());
+            throw new TelegramException("getUpdates вернул статус " + resp.statusCode());
+        }
+        if (!parseResponse(resp.body()).path("result").isArray()) {
+            throw new TelegramException("Некорректный ответ getUpdates: ожидается массив result");
         }
         return resp.body();
     }
@@ -128,9 +134,27 @@ public class TelegramClient {
 
         HttpResponse<String> resp = execute(req, token);
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            throw new TelegramException("Telegram API вернул статус " + resp.statusCode() + ": " + resp.body());
+            throw new TelegramException("Telegram API вернул статус " + resp.statusCode());
+        }
+        if (!parseResponse(resp.body()).path("result").isObject()) {
+            throw new TelegramException("Некорректный ответ sendMessage: ожидается объект result");
         }
         log.debug("Сообщение отправлено в чат {}", chatId);
+    }
+
+    static JsonNode parseResponse(String json) {
+        try {
+            JsonNode root = json == null ? null : MAPPER.readTree(json);
+            if (root == null || !root.isObject() || !root.path("ok").isBoolean()) {
+                throw new TelegramException("Некорректный ответ Telegram API");
+            }
+            if (!root.path("ok").getBooleanValue()) {
+                throw new TelegramException("Telegram API отклонил запрос");
+            }
+            return root;
+        } catch (IOException e) {
+            throw new TelegramException("Не удалось прочитать ответ Telegram API");
+        }
     }
 
     /**

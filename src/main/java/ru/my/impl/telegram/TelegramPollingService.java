@@ -23,7 +23,7 @@ import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Named;
 import java.util.Date;
-import java.util.regex.Matcher;
+import org.codehaus.jackson.JsonNode;
 import java.util.regex.Pattern;
 
 /**
@@ -52,12 +52,7 @@ public class TelegramPollingService implements JobRunner {
     /** Ключ настройки с offset — переживает перезапуск и переезд задания на другую ноду. */
     static final String OFFSET_KEY = "telegram.pollOffset";
 
-    // "chat":{"id":-123} или "chat":{"id":456}
-    private static final Pattern P_UPDATE_ID = Pattern.compile("\"update_id\"\\s*:\\s*(\\d+)");
-    private static final Pattern P_CHAT_ID   = Pattern.compile("\"chat\"\\s*:\\s*\\{\\s*\"id\"\\s*:\\s*(-?\\d+)");
-    // команда — это начало поля text, а не любое вхождение "/start в апдейте:
-    // иначе срабатывала бы и цитата чужого сообщения
-    private static final Pattern P_START     = Pattern.compile("\"text\"\\s*:\\s*\"/start\\b");
+    private static final Pattern START = Pattern.compile("/start(?:@[A-Za-z0-9_]+)?(?:\\s+.*)?", Pattern.DOTALL);
 
     private final TelegramClient client;
     private final AdminSettingsService adminSettings;
@@ -110,19 +105,29 @@ public class TelegramPollingService implements JobRunner {
         try {
             long offset = readOffset();
             long nextOffset = offset;
-            String json = client.getUpdates(offset);
-            // Разбиваем на чанки по каждому update_id
-            for (String chunk : json.split("(?=\"update_id\")")) {
-                Matcher uid = P_UPDATE_ID.matcher(chunk);
-                if (!uid.find()) continue;
-                nextOffset = Math.max(nextOffset, Long.parseLong(uid.group(1)) + 1);
-
-                // Обрабатываем только /start (включая /start@BotName в группах)
-                if (!P_START.matcher(chunk).find()) continue;
-
-                Matcher cid = P_CHAT_ID.matcher(chunk);
-                if (!cid.find()) continue;
-                String chatId = cid.group(1);
+            JsonNode updates = TelegramClient.parseResponse(client.getUpdates(offset)).path("result");
+            if (!updates.isArray()) {
+                throw new TelegramClient.TelegramException("Некорректный ответ getUpdates: ожидается массив result");
+            }
+            // Без корректного id нельзя безопасно подтвердить эту и последующие записи.
+            for (JsonNode update : updates) {
+                JsonNode id = update.path("update_id");
+                if ((!id.isInt() && !id.isLong())
+                        || id.getLongValue() < 0 || id.getLongValue() == Long.MAX_VALUE) {
+                    throw new TelegramClient.TelegramException("Некорректный update_id в ответе Telegram");
+                }
+            }
+            for (JsonNode update : updates) {
+                nextOffset = Math.max(nextOffset, update.path("update_id").getLongValue() + 1);
+                JsonNode message = update.path("message");
+                JsonNode text = message.path("text");
+                if (!text.isTextual() || !START.matcher(text.getTextValue()).matches()) continue;
+                JsonNode chat = message.path("chat").path("id");
+                if (!chat.isInt() && !chat.isLong()) {
+                    log.warn("Пропущен /start с некорректным chat.id");
+                    continue;
+                }
+                String chatId = String.valueOf(chat.getLongValue());
 
                 // Ошибку ответа глотаем на этом апдейте: иначе offset не сдвинется,
                 // тот же апдейт придёт снова, и /start перестанет работать у всех —

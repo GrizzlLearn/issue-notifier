@@ -382,6 +382,19 @@ public class IssueEventListenerTest {
                 any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
     }
 
+    @Test
+    public void invalidVisibilityStopsCommentNotification() {
+        EntityProperty property = mock(EntityProperty.class);
+        org.mockito.Mockito.when(property.getValue()).thenReturn("{broken");
+        org.mockito.Mockito.when(entityProperties.get("CommentProperty", 42L, "sd.public.comment"))
+                .thenReturn(property);
+        Comment comment = mock(Comment.class);
+        org.mockito.Mockito.when(comment.getId()).thenReturn(42L);
+        listener.onIssueEvent(new IssueEvent(mock(Issue.class), mock(ApplicationUser.class),
+                comment, null, null, Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID));
+        org.mockito.Mockito.verifyNoInteractions(notificationService);
+    }
+
     // ---- вспомогательные методы ----------------------------------------
 
     /** Событие без changelog — для проверки фильтрации по типу или пустого diff. */
