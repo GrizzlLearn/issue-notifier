@@ -2,8 +2,6 @@ package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.cache.Cache;
-import com.atlassian.cache.CacheException;
-import com.google.common.base.Throwables;
 import com.atlassian.cache.CacheManager;
 import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
@@ -103,15 +101,11 @@ public class DelegationServiceImpl implements DelegationService {
     private List<ApplicationUser> resolveDelegates(List<String> keys) {
         List<ApplicationUser> resolved = new ArrayList<>();
         for (String key : keys) {
-            try {
-                ApplicationUser delegate = userManager.getUserByKey(key);
-                if (delegate != null) {
-                    resolved.add(delegate);
-                } else {
-                    log.warn("Делегат '{}' не найден, пропускаем", key);
-                }
-            } catch (Exception e) {
-                log.warn("Не удалось получить делегата '{}', пропускаем", key, e);
+            ApplicationUser delegate = userManager.getUserByKey(key);
+            if (delegate != null) {
+                resolved.add(delegate);
+            } else {
+                log.warn("Делегат '{}' не найден, пропускаем", key);
             }
         }
         return resolved;
@@ -160,15 +154,7 @@ public class DelegationServiceImpl implements DelegationService {
 
     @Override
     public Optional<DelegationInfo> getDelegation(ApplicationUser from) {
-        try {
-            return cache.get(from.getKey());
-        } catch (CacheException e) {
-            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
-                throw e;
-            }
-            log.warn("AO ещё не инициализирован, getDelegation возвращает пустой результат");
-            return Optional.empty();
-        }
+        return cache.get(from.getKey());
     }
 
     private Optional<DelegationInfo> load(String userKey) {

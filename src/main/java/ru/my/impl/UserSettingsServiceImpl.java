@@ -2,8 +2,6 @@ package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.cache.Cache;
-import com.atlassian.cache.CacheException;
-import com.google.common.base.Throwables;
 import com.atlassian.cache.CacheManager;
 import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
@@ -61,15 +59,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
 
     @Override
     public UserSettings getSettings(ApplicationUser user) {
-        try {
-            return cache.get(user.getKey());
-        } catch (CacheException e) {
-            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
-                throw e;
-            }
-            log.warn("AO ещё не инициализирован, getSettings возвращает настройки по умолчанию");
-            return UserSettings.defaultSettings();
-        }
+        return cache.get(user.getKey());
     }
 
     @Override

@@ -2,158 +2,100 @@ package ru.my.impl;
 
 import com.atlassian.event.api.EventPublisher;
 import com.atlassian.jira.entity.property.JsonEntityPropertyManager;
-import com.atlassian.jira.event.issue.IssueEvent;
-import com.atlassian.jira.event.type.EventType;
-import com.atlassian.jira.issue.Issue;
-import com.atlassian.jira.issue.comments.Comment;
-import com.atlassian.jira.user.ApplicationUser;
+import com.atlassian.jira.issue.MutableIssue;
+import com.atlassian.jira.issue.IssueManager;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.sal.api.ApplicationProperties;
-import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
-
-import java.util.Collections;
+import ru.my.model.DiffResult;
+import ru.my.model.QueuedIssueEvent;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.junit.Assert.*;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-/**
- * Слушатель на настоящем пуле потоков, который собирает рабочий конструктор:
- * остальные тесты подменяют executor моком, выполняющим задачи синхронно, и
- * поэтому не видят ни асинхронности, ни переполнения очереди, ни отправки
- * события в уже остановленный пул.
- * <p>
- * Фабрика возвращает переданный ей executor как есть — так под тестом оказывается
- * ровно тот пул, который плагин создаёт в рабочем режиме (core=2, очередь 1000,
- * переполнение отбрасывается).
- */
-@RunWith(MockitoJUnitRunner.class)
+/** Восстановление сохранённого события не зависит от объектов исходного Jira-события. */
 public class IssueEventListenerPoolTest {
-
-    private static final int QUEUE_CAPACITY = 1000;
-    private static final int CORE_POOL_SIZE = 2;
-
-    /**
-     * Потоки сверх core создаются, только когда очередь заполнена целиком —
-     * так устроен {@code ThreadPoolExecutor} с ограниченной {@code LinkedBlockingQueue}.
-     * При переполнении это и происходит, поэтому предел принятых задач считается
-     * от максимума пула, а не от core.
-     */
-    private static final int MAX_POOL_SIZE = 4;
-
-    @Mock private EventPublisher eventPublisher;
-    @Mock private ThreadLocalDelegateExecutorFactory executorFactory;
-    @Mock private NotificationService notificationService;
-    @Mock private UserManager userManager;
-    @Mock private ApplicationProperties applicationProperties;
-    @Mock private AdminSettingsService adminSettingsService;
-    @Mock private JsonEntityPropertyManager entityProperties;
-
-    private IssueEventListener listener;
-
-    @Before
-    public void setUp() {
-        when(executorFactory.createExecutorService(any())).thenAnswer(inv -> inv.getArgument(0));
-        lenient().when(applicationProperties.getBaseUrl(any())).thenReturn("https://jira.example.com");
-        listener = new IssueEventListener(eventPublisher, executorFactory, userManager,
-                applicationProperties, entityProperties, notificationService, adminSettingsService);
-    }
-
-    @After
-    public void tearDown() {
-        listener.destroy();
-    }
-
-    /** Задача уходит в другой поток: поток события Jira ждать рассылку не должен. */
     @Test
-    public void handlesEventInWorkerThread() throws Exception {
-        CountDownLatch handled = new CountDownLatch(1);
-        AtomicInteger jiraThreads = new AtomicInteger();
-        String eventThread = Thread.currentThread().getName();
-        when(notificationService.processAction(any(), any(), any(), any(), anyMap(), any(), any()))
-                .thenAnswer(inv -> {
-                    if (Thread.currentThread().getName().equals(eventThread)) {
-                        jiraThreads.incrementAndGet();
-                    }
-                    handled.countDown();
-                    return List.of();
-                });
-
-        listener.onIssueEvent(commentEvent());
-
-        assertTrue("рассылка не выполнилась", handled.await(5, TimeUnit.SECONDS));
-        assertEquals("рассылка выполнена в потоке события Jira", 0, jiraThreads.get());
+    public void restoresEventAfterRestartAndPropagatesFailureForRetry() {
+        IssueManager issues = mock(IssueManager.class);
+        UserManager users = mock(UserManager.class);
+        NotificationService service = mock(NotificationService.class);
+        MutableIssue issue = mock(MutableIssue.class);
+        when(issues.getIssueObject(42L)).thenReturn(issue);
+        IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
+                mock(PersistentNotificationQueue.class), issues, users, mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class));
+        String payload = new QueuedIssueEvent(42L, "deleted-author", 2L, false, null, null, false,
+                new DiffResult(List.of(new DiffResult.FieldChange("summary", "old", "new")))).encode();
+        doThrow(new IllegalStateException("transport failed")).when(service)
+                .processEvent(eq(issue), isNull(), any(), any());
+        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload));
+        verify(users).getUserByKey("deleted-author");
+        verify(service).processEvent(eq(issue), isNull(), any(), any());
     }
 
-    /**
-     * Очередь переполнена: события сверх предела отбрасываются, но ошибка не уходит
-     * в диспетчер событий Jira — иначе сбойный поток уведомлений ломал бы работу
-     * других слушателей. Раньше это проверялось моком, который бросал
-     * {@code RejectedExecutionException}, чего настоящий пул при переполнении не делает.
-     */
     @Test
-    public void overflowingQueueDoesNotBreakEventDispatch() throws Exception {
-        CountDownLatch release = new CountDownLatch(1);
-        CountDownLatch workersBusy = new CountDownLatch(CORE_POOL_SIZE);
-        AtomicInteger handled = new AtomicInteger();
-        when(notificationService.processAction(any(), any(), any(), any(), anyMap(), any(), any()))
-                .thenAnswer(inv -> {
-                    workersBusy.countDown();
-                    // таймаут — сбой самого теста: иначе воркер досчитал бы
-                    // обработанные события и тест позеленел бы зря
-                    if (!release.await(5, TimeUnit.SECONDS)) {
-                        throw new IllegalStateException("воркер не дождался разблокировки");
-                    }
-                    handled.incrementAndGet();
-                    return List.of();
-                });
-
-        IssueEvent event = commentEvent();
-        int submitted = QUEUE_CAPACITY + MAX_POOL_SIZE + 50;
-        for (int i = 0; i < submitted; i++) {
-            listener.onIssueEvent(event);   // ни один вызов не должен бросить
-        }
-
-        assertTrue("воркеры не взяли задачи", workersBusy.await(5, TimeUnit.SECONDS));
-        release.countDown();
-        listener.destroy();
-        assertTrue("часть событий должна быть обработана", handled.get() > 0);
-        // больше, чем очередь плюс занятые воркеры, пул принять не мог — значит
-        // лишние события действительно отброшены, а не потеряны молча в тесте
-        assertTrue("переполнения не случилось, тест ничего не проверил",
-                handled.get() <= QUEUE_CAPACITY + MAX_POOL_SIZE);
-        assertTrue("часть событий должна быть отброшена", handled.get() < submitted);
+    public void deletedIssueIsTerminalAndDoesNotSend() {
+        IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
+                mock(PersistentNotificationQueue.class), mock(IssueManager.class), mock(UserManager.class),
+                mock(ApplicationProperties.class), mock(JsonEntityPropertyManager.class),
+                mock(NotificationService.class), mock(AdminSettingsService.class));
+        listener.processQueuedEvent(new QueuedIssueEvent(42L, null, 2L, false, null, null,
+                false, new DiffResult(List.of())).encode());
     }
-
-    /** Плагин выгружают: событие, пришедшее после остановки пула, не должно падать. */
     @Test
-    public void eventAfterShutdownIsDiscarded() {
-        listener.destroy();
+    public void capturesCommentAndDiffInOneDurableRecord() throws Exception {
+        PersistentNotificationQueue queue = mock(PersistentNotificationQueue.class);
+        IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class), queue,
+                mock(IssueManager.class), mock(UserManager.class), mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class));
+        MutableIssue issue = mock(MutableIssue.class);
+        when(issue.getId()).thenReturn(42L);
+        com.atlassian.jira.issue.comments.Comment comment = mock(com.atlassian.jira.issue.comments.Comment.class);
+        String body = "x".repeat(600) + " [~tail]";
+        when(comment.getBody()).thenReturn(body);
+        when(comment.getId()).thenReturn(88L);
+        when(comment.getRoleLevelId()).thenReturn(null);
+        org.ofbiz.core.entity.GenericValue change = mock(org.ofbiz.core.entity.GenericValue.class);
+        when(change.getString("field")).thenReturn("assignee");
+        when(change.getString("newvalue")).thenReturn("original-assignee");
+        org.ofbiz.core.entity.GenericValue log = mock(org.ofbiz.core.entity.GenericValue.class);
+        when(log.getRelated("ChildChangeItem")).thenReturn(List.of(change));
 
-        listener.onIssueEvent(commentEvent());   // RejectedExecutionException наружу не идёт
+        listener.onIssueEvent(new com.atlassian.jira.event.issue.IssueEvent(issue, null, comment, null, log,
+                java.util.Collections.emptyMap(), com.atlassian.jira.event.type.EventType.ISSUE_COMMENTED_ID));
+
+        org.mockito.ArgumentCaptor<String> captured = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(queue).enqueue(captured.capture());
+        QueuedIssueEvent snapshot = QueuedIssueEvent.decode(captured.getValue());
+        assertEquals(body, snapshot.commentBody());
+        assertEquals(Long.valueOf(88), snapshot.commentId());
+        assertEquals("original-assignee", snapshot.diff().getChanges().get(0).toId());
     }
 
-    private IssueEvent commentEvent() {
-        Comment comment = mock(Comment.class);
-        lenient().when(comment.getBody()).thenReturn("текст комментария");
-        lenient().when(comment.getRoleLevelId()).thenReturn(null);
-        return new IssueEvent(mock(Issue.class), mock(ApplicationUser.class), comment, null, null,
-                Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENTED_ID);
+    @Test
+    public void mentionFailureStillAttemptsOtherCommentRecipients() {
+        IssueManager issues = mock(IssueManager.class);
+        UserManager users = mock(UserManager.class);
+        NotificationService service = mock(NotificationService.class);
+        MutableIssue issue = mock(MutableIssue.class);
+        when(issues.getIssueObject(42L)).thenReturn(issue);
+        com.atlassian.jira.user.ApplicationUser mentioned = mock(com.atlassian.jira.user.ApplicationUser.class);
+        when(users.getUserByName("tail")).thenReturn(mentioned);
+        doThrow(new IllegalStateException("transport")).when(service).processAction(any(), any(),
+                eq(ru.my.model.NotificationAction.MENTION), any(), anyMap(), any(), any());
+        IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
+                mock(PersistentNotificationQueue.class), issues, users, mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class));
+        String payload = new QueuedIssueEvent(42L, null, 6L, true, null,
+                "x".repeat(600) + " [~tail]", false, new DiffResult(List.of())).encode();
+
+        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload));
+        verify(service).processAction(any(), any(), eq(ru.my.model.NotificationAction.COMMENT_ADDED),
+                any(), anyMap(), any(), any());
     }
+
 }

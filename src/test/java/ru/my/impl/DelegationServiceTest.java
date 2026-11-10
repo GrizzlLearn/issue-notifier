@@ -189,4 +189,28 @@ public class DelegationServiceTest {
         when(entity.getActiveUntil()).thenReturn(activeUntil != null ? Date.from(activeUntil) : null);
         return entity;
     }
+    @Test
+    public void aoFailureDoesNotFallbackToOriginalRecipientAndNextAttemptRecovers() {
+        NotificationDelegationEntity row = delegationEntity("bob", null);
+        when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
+                .thenThrow(new IllegalStateException("AO unavailable"))
+                .thenReturn(new NotificationDelegationEntity[]{row});
+        when(userManager.getUserByKey("bob")).thenReturn(bob);
+
+        assertThrows(com.atlassian.cache.CacheException.class, () -> service.getEffectiveRecipients(alice));
+        assertEquals(List.of(bob), service.getEffectiveRecipients(alice));
+    }
+
+    @Test
+    public void userDirectoryFailurePropagatesAndRetryResolvesDelegate() {
+        NotificationDelegationEntity row = delegationEntity("bob", null);
+        when(ao.find(eq(NotificationDelegationEntity.class), any(Query.class)))
+                .thenReturn(new NotificationDelegationEntity[]{row});
+        IllegalStateException failure = new IllegalStateException("directory unavailable");
+        when(userManager.getUserByKey("bob")).thenThrow(failure).thenReturn(bob);
+
+        assertSame(failure, assertThrows(IllegalStateException.class, () -> service.getEffectiveRecipients(alice)));
+        assertEquals(List.of(bob), service.getEffectiveRecipients(alice));
+    }
+
 }

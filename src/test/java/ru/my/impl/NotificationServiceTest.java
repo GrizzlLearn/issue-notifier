@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -338,7 +339,7 @@ public class NotificationServiceTest {
         org.mockito.Mockito.doThrow(new RuntimeException("сеть недоступна"))
                 .when(sender).send(watcher, "msg");
 
-        service.processEvent(issue, null, NON_EMPTY_DIFF);
+        assertThrows(IllegalStateException.class, () -> service.processEvent(issue, null, NON_EMPTY_DIFF));
 
         verify(sender).send(watcher2, "msg");
     }
@@ -601,16 +602,15 @@ public class NotificationServiceTest {
         org.mockito.Mockito.doThrow(new RuntimeException("Telegram недоступен"))
                 .when(telegramSender).send(eq(watcher), anyString());
 
-        List<ApplicationUser> notified = twoChannels.processAction(
-                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
+        assertThrows(IllegalStateException.class, () -> twoChannels.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of()));
 
         verify(sender).send(eq(watcher), anyString());
-        assertEquals(List.of(watcher), notified);
+
     }
 
     /**
-     * Упали все каналы — получатель не считается уведомлённым, иначе слушатель
-     * исключит его и из рассылки об изменении полей, и он не получит ничего.
+     * Упали все каналы — событие должно остаться в очереди для повторной попытки.
      */
     @Test
     public void actionDoesNotMarkRecipientNotifiedWhenDeliveryFails() {
@@ -619,10 +619,8 @@ public class NotificationServiceTest {
         org.mockito.Mockito.doThrow(new RuntimeException("Mattermost недоступен"))
                 .when(sender).send(eq(watcher), anyString());
 
-        List<ApplicationUser> notified = service.processAction(
-                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of());
-
-        assertTrue(notified.isEmpty());
+        assertThrows(IllegalStateException.class, () -> service.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of()));
     }
 
     /** Без шаблона сообщение не ушло — значит получателя в результате нет. */
@@ -823,6 +821,37 @@ public class NotificationServiceTest {
         verify(sender).send(watcher, "Комментарий в PROJ-1");
     }
 
+    @Test
+    public void currentCommentRestrictionsHideQueuedTextEvenInShownMode() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Текст: {comment}");
+        when(adminSettingsService.get(CommentTextMode.KEY, "")).thenReturn(CommentTextMode.SHOWN.key());
+        when(adminSettingsService.get(
+                ActionTemplates.templateKeyNoText(NotificationAction.COMMENT_ADDED, NotificationChannel.MATTERMOST), ""))
+                .thenReturn("Без текста: {comment}");
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        Comment comment = mock(Comment.class);
+        when(comment.getRoleLevelId()).thenReturn(null);
+        when(commentManager.getCommentById(7L)).thenReturn(comment);
+        when(commentPermissionManager.hasBrowsePermission(watcher, comment)).thenReturn(true);
+        Map<String, String> snapshot = Map.of("comment", "секрет");
+        CommentScope scope = new CommentScope(7L, false);
+
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED,
+                List.of(watcher), snapshot, List.of(), scope);
+        verify(sender).send(watcher, "Текст: секрет");
+
+        when(comment.getGroupLevel()).thenReturn("restricted-group");
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED,
+                List.of(watcher), snapshot, List.of(), scope);
+
+        when(comment.getGroupLevel()).thenReturn(null);
+        when(comment.getRoleLevelId()).thenReturn(10000L);
+        service.processAction(issue, null, NotificationAction.COMMENT_ADDED,
+                List.of(watcher), snapshot, List.of(), scope);
+        verify(sender, times(2)).send(watcher, "Без текста: ");
+        verify(sender, times(1)).send(watcher, "Текст: секрет");
+    }
+
     /**
      * Внутренний комментарий Service Desk делегату не пересылается: право видеть
      * его даёт роль агента, а делегат её не обязан иметь — поэтому делегирование
@@ -875,8 +904,9 @@ public class NotificationServiceTest {
                         .channels(List.of(NotificationChannel.MATTERMOST)).build());
         when(delegationService.getEffectiveRecipients(second)).thenReturn(List.of(second));
 
-        service.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher, second),
-                Map.of("issueKey", "PROJ-1"));
+        assertThrows(IllegalStateException.class, () -> service.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(watcher, second),
+                Map.of("issueKey", "PROJ-1")));
 
         verify(sender).send(second, "Комментарий в PROJ-1");
     }
@@ -1009,4 +1039,29 @@ public class NotificationServiceTest {
                 .thenReturn(UserSettings.builder().projects(projects).channels(channels).build());
         when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
     }
+    @Test
+    public void commentReadFailureIsRetried() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        when(commentManager.getCommentById(7L)).thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThrows(IllegalStateException.class, () -> service.processAction(issue, null,
+                NotificationAction.COMMENT_ADDED, List.of(watcher), Map.of(), List.of(),
+                new CommentScope(7L, false)));
+        verify(sender, never()).send(any(), any());
+    }
+
+    @Test
+    public void interruptedProcessingDoesNotSendMoreMessages() {
+        setupStandardWatcher(List.of("*"), List.of(NotificationChannel.MATTERMOST));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        try {
+            Thread.currentThread().interrupt();
+            assertThrows(java.util.concurrent.CancellationException.class,
+                    () -> service.processEvent(issue, null, NON_EMPTY_DIFF));
+        } finally {
+            Thread.interrupted();
+        }
+        verify(sender, never()).send(any(), any());
+    }
+
 }

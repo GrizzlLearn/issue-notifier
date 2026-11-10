@@ -275,4 +275,37 @@ public class AdminSettingsServiceTest {
         ordered.verify(clusterLock).unlock();
     }
 
+    @Test
+    public void aoFailurePropagatesInsteadOfDisabledDefaultAndRetryRecovers() {
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenReturn("true");
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenThrow(new IllegalStateException("AO unavailable"))
+                .thenReturn(new AdminSettingsEntity[]{row});
+
+        assertThrows(com.atlassian.cache.CacheException.class, () -> service.isChannelEnabled(NotificationChannel.EMAIL));
+        assertTrue(service.isChannelEnabled(NotificationChannel.EMAIL));
+    }
+
+    @Test
+    public void startupAloneAllowsNotReadyAoAndDoesNotCacheDefaults() {
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenThrow(new IllegalStateException("AO not initialized"))
+                .thenReturn(new AdminSettingsEntity[0]);
+
+        service.applyLoggingSettings();
+        verify(pluginLogging).applyAreas(Set.of());
+        assertEquals("missing", service.get(Area.ALL.key(), "missing"));
+        verify(ao, times(2)).find(eq(AdminSettingsEntity.class), any(Query.class));
+    }
+
+    @Test
+    public void startupDoesNotHideUnexpectedCacheFailure() {
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenThrow(new IllegalArgumentException("bad query"));
+
+        assertThrows(com.atlassian.cache.CacheException.class, service::applyLoggingSettings);
+        verifyNoInteractions(pluginLogging);
+    }
+
 }

@@ -103,4 +103,19 @@ public class UserSettingsServiceTest {
 
         assertTrue(result.getChannels().isEmpty());
     }
+    @Test
+    public void aoFailurePropagatesAndNextAttemptReadsPersistedSettings() {
+        UserNotificationSettingsEntity row = mock(UserNotificationSettingsEntity.class);
+        when(row.isEnabled()).thenReturn(true);
+        when(row.getChannelsRaw()).thenReturn("EMAIL");
+        when(ao.find(eq(UserNotificationSettingsEntity.class), any(Query.class)))
+                .thenThrow(new IllegalStateException("AO unavailable"))
+                .thenReturn(new UserNotificationSettingsEntity[]{row});
+        MockApplicationUser user = new MockApplicationUser("jdoe");
+
+        assertThrows(com.atlassian.cache.CacheException.class, () -> service.getSettings(user));
+        assertEquals(java.util.List.of(NotificationChannel.EMAIL), service.getSettings(user).getChannels());
+        verify(ao, times(2)).find(eq(UserNotificationSettingsEntity.class), any(Query.class));
+    }
+
 }

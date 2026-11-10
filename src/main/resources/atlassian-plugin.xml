@@ -7,12 +7,13 @@
         <param name="plugin-logo">images/pluginLogo.png</param>
     </plugin-info>
 
-    <!-- Active Objects — хранилище настроек плагина -->
+    <!-- Active Objects — настройки плагина и очередь уведомлений -->
     <ao key="ao-module" name="Issue Notifier Active Objects">
-        <description>Хранилище настроек плагина</description>
+        <description>Настройки плагина и очередь уведомлений</description>
         <entity>ru.my.ao.UserNotificationSettingsEntity</entity>
         <entity>ru.my.ao.NotificationDelegationEntity</entity>
         <entity>ru.my.ao.AdminSettingsEntity</entity>
+        <entity>ru.my.ao.NotificationJobEntity</entity>
     </ao>
 
     <!-- REST API плагина -->

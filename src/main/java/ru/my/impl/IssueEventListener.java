@@ -6,13 +6,14 @@ import com.atlassian.jira.entity.property.JsonEntityPropertyManager;
 import com.atlassian.jira.event.issue.IssueEvent;
 import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
+import com.atlassian.jira.issue.IssueManager;
+import ru.my.model.QueuedIssueEvent;
 import com.atlassian.jira.issue.comments.Comment;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
 import com.atlassian.sal.api.ApplicationProperties;
 import com.atlassian.sal.api.UrlMode;
-import com.atlassian.sal.api.executor.ThreadLocalDelegateExecutorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
@@ -31,35 +32,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Слушатель событий Jira. Парсит changelog в потоке Jira-события (C1),
- * затем перекладывает рассылку в пул потоков, не блокируя поток события.
- * Использует {@link ThreadLocalDelegateExecutorFactory} для передачи ThreadLocal-контекста.
- * <p>
- * Пул: core=2, max=4 потока (C3) — параллельная обработка нескольких событий.
- * Очередь ограничена {@value #QUEUE_CAPACITY} задачами; переполнение логируется.
- */
+/** Сохраняет снимки событий в БД; очередь восстанавливает незавершённую рассылку. */
 @Named
 public class IssueEventListener {
-
     private static final Logger log = LoggerFactory.getLogger(IssueEventListener.class);
-    private static final int QUEUE_CAPACITY = 1000;
-    private static final int SHUTDOWN_TIMEOUT_SEC = 10;
-    private static final int CORE_POOL_SIZE = 2;
-    private static final int MAX_POOL_SIZE = 4;
-
-    /** ponytail: обрезаем текст комментария; лимит сообщения Telegram — 4096 символов. */
     private static final int COMMENT_LIMIT = 500;
-
     private final EventPublisher eventPublisher;
-    private final ExecutorService executor;
+    private final PersistentNotificationQueue queue;
+    private final IssueManager issueManager;
     private final NotificationService notificationService;
     private final UserManager userManager;
     private final ApplicationProperties applicationProperties;
@@ -67,66 +48,42 @@ public class IssueEventListener {
     private final JsonEntityPropertyManager entityProperties;
 
     @Inject
-    public IssueEventListener(
-            @ComponentImport EventPublisher eventPublisher,
-            @ComponentImport ThreadLocalDelegateExecutorFactory delegateExecutorFactory,
-            @ComponentImport UserManager userManager,
-            @ComponentImport ApplicationProperties applicationProperties,
-            @ComponentImport JsonEntityPropertyManager entityProperties,
-            NotificationService notificationService,
-            AdminSettingsService adminSettingsService) {
+    public IssueEventListener(@ComponentImport EventPublisher eventPublisher,
+                              PersistentNotificationQueue queue,
+                              @ComponentImport IssueManager issueManager,
+                              @ComponentImport UserManager userManager,
+                              @ComponentImport ApplicationProperties applicationProperties,
+                              @ComponentImport JsonEntityPropertyManager entityProperties,
+                              NotificationService notificationService,
+                              AdminSettingsService adminSettingsService) {
         this.eventPublisher = eventPublisher;
-        this.entityProperties = entityProperties;
-        this.notificationService = notificationService;
+        this.queue = queue;
+        this.issueManager = issueManager;
         this.userManager = userManager;
         this.applicationProperties = applicationProperties;
-        this.adminSettingsService = adminSettingsService;
-
-        AtomicInteger threadCounter = new AtomicInteger();
-        RejectedExecutionHandler discardWithLog = (r, pool) ->
-                log.warn("Очередь уведомлений переполнена ({}), событие отброшено", QUEUE_CAPACITY);
-
-        ExecutorService bounded = new ThreadPoolExecutor(
-                CORE_POOL_SIZE, MAX_POOL_SIZE, 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(QUEUE_CAPACITY),
-                r -> new Thread(r, "issue-notifier-worker-" + threadCounter.incrementAndGet()),
-                discardWithLog);
-
-        this.executor = delegateExecutorFactory.createExecutorService(bounded);
-    }
-
-    /** Конструктор для unit-тестов — не регистрируется в eventPublisher. */
-    public IssueEventListener(ExecutorService executor, NotificationService notificationService,
-                              UserManager userManager, ApplicationProperties applicationProperties,
-                              AdminSettingsService adminSettingsService,
-                              JsonEntityPropertyManager entityProperties) {
-        this.eventPublisher = null;
         this.entityProperties = entityProperties;
-        this.executor = executor;
         this.notificationService = notificationService;
-        this.userManager = userManager;
-        this.applicationProperties = applicationProperties;
         this.adminSettingsService = adminSettingsService;
     }
 
     @PostConstruct
     public void init() {
-        if (eventPublisher != null) {
-            eventPublisher.register(this);
-        }
+        queue.start(this::processQueuedEvent);
+        eventPublisher.register(this);
     }
 
     /**
      * Ошибка здесь уходит в диспетчер событий Jira и мешает другим слушателям,
-     * поэтому разбор события обёрнут целиком: внутри рабочих задач ошибки уже
-     * ловит {@link #submit}.
+     * поэтому разбор события обёрнут целиком. Ошибки обработки сохранённого
+     * события передаются очереди для повторной попытки.
      */
     @EventListener
     public void onIssueEvent(IssueEvent event) {
         try {
             handleIssueEvent(event);
         } catch (Exception e) {
-            log.error("Ошибка разбора события {}: {}", event.getEventTypeId(), e.getMessage(), e);
+            log.error("Задача {}: ошибка сохранения или разбора события {}",
+                    event.getIssue() == null ? "?" : event.getIssue().getKey(), event.getEventTypeId(), e);
         }
     }
 
@@ -142,45 +99,41 @@ public class IssueEventListener {
         }
         Issue issue = event.getIssue();
         ApplicationUser author = event.getUser();
-        // typeId извлекается до submit — event не должен утекать в рабочий поток (C1)
+        // Сохраняются только значения: объект события не должен утекать в рабочий поток.
         Long typeId = event.getEventTypeId();
 
         Comment comment = event.getComment();
-        if (comment != null && EventType.ISSUE_COMMENTED_ID.equals(typeId)) {
-            // тело комментария и его ограничения читаются здесь же, в потоке события;
-            // правка комментария уведомлений не порождает — иначе исправленная
-            // опечатка уходила бы как новый комментарий
-            String body = comment.getBody();
-            Long commentId = comment.getId();
-            boolean restrictedByLevel = CommentVisibility.isRestrictedByLevel(comment);
-            submit(typeId, () -> processComment(issue, author, body, commentId, restrictedByLevel));
-        }
+        boolean hasComment = comment != null && EventType.ISSUE_COMMENTED_ID.equals(typeId);
+        DiffResult diff = isIgnoredEvent(event) ? new DiffResult(List.of()) : DiffFormatter.parse(event.getChangeLog());
+        if (!hasComment && diff.isEmpty()) return;
+        queue.enqueue(new QueuedIssueEvent(issue.getId(), author == null ? null : author.getKey(),
+                typeId, hasComment, hasComment ? comment.getId() : null,
+                hasComment ? comment.getBody() : null,
+                hasComment && CommentVisibility.isRestrictedByLevel(comment), diff).encode());
+    }
 
-        if (isIgnoredEvent(event)) {
-            log.debug("Событие {} по задаче {} не обрабатывается плагином", typeId, issue.getKey());
+    void processQueuedEvent(String payload) {
+        QueuedIssueEvent event = QueuedIssueEvent.decode(payload);
+        Issue issue = issueManager.getIssueObject(event.issueId());
+        if (issue == null) {
+            log.info("Задача {} удалена: событие {} пропущено", event.issueId(), event.typeId());
             return;
         }
-        // C1: changelog читается здесь, в потоке Jira-события — OFBiz-ленивая загрузка
-        // через getRelated("ChildChangeItem") безопасна только в этом контексте.
-        DiffResult diff = DiffFormatter.parse(event.getChangeLog());
-        if (diff.isEmpty()) {
-            log.debug("Событие {} по задаче {}: в changelog нет изменений полей", typeId, issue.getKey());
-            return;
+        ApplicationUser author = event.authorKey() == null ? null : userManager.getUserByKey(event.authorKey());
+        List<Exception> failures = new ArrayList<>();
+        if (event.hasComment()) {
+            step(issue, "комментарий", () -> processComment(issue, author, event.commentBody(),
+                    event.commentId(), event.restrictedByLevel()), failures);
         }
-        log.debug("Событие {} по задаче {}: изменённых полей {}, взято в обработку",
-                typeId, issue.getKey(), diff.getChanges().size());
-        // одна задача на событие: сначала уведомления о действиях, затем рассылка
-        // об изменении полей — без тех, кому уже ушло. Настройки и исполнитель
-        // читаются здесь же, в рабочем потоке: в потоке Jira-события обращений
-        // к БД быть не должно.
-        submit(typeId, () -> {
+        DiffResult diff = event.diff();
+        if (!diff.isEmpty()) {
             // шаги изолированы: сбой в уведомлении о назначении не должен стоить
             // уведомления о закрытии и рассылки наблюдателям
             List<ApplicationUser> notified = new ArrayList<>();
             DiffResult.FieldChange assigneeChange = changeOf(diff, "assignee");
             if (assigneeChange != null) {
                 step(issue, "назначение исполнителя",
-                        () -> notified.addAll(notifyAssigned(issue, author, assigneeChange)));
+                        () -> notified.addAll(notifyAssigned(issue, author, assigneeChange)), failures);
             }
             DiffResult.FieldChange statusChange = changeOf(diff, "status");
             if (statusChange != null) {
@@ -189,11 +142,12 @@ public class IssueEventListener {
                         notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
                                 List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue())), notified));
                     }
-                });
+                }, failures);
             }
             step(issue, "рассылка наблюдателям",
-                    () -> notificationService.processEvent(issue, author, diff, notified));
-        });
+                    () -> notificationService.processEvent(issue, author, diff, notified), failures);
+        }
+        rethrow(failures);
     }
 
     /**
@@ -226,13 +180,15 @@ public class IssueEventListener {
         }
 
         List<ApplicationUser> mentioned = resolveUsers(MentionParser.parse(body));
-        List<ApplicationUser> notified = mentioned.isEmpty()
-                ? List.of()
-                : notificationService.processAction(issue, author, NotificationAction.MENTION,
-                        mentioned, values, List.of(), scope);
-
-        notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
-                List.of(), values, notified, scope);
+        List<ApplicationUser> notified = new ArrayList<>();
+        List<Exception> failures = new ArrayList<>();
+        if (!mentioned.isEmpty()) {
+            step(issue, "упоминания", () -> notified.addAll(notificationService.processAction(
+                    issue, author, NotificationAction.MENTION, mentioned, values, List.of(), scope)), failures);
+        }
+        step(issue, "новый комментарий", () -> notificationService.processAction(issue, author,
+                NotificationAction.COMMENT_ADDED, List.of(), values, notified, scope), failures);
+        rethrow(failures);
     }
 
     /**
@@ -339,49 +295,27 @@ public class IssueEventListener {
         return text.length() <= COMMENT_LIMIT ? text : TextLimit.cut(text, COMMENT_LIMIT) + "…";
     }
 
-    /** Шаг обработки события: его сбой логируется и не касается остальных шагов. */
-    private void step(Issue issue, String what, Runnable action) {
+    /** Выполняет остальные шаги после ошибки; очередь повторит событие после их завершения. */
+    private void step(Issue issue, String what, Runnable action, List<Exception> failures) {
         try {
             action.run();
         } catch (Exception e) {
-            // со стектрейсом: раньше такая ошибка доходила до log.error(..., e),
-            // а у NullPointerException сообщения нет вовсе
             log.warn("Задача {}: шаг «{}» не выполнен", issue.getKey(), what, e);
+            failures.add(e);
         }
     }
 
-    private void submit(Long typeId, Runnable task) {
-        try {
-            executor.submit(() -> {
-                try {
-                    task.run();
-                } catch (Exception e) {
-                    log.error("Необработанная ошибка при обработке события {}: {}",
-                            typeId, e.getMessage(), e);
-                }
-            });
-        } catch (java.util.concurrent.RejectedExecutionException e) {
-            // Бросается только если executor завершён (shutdown); переполнение очереди
-            // обрабатывается silently DiscardPolicy-хендлером внутри ThreadPoolExecutor
-            log.warn("Executor завершён, событие {} отброшено", typeId);
-        }
+    private static void rethrow(List<Exception> failures) {
+        if (failures.isEmpty()) return;
+        IllegalStateException failure = new IllegalStateException("Не все уведомления события отправлены");
+        failures.forEach(failure::addSuppressed);
+        throw failure;
     }
 
     @PreDestroy
     public void destroy() {
-        if (eventPublisher != null) {
-            eventPublisher.unregister(this);
-        }
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(SHUTDOWN_TIMEOUT_SEC, TimeUnit.SECONDS)) {
-                log.warn("Executor не завершился за {} сек, принудительная остановка", SHUTDOWN_TIMEOUT_SEC);
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        eventPublisher.unregister(this);
+        queue.stop();
     }
 
     /**

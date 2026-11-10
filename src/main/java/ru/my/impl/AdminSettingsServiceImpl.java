@@ -77,11 +77,18 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
     /**
      * Настройки логирования хранятся здесь же, поэтому и применяются отсюда: они
      * пережили перезапуск Jira — значит уровни надо вернуть до первого уведомления.
-     * {@link #get} сам переживает неготовый AO, так что читать можно уже на старте.
+     * Только при старте неготовый AO допускает INFO по умолчанию; ошибки чтения
+     * настроек при рассылке передаются вызывающему коду для повторной попытки.
      */
     @PostConstruct
     public void applyLoggingSettings() {
-        pluginLogging.applyAreas(enabledLogAreas());
+        try {
+            pluginLogging.applyAreas(enabledLogAreas());
+        } catch (CacheException e) {
+            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) throw e;
+            log.warn("AO ещё не инициализирован: при старте применён уровень INFO");
+            pluginLogging.applyAreas(Set.of());
+        }
     }
 
     private Set<Area> enabledLogAreas() {
@@ -94,16 +101,8 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     @Override
     public String get(String key, String defaultValue) {
-        try {
-            String value = cache.get(key);
-            return ABSENT.equals(value) ? defaultValue : value;
-        } catch (CacheException e) {
-            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
-                throw e;
-            }
-            log.warn("AO ещё не инициализирован, ключ '{}' возвращает значение по умолчанию", key);
-            return defaultValue;
-        }
+        String value = cache.get(key);
+        return ABSENT.equals(value) ? defaultValue : value;
     }
 
     private String load(String key) {

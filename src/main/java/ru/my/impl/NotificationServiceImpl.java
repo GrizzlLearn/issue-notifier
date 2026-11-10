@@ -195,8 +195,9 @@ public class NotificationServiceImpl implements NotificationService {
 
         Set<String> excludedKeys = exclude.stream().map(ApplicationUser::getKey).collect(Collectors.toSet());
 
+        List<Exception> failures = new ArrayList<>();
         Collection<Recipient> selected = collectRecipients(issue, author, watchers, true,
-                CommentScope.NONE, null);
+                CommentScope.NONE, null, failures);
 
         // текст сообщения одинаков для всех получателей канала, а построчный diff
         // считается алгоритмом LCS — форматируем один раз на канал, а не на получателя
@@ -205,6 +206,7 @@ public class NotificationServiceImpl implements NotificationService {
                 issue.getKey(), watchers.size(), selected.size(), excludedKeys.size());
 
         for (Recipient r : selected) {
+            checkInterrupted();
             // тому, кому по этому событию уже ушло уведомление о действии,
             // второе сообщение об изменении полей не отправляем
             if (excludedKeys.contains(r.user().getKey())) {
@@ -212,8 +214,9 @@ public class NotificationServiceImpl implements NotificationService {
                         r.user().getKey(), issue.getKey());
                 continue;
             }
-            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache, messages);
+            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache, messages, failures);
         }
+        requireDelivered(failures);
     }
 
     @Override
@@ -246,7 +249,6 @@ public class NotificationServiceImpl implements NotificationService {
         CommentTextMode textMode = CommentTextMode.resolve(
                 adminSettingsService.get(CommentTextMode.KEY, ""),
                 adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false"));
-        boolean textAllowed = placeholders.containsKey("comment") && textMode != CommentTextMode.HIDDEN;
 
         // комментарий с ограничением по группе или роли виден не всем: каждый
         // получатель проверяется на право видеть именно этот комментарий, а не
@@ -260,9 +262,15 @@ public class NotificationServiceImpl implements NotificationService {
             return List.of();
         }
 
+        // Ограничение могло появиться, пока событие ждало в очереди.
+        boolean textAllowed = placeholders.containsKey("comment") && textMode != CommentTextMode.HIDDEN
+                && (comment == null || !CommentVisibility.isRestrictedByLevel(comment));
+
         // Пользовательский фильтр проектов здесь не применяется: он относится
         // к наблюдению за изменениями задач, а область действий задаёт администратор.
-        for (Recipient r : collectRecipients(issue, author, base, false, scope, comment)) {
+        List<Exception> failures = new ArrayList<>();
+        for (Recipient r : collectRecipients(issue, author, base, false, scope, comment, failures)) {
+            checkInterrupted();
             if (excludedKeys.contains(r.user().getKey())) {
                 continue;
             }
@@ -276,8 +284,9 @@ public class NotificationServiceImpl implements NotificationService {
                 boolean sent = false;
                 // Set защищает от двойной отправки при дублях в List<NotificationChannel>
                 for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
+                    checkInterrupted();
                     if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                        sent |= sendAction(action, channel, r.user(), values, withText);
+                        sent |= sendAction(action, channel, r.user(), values, withText, failures);
                     }
                 }
                 if (sent) {
@@ -286,18 +295,18 @@ public class NotificationServiceImpl implements NotificationService {
             } catch (Exception e) {
                 log.warn("Задача {}: уведомление о действии {} для {} не отправлено: {}",
                         issue.getKey(), action, r.user().getKey(), describe(e));
+                failures.add(e);
             }
         }
+        requireDelivered(failures);
         return List.copyOf(notified);
     }
 
     /**
      * Комментарий события — один запрос в БД на всю рассылку, а не на получателя.
      *
-     * @return {@code null}, если комментария нет в событии, его удалили или его
-     *         не удалось прочитать; во втором и третьем случае вызывающий
-     *         прекращает рассылку, иначе проверка прав на комментарий просто
-     *         не выполнилась бы
+     * @return {@code null}, если комментария нет в событии или его удалили;
+     *         ошибки чтения пробрасываются для повторной обработки события
      */
     private Comment commentOf(CommentScope scope) {
         if (scope == null || scope.commentId() == null) {
@@ -307,7 +316,7 @@ public class NotificationServiceImpl implements NotificationService {
             return commentManager.getCommentById(scope.commentId());
         } catch (RuntimeException e) {
             log.debug("Комментарий {} не прочитан: {}", scope.commentId(), e.getMessage());
-            return null;
+            throw e;
         }
     }
 
@@ -345,7 +354,7 @@ public class NotificationServiceImpl implements NotificationService {
     // всем, кто читает логи, а связка «кто получает уведомления + его email» лишняя
     private boolean sendAction(NotificationAction action, NotificationChannel channel,
                                ApplicationUser recipient, Map<String, String> placeholders,
-                               boolean withText) {
+                               boolean withText, List<Exception> failures) {
         String templateKey = action.carriesCommentText() && !withText
                 ? ActionTemplates.templateKeyNoText(action, channel)
                 : ActionTemplates.templateKey(action, channel);
@@ -366,6 +375,7 @@ public class NotificationServiceImpl implements NotificationService {
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
                     action, channel, recipient.getKey(), describe(e));
+            failures.add(e);
             return false;
         }
     }
@@ -442,12 +452,13 @@ public class NotificationServiceImpl implements NotificationService {
     private Collection<Recipient> collectRecipients(Issue issue, ApplicationUser author,
                                                     List<ApplicationUser> candidates,
                                                     boolean applyUserProjectFilter,
-                                                    CommentScope scope, Comment comment) {
+                                                    CommentScope scope, Comment comment, List<Exception> failures) {
         Map<String, Recipient> uniqueRecipients = new LinkedHashMap<>();
 
         boolean allowDelegation = scope == null || !scope.blocksDelegation();
 
         for (ApplicationUser candidate : candidates) {
+            checkInterrupted();
             try {
                 collectCandidate(issue, author, candidate, applyUserProjectFilter,
                         allowDelegation, comment, uniqueRecipients);
@@ -456,6 +467,7 @@ public class NotificationServiceImpl implements NotificationService {
                 // не должен стоить уведомлений всем остальным
                 log.warn("Задача {}: кандидат {} пропущен из-за ошибки: {}",
                         issue.getKey(), candidate.getKey(), describe(e));
+                failures.add(e);
             }
         }
         return uniqueRecipients.values();
@@ -542,17 +554,19 @@ public class NotificationServiceImpl implements NotificationService {
 
     private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
                                  UserSettings settings, Map<NotificationChannel, Boolean> channelCache,
-                                 Map<NotificationChannel, String> messages) {
+                                 Map<NotificationChannel, String> messages, List<Exception> failures) {
         // Set защищает от двойной отправки при дублях в List<NotificationChannel>
         for (NotificationChannel channel : new LinkedHashSet<>(settings.getChannels())) {
+            checkInterrupted();
             if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                sendViaChannel(issue, diff, recipient, channel, messages);
+                sendViaChannel(issue, diff, recipient, channel, messages, failures);
             }
         }
     }
 
     private void sendViaChannel(Issue issue, DiffResult diff, ApplicationUser recipient,
-                                NotificationChannel channel, Map<NotificationChannel, String> messages) {
+                                NotificationChannel channel, Map<NotificationChannel, String> messages,
+                                List<Exception> failures) {
         MessageFormatter formatter = formatters.get(channel);
         NotificationSender sender = senders.get(channel);
 
@@ -569,6 +583,7 @@ public class NotificationServiceImpl implements NotificationService {
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления через {} для {}: {}",
                     channel, recipient.getKey(), describe(e));
+            failures.add(e);
         }
     }
 
@@ -595,6 +610,18 @@ public class NotificationServiceImpl implements NotificationService {
             return false;
         }
         return projects.contains(project.getKey());
+    }
+
+    private static void checkInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("Обработка уведомления прервана");
+        }
+    }
+
+    private static void requireDelivered(List<Exception> failures) {
+        if (!failures.isEmpty()) {
+            throw new IllegalStateException("Не все уведомления отправлены: ошибок " + failures.size());
+        }
     }
 
     /**
