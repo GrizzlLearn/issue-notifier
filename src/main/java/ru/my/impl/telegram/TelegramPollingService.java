@@ -80,7 +80,10 @@ public class TelegramPollingService implements JobRunner {
             log.info("Опрос Telegram запланирован: каждые {} мс, первый запуск через {} мс",
                     INTERVAL_MS, INITIAL_DELAY_MS);
         } catch (SchedulerServiceException e) {
-            log.error("Не удалось запланировать опрос Telegram: {}", e.getMessage(), e);
+            // Не оставляем успешно инициализированный bean без расписания.
+            // Общее задание не удаляем: его могут использовать другие ноды.
+            schedulerService.unregisterJobRunner(RUNNER_KEY);
+            throw new IllegalStateException("Не удалось запланировать опрос Telegram", e);
         }
     }
 

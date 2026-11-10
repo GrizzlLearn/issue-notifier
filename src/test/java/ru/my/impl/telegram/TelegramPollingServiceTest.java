@@ -209,4 +209,30 @@ public class TelegramPollingServiceTest {
         verify(adminSettings).set(TelegramPollingService.OFFSET_KEY + ".654321", "2");
     }
 
+    @Test
+    public void schedulingFailureUnregistersRunnerAndFailsInitialization() throws Exception {
+        var failure = new com.atlassian.scheduler.SchedulerServiceException("scheduler unavailable");
+        doThrow(failure).when(schedulerService).scheduleJob(any(), any());
+
+        var thrown = org.junit.Assert.assertThrows(IllegalStateException.class, service::start);
+
+        org.junit.Assert.assertSame(failure, thrown.getCause());
+        org.junit.Assert.assertEquals("Не удалось запланировать опрос Telegram", thrown.getMessage());
+        var order = inOrder(schedulerService);
+        order.verify(schedulerService).registerJobRunner(any(), same(service));
+        order.verify(schedulerService).scheduleJob(any(), any());
+        order.verify(schedulerService).unregisterJobRunner(any());
+        verify(schedulerService, never()).unscheduleJob(any());
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    public void successfulInitializationKeepsRegisteredRunner() throws Exception {
+        service.start();
+        verify(schedulerService).registerJobRunner(any(), same(service));
+        verify(schedulerService).scheduleJob(any(), any());
+        verify(schedulerService, never()).unregisterJobRunner(any());
+        verify(schedulerService, never()).unscheduleJob(any());
+    }
+
 }
