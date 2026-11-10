@@ -1064,4 +1064,20 @@ public class NotificationServiceTest {
         verify(sender, never()).send(any(), any());
     }
 
+    @Test
+    public void deliveryFailurePreservesActionChannelRecipientAndSafeReason() {
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        setupWatcherWithChannels(List.of(NotificationChannel.MATTERMOST));
+        org.mockito.Mockito.doThrow(new ru.my.impl.mattermost.MattermostClient.MattermostException(
+                "Mattermost API вернул статус 403")).when(sender).send(eq(watcher), anyString());
+
+        RuntimeException failure = assertThrows(IllegalStateException.class, () -> service.processAction(
+                issue, null, NotificationAction.COMMENT_ADDED, List.of(), Map.of()));
+        String detail = ru.my.impl.util.NotificationErrors.summarize(failure);
+        assertTrue(detail.contains(NotificationAction.COMMENT_ADDED.title()));
+        assertTrue(detail.contains(NotificationChannel.MATTERMOST.name()));
+        assertTrue(detail.contains(watcher.getKey()));
+        assertTrue(detail.contains("HTTP 403"));
+    }
+
 }

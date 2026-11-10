@@ -19,6 +19,7 @@ import net.java.ao.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.ao.NotificationJobEntity;
+import ru.my.impl.util.NotificationErrors;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -133,6 +134,8 @@ public class PersistentNotificationQueue implements JobRunner {
                 long delaySeconds = Math.min(300, 1L << Math.min(9, attempts));
                 ao.executeInTransaction(() -> {
                     row.setAttempts(attempts);
+                    row.setLastError(NotificationErrors.summarize(e));
+                    row.setLastFailedAt(new Date());
                     row.setAvailableAt(new Date(System.currentTimeMillis() + delaySeconds * 1_000));
                     row.save();
                     return null;

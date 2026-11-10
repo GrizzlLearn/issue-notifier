@@ -20,6 +20,7 @@ import ru.my.api.NotificationSender;
 import ru.my.api.NotificationService;
 import ru.my.api.UserSettingsService;
 import ru.my.model.CommentScope;
+import ru.my.impl.util.NotificationErrors;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
@@ -295,7 +296,7 @@ public class NotificationServiceImpl implements NotificationService {
             } catch (Exception e) {
                 log.warn("Задача {}: уведомление о действии {} для {} не отправлено: {}",
                         issue.getKey(), action, r.user().getKey(), describe(e));
-                failures.add(e);
+                failures.add(NotificationErrors.context(action.title() + "; получатель " + r.user().getKey(), e));
             }
         }
         requireDelivered(failures);
@@ -375,7 +376,7 @@ public class NotificationServiceImpl implements NotificationService {
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
                     action, channel, recipient.getKey(), describe(e));
-            failures.add(e);
+            failures.add(NotificationErrors.delivery(action, channel, recipient.getKey(), e));
             return false;
         }
     }
@@ -467,7 +468,7 @@ public class NotificationServiceImpl implements NotificationService {
                 // не должен стоить уведомлений всем остальным
                 log.warn("Задача {}: кандидат {} пропущен из-за ошибки: {}",
                         issue.getKey(), candidate.getKey(), describe(e));
-                failures.add(e);
+                failures.add(NotificationErrors.context("Отбор получателей; пользователь " + candidate.getKey(), e));
             }
         }
         return uniqueRecipients.values();
@@ -583,7 +584,7 @@ public class NotificationServiceImpl implements NotificationService {
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления через {} для {}: {}",
                     channel, recipient.getKey(), describe(e));
-            failures.add(e);
+            failures.add(NotificationErrors.delivery(null, channel, recipient.getKey(), e));
         }
     }
 
@@ -620,7 +621,9 @@ public class NotificationServiceImpl implements NotificationService {
 
     private static void requireDelivered(List<Exception> failures) {
         if (!failures.isEmpty()) {
-            throw new IllegalStateException("Не все уведомления отправлены: ошибок " + failures.size());
+            IllegalStateException failure = new IllegalStateException("Не все уведомления отправлены: ошибок " + failures.size());
+            failures.forEach(failure::addSuppressed);
+            throw failure;
         }
     }
 

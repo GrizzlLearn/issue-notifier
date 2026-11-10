@@ -125,3 +125,12 @@ export async function testChannel(channel, settings, recipientType, recipient) {
   await checkOk(resp);
   return (await resp.json()).message;
 }
+
+export async function getFailedNotifications(beforeId, signal) {
+  const query = beforeId == null ? '' : `?beforeId=${encodeURIComponent(beforeId)}`;
+  const resp = await fetch(`${apiBase()}/admin/failed-notifications${query}`, {
+    credentials: 'same-origin', signal,
+  });
+  await checkOk(resp);
+  return resp.json();
+}

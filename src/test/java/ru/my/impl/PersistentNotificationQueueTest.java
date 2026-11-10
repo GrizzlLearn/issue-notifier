@@ -70,6 +70,10 @@ public class PersistentNotificationQueueTest {
         long before = System.currentTimeMillis();
         queue.runJob(null);
         verify(row).setAttempts(1);
+        verify(row).setLastError("Ошибка обработки (IllegalStateException)");
+        var failedAt = org.mockito.ArgumentCaptor.forClass(Date.class);
+        verify(row).setLastFailedAt(failedAt.capture());
+        assertTrue(failedAt.getValue().getTime() >= before);
         var available = org.mockito.ArgumentCaptor.forClass(Date.class);
         verify(row).setAvailableAt(available.capture());
         assertTrue(available.getValue().getTime() >= before + 2_000);

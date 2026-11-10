@@ -5,6 +5,7 @@ import ChannelsTab, { SECTIONS } from './ChannelsTab';
 import ContextsTab from './ContextsTab';
 import ActionsTab from './ActionsTab';
 import DiagnosticsTab from './DiagnosticsTab';
+import FailedNotificationsTab from './FailedNotificationsTab';
 
 // Проверяем шаблоны до отправки: сервер отвечает 400 с именем ключа вроде
 // action.closed.template.mattermost, а поле при этом может быть на другой вкладке.
@@ -171,7 +172,7 @@ export default function AdminApp() {
   // порядок совпадает со сценарием настройки: подключить канал, отметить
   // проекты, включить действия
   const tabs = [['channels', 'Каналы'], ['projects', 'Контекст проектов'], ['actions', 'Действия'],
-    ['diagnostics', 'Диагностика']];
+    ['diagnostics', 'Диагностика'], ['failed', 'Ошибки отправки']];
 
   return (
     <div className="in-admin-wrap">
@@ -206,6 +207,7 @@ export default function AdminApp() {
                         setContexts={setContexts} errors={errors} />
           )}
           {tab === 'projects' && <ContextsTab contexts={contexts} setContexts={setContexts} />}
+          {tab === 'failed' && <FailedNotificationsTab />}
           {tab === 'diagnostics' && <DiagnosticsTab values={values} setValue={setValue} />}
           {tab === 'channels' && (
             <ChannelsTab values={values} setValue={setValue}
@@ -217,7 +219,7 @@ export default function AdminApp() {
 
       {/* строка действий липнет к низу: страница длинная, иначе баннер и кнопка
           оказываются в разных концах экрана */}
-      <div className="in-admin-actions">
+      {tab !== 'failed' && <div className="in-admin-actions">
         <button type="button" className="aui-button aui-button-primary" onClick={handleSave}
                 disabled={saving || !dirty}>
           {saving ? 'Сохранение…' : 'Сохранить'}
@@ -232,7 +234,7 @@ export default function AdminApp() {
         {!error && !success && dirty && errorKeys.length > 0 && (
           <span className="in-admin-status is-error">Шаблоны с ошибками: {errorKeys.length}</span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

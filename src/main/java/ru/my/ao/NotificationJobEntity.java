@@ -21,6 +21,15 @@ public interface NotificationJobEntity extends Entity {
     Date getAvailableAt();
     void setAvailableAt(Date availableAt);
 
+    /** Безопасное описание последнего сбоя, без исходных сообщений и содержимого задач. */
+    @StringLength(StringLength.UNLIMITED)
+    String getLastError();
+    void setLastError(String lastError);
+
+    /** Время последнего сбоя; null у новых и старых записей без диагностики. */
+    Date getLastFailedAt();
+    void setLastFailedAt(Date lastFailedAt);
+
     int getAttempts();
     void setAttempts(int attempts);
 }
