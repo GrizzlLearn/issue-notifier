@@ -12,7 +12,7 @@ public interface AdminSettingsService {
     /**
      * Возвращает значение настройки по ключу.
      *
-     * @param key          ключ настройки, например {@code "mattermost.botToken"}
+     * @param key          ключ настройки, например {@code "mattermost.token"}
      * @param defaultValue значение по умолчанию, если ключ не найден
      * @return сохранённое значение или {@code defaultValue}
      */

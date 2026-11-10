@@ -8,7 +8,7 @@ const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, ch => HTML_ESCAPES[c
  * Обёртка над нативным виджетом Jira AJS.MultiSelect (AMD-модуль jira/ajs/select/multi-select) —
  * тем же компонентом, что рендерит поля Fix Versions/Components/User Picker в самой Jira.
  * Собственного UI/CSS не пишем — виджет тянет свою разметку и стили, "<select>" остаётся
- * источником истины во время редактирования, мы только слушаем его native "change".
+ * источником истины во время редактирования, мы только слушаем его событие "change" через jQuery.
  */
 export default function AjsMultiSelect({ id, initialItems, url, onChange, ariaLabel }) {
   const selectRef = useRef(null);

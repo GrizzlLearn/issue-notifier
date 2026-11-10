@@ -149,4 +149,50 @@ public class AdminSettingsServiceTest {
 
         verifyNoInteractions(pluginLogging);
     }
+    @Test
+    public void invalidationCannotLeaveAnInFlightOldLoadCached() throws Exception {
+        var cacheManager = spy(new MemoryCacheManager());
+        service = new AdminSettingsServiceImpl(ao, cacheManager, pluginLogging);
+        verify(cacheManager).getCache(anyString(),
+                org.mockito.ArgumentMatchers.<com.atlassian.cache.CacheLoader<String, String>>notNull(),
+                any(com.atlassian.cache.CacheSettings.class));
+        var loadedOldValue = new java.util.concurrent.CountDownLatch(1);
+        var releaseLoad = new java.util.concurrent.CountDownLatch(1);
+        var databaseUpdated = new java.util.concurrent.CountDownLatch(1);
+        var value = new java.util.concurrent.atomic.AtomicReference<>("old");
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+        when(ao.executeInTransaction(any())).thenAnswer(call ->
+                ((com.atlassian.sal.api.transaction.TransactionCallback<?>) call.getArgument(0)).doInTransaction());
+        when(row.getSettingValue()).thenAnswer(call -> {
+            String snapshot = value.get();
+            if (reads.getAndIncrement() == 0) {
+                loadedOldValue.countDown();
+                assertTrue(releaseLoad.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            return snapshot;
+        });
+        doAnswer(call -> {
+            value.set(call.getArgument(0));
+            databaseUpdated.countDown();
+            return null;
+        }).when(row).setSettingValue(anyString());
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var reader = pool.submit(() -> service.get("key", ""));
+            assertTrue(loadedOldValue.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            var writer = pool.submit(() -> service.set("key", "new"));
+            assertTrue(databaseUpdated.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            releaseLoad.countDown();
+            reader.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            writer.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals("new", service.get("key", ""));
+        } finally {
+            releaseLoad.countDown();
+            pool.shutdownNow();
+        }
+    }
+
 }

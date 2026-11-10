@@ -151,7 +151,7 @@ public class ProjectContextsTest {
         assertEquals("byProject", ProjectContexts.resolve(contexts, "HELP", 10000L).id());
     }
 
-    /** Уникальность проверяется при сохранении; гонка двух админов её обходит. */
+    /** Уникальность проверяется при сохранении; при дублях в хранилище побеждает первый. */
     @Test
     public void resolveTakesFirstContextWhenProjectIsDuplicated() {
         List<ProjectContext> contexts = List.of(
@@ -226,4 +226,17 @@ public class ProjectContextsTest {
         assertTrue("настройки встроенного контекста должны сохраняться",
                 contexts.get(1).isEnabled(NotificationAction.MENTION));
     }
+    @Test
+    public void closingStatusesAreCopiedFromCaller() {
+        Set<String> statuses = new java.util.LinkedHashSet<>(Set.of("done"));
+        ProjectContext context = new ProjectContext("a1", "Context", Set.of(), Set.of(),
+                Map.of(), Map.of("PROJ", statuses));
+
+        statuses.clear();
+        statuses.add("open");
+
+        assertTrue(context.isClosing("PROJ", "done"));
+        assertFalse(context.isClosing("PROJ", "open"));
+    }
+
 }

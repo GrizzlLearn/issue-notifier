@@ -2,11 +2,13 @@ package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheException;
+import com.google.common.base.Throwables;
 import com.atlassian.cache.CacheManager;
 import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import net.java.ao.DBParam;
+import ru.my.impl.util.AoUpsert;
 import net.java.ao.Query;
 import ru.my.ao.AdminSettingsEntity;
 import ru.my.api.AdminSettingsService;
@@ -58,7 +60,7 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
         this.pluginLogging = pluginLogging;
         this.cache = cacheManager.getCache(
                 AdminSettingsServiceImpl.class.getName() + ".settings",
-                null,
+                this::load,
                 new CacheSettingsBuilder()
                         .maxEntries(1_000)
                         .expireAfterWrite(60, TimeUnit.SECONDS)
@@ -86,39 +88,28 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     @Override
     public String get(String key, String defaultValue) {
-        String cached = cache.get(key);
-        if (cached != null) {
-            return ABSENT.equals(cached) ? defaultValue : cached;
-        }
-        AdminSettingsEntity[] rows;
         try {
-            rows = ao.find(AdminSettingsEntity.class,
-                    Query.select().where("SETTING_KEY = ?", key));
-        } catch (IllegalStateException e) {
+            String value = cache.get(key);
+            return ABSENT.equals(value) ? defaultValue : value;
+        } catch (CacheException e) {
+            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
+                throw e;
+            }
             log.warn("AO ещё не инициализирован, ключ '{}' возвращает значение по умолчанию", key);
             return defaultValue;
         }
-        String value = rows.length > 0 ? rows[0].getSettingValue() : ABSENT;
-        cache.put(key, value);
-        return ABSENT.equals(value) ? defaultValue : value;
+    }
+
+    private String load(String key) {
+        AdminSettingsEntity[] rows = ao.find(AdminSettingsEntity.class,
+                Query.select().where("SETTING_KEY = ?", key));
+        return rows.length > 0 ? rows[0].getSettingValue() : ABSENT;
     }
 
     @Override
     public void set(String key, String value) {
-        ao.executeInTransaction(() -> {
-            AdminSettingsEntity[] rows = ao.find(
-                    AdminSettingsEntity.class,
-                    Query.select().where("SETTING_KEY = ?", key));
-
-            AdminSettingsEntity entity = rows.length > 0
-                    ? rows[0]
-                    : ao.create(AdminSettingsEntity.class,
-                            new DBParam("SETTING_KEY", key));
-
-            entity.setSettingValue(value);
-            entity.save();
-            return null;
-        });
+        AoUpsert.save(ao, AdminSettingsEntity.class, "SETTING_KEY", key,
+                entity -> entity.setSettingValue(value));
         cache.remove(key);
         if (Area.byKey(key).isPresent()) {
             pluginLogging.applyAreas(enabledLogAreas());

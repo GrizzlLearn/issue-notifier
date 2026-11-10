@@ -25,7 +25,8 @@ public final class DiffFormatter {
 
     /**
      * Разбирает changelog события и возвращает список изменённых полей.
-     * Если changelog отсутствует или произошла ошибка — возвращает пустой {@link DiffResult}.
+     * Если changelog отсутствует или его чтение бросило {@link GenericEntityException},
+     * возвращает пустой {@link DiffResult}; прочие ошибки передаются вызывающему коду.
      *
      * @param changeLog объект changelog из {@code IssueEvent.getChangeLog()}, может быть null
      * @return набор изменений, никогда не null

@@ -2,12 +2,14 @@ package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheException;
+import com.google.common.base.Throwables;
 import com.atlassian.cache.CacheManager;
 import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import net.java.ao.DBParam;
+import ru.my.impl.util.AoUpsert;
 import net.java.ao.Query;
 import ru.my.ao.UserNotificationSettingsEntity;
 import ru.my.api.UserSettingsService;
@@ -49,7 +51,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
         // maxEntries обязателен: без границы кеш растёт по числу пользователей инстанса
         this.cache = cacheManager.getCache(
                 UserSettingsServiceImpl.class.getName() + ".settings",
-                null,
+                this::loadFromAO,
                 new CacheSettingsBuilder()
                         .maxEntries(10_000)
                         .expireAfterWrite(5, TimeUnit.MINUTES)
@@ -59,16 +61,12 @@ public class UserSettingsServiceImpl implements UserSettingsService {
 
     @Override
     public UserSettings getSettings(ApplicationUser user) {
-        String key = user.getKey();
-        UserSettings cached = cache.get(key);
-        if (cached != null) {
-            return cached;
-        }
         try {
-            UserSettings settings = loadFromAO(user);
-            cache.put(key, settings);
-            return settings;
-        } catch (IllegalStateException e) {
+            return cache.get(user.getKey());
+        } catch (CacheException e) {
+            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
+                throw e;
+            }
             log.warn("AO ещё не инициализирован, getSettings возвращает настройки по умолчанию");
             return UserSettings.defaultSettings();
         }
@@ -80,16 +78,7 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                 user.getKey(), settings.isEnabled() ? "включены" : "выключены",
                 settings.getChannels(), settings.getProjects().size(),
                 settings.isCommentTextHidden() ? "скрыт" : "показывается");
-        ao.executeInTransaction(() -> {
-            UserNotificationSettingsEntity[] rows = ao.find(
-                    UserNotificationSettingsEntity.class,
-                    Query.select().where("USER_KEY = ?", user.getKey()));
-
-            UserNotificationSettingsEntity entity = rows.length > 0
-                    ? rows[0]
-                    : ao.create(UserNotificationSettingsEntity.class,
-                            new DBParam("USER_KEY", user.getKey()));
-
+        AoUpsert.save(ao, UserNotificationSettingsEntity.class, "USER_KEY", user.getKey(), entity -> {
             entity.setEnabled(settings.isEnabled());
             entity.setProjectsRaw(String.join(",", settings.getProjects()));
             entity.setChannelsRaw(settings.getChannels().stream()
@@ -97,16 +86,14 @@ public class UserSettingsServiceImpl implements UserSettingsService {
                     .collect(Collectors.joining(",")));
             entity.setTelegramChatId(settings.getTelegramChatId());
             entity.setCommentTextHidden(settings.isCommentTextHidden());
-            entity.save();
-            return null;
         });
         cache.remove(user.getKey());
     }
 
-    private UserSettings loadFromAO(ApplicationUser user) {
+    private UserSettings loadFromAO(String userKey) {
         UserNotificationSettingsEntity[] rows = ao.find(
                 UserNotificationSettingsEntity.class,
-                Query.select().where("USER_KEY = ?", user.getKey()));
+                Query.select().where("USER_KEY = ?", userKey));
         return rows.length == 0 ? UserSettings.defaultSettings() : toModel(rows[0]);
     }
 

@@ -22,7 +22,7 @@ public interface NotificationDelegationEntity extends Entity {
     String getFromUserKey();
     void setFromUserKey(String fromUserKey);
 
-    /** Ключ пользователя, которому перенаправляются уведомления. */
+    /** Ключи пользователей-получателей через запятую. */
     String getToUserKey();
     void setToUserKey(String toUserKey);
 

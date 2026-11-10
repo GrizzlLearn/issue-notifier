@@ -197,4 +197,14 @@ public class UserSettingsResourceTest {
 
         assertEquals(204, resource.save(dto).getStatus());
     }
+    @Test
+    public void saveRejectsNullChannelBeforeWritingSettings() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        UserSettingsDto dto = new UserSettingsDto();
+        dto.setChannels(java.util.Arrays.asList("EMAIL", null));
+
+        assertEquals(400, resource.save(dto).getStatus());
+        verifyNoInteractions(userSettingsService);
+    }
+
 }

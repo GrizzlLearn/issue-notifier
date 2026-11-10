@@ -187,7 +187,7 @@ public class IssueEventListener {
                 step(issue, "переход в закрывающий статус", () -> {
                     if (isClosingTransition(issue, statusChange.toId())) {
                         notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
-                                List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue()))));
+                                List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue())), notified));
                     }
                 });
             }
@@ -203,7 +203,7 @@ public class IssueEventListener {
      * <p>
      * Ограничения видимости: внутренний комментарий Service Desk уходит только
      * исполнителю задачи, комментарий с ограничением по группе или роли —
-     * всем получателям, но без текста (для этого текст не попадает в значения
+     * получателям с правом видеть комментарий, но без текста (текст не попадает в значения
      * плейсхолдеров, и сервис берёт шаблон «без текста комментария»).
      */
     private void processComment(Issue issue, ApplicationUser author, String body,

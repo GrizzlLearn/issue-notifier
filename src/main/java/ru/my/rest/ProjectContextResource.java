@@ -31,7 +31,7 @@ import java.util.UUID;
 
 /**
  * Контексты проектов для админ-страницы: {@code GET} и {@code PUT}
- * {@code /rest/issue-notifier/1.0/admin/contexts}.
+ * {@code /rest/issue-notifier/1/admin/contexts}.
  * <p>
  * Список правится целиком одним PUT, без отдельных POST и DELETE на контекст:
  * все контексты лежат в одном ключе настроек, поэтому запись списка и так

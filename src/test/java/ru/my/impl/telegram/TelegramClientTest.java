@@ -97,4 +97,14 @@ public class TelegramClientTest {
         }
     }
 
+    @Test
+    public void dropsEntitiesSplitAtEveryPosition() {
+        for (String entity : new String[]{"&amp;", "&lt;", "&#123;", "&#x1F600;"}) {
+            for (int split = 1; split < entity.length(); split++) {
+                String prefix = "x".repeat(TelegramClient.MESSAGE_LIMIT - 2 - split);
+                assertEquals(prefix + "\n…", TelegramClient.trimToLimit(prefix + entity + "z".repeat(20)));
+            }
+        }
+    }
+
 }

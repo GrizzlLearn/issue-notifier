@@ -87,8 +87,8 @@ public class ProjectContextDto {
     }
 
     /**
-     * DTO → модель. Неизвестные ключи действий отбрасывает уже
-     * {@link ru.my.model.ProjectContexts}; здесь только приведение типов.
+     * DTO → модель без проверки ключей действий. При сохранении их проверяет
+     * {@link ProjectContextResource}; здесь только приведение типов.
      */
     public ProjectContext toModel() {
         Map<String, ProjectContext.ActionSetting> settings = new LinkedHashMap<>();

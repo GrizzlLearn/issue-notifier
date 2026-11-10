@@ -76,11 +76,10 @@ public class TelegramClient {
     }
 
     /**
-     * Возвращает новые обновления начиная с {@code offset}.
-     * Если токен не задан — возвращает пустой массив без HTTP-вызова.
+     * Опрос с зафиксированным токеном: offset и запрос относятся к одному боту.
+     * Если токен не задан — возвращает JSON-ответ с пустым result без HTTP-вызова.
      */
-    public String getUpdates(long offset) {
-        String token = adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "");
+    String getUpdates(long offset, String token) {
         if (token.isBlank()) {
             log.debug("Telegram: getUpdates пропущен — токен бота не задан");
             return "{\"ok\":true,\"result\":[]}";
@@ -171,6 +170,10 @@ public class TelegramClient {
         int lastOpen = cut.lastIndexOf('<');
         if (lastOpen > cut.lastIndexOf('>')) {
             cut = cut.substring(0, lastOpen);
+        }
+        int lastEntity = cut.lastIndexOf('&');
+        if (lastEntity > cut.lastIndexOf(';')) {
+            cut = cut.substring(0, lastEntity);
         }
         StringBuilder sb = new StringBuilder(cut).append(ELLIPSIS);
         for (String tag : openTags(cut)) {

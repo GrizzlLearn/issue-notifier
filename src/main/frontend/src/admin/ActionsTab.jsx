@@ -201,7 +201,7 @@ function RecipientsField({ raw, disabled, onChange }) {
       </div>
 
       <div style={hintStyle}>
-        Поле, которого нет в схеме экрана конкретной задачи, получателя не даёт —
+        Поле без значения в конкретной задаче получателя не даёт —
         выбирать поля отдельно на каждый тип задачи не нужно.
       </div>
     </div>
@@ -211,8 +211,8 @@ function RecipientsField({ raw, disabled, onChange }) {
 // Действие в выбранном контексте: галка «уведомлять», получатели и шаблоны текста.
 // Пока действие выключено, остальные его настройки задизейблены — иначе непонятно,
 // работает ли уже настроенное. Шаблоны общие на инстанс, получатели и статусы — на контекст.
-function ActionsPanel({ actions, labels, context, statuses, values, setValue, setContext, errors }) {
-  const selected = contextProjects(context);
+function ActionsPanel({ actions, labels, context, contexts, statuses, values, setValue, setContext, errors }) {
+  const selected = contextProjects(context, contexts);
 
   function setAction(actionKey, patch) {
     const current = contextAction(context, actionKey);
@@ -314,14 +314,14 @@ function ActionsPanel({ actions, labels, context, statuses, values, setValue, se
 
                 return (
                   <div key={ch.templateKey} className="field-group" style={{ marginBottom: 12 }}>
-                    <label className="label" htmlFor={ch.templateKey}>
+                    <label className="label" htmlFor={`${context.id}-${ch.templateKey}`}>
                       {CHANNEL_TITLES[ch.channel] || ch.channel}
                       {channelOff && <span style={{ ...hintStyle, marginLeft: 8, fontWeight: 'normal' }}>канал отключён</span>}
                     </label>
                     {ch.subjectKey && (
                       <>
                         <input
-                          id={ch.subjectKey}
+                          id={`${context.id}-${ch.subjectKey}`}
                           className="text"
                           type="text"
                           placeholder={ch.subjectDefault}
@@ -341,7 +341,7 @@ function ActionsPanel({ actions, labels, context, statuses, values, setValue, se
                       </>
                     )}
                     <textarea
-                      id={ch.templateKey}
+                      id={`${context.id}-${ch.templateKey}`}
                       className="textarea"
                       rows={3}
                       value={values[ch.templateKey] || ''}
@@ -356,11 +356,11 @@ function ActionsPanel({ actions, labels, context, statuses, values, setValue, se
 
                     {ch.templateKeyNoText && (
                       <>
-                        <label className="label" htmlFor={ch.templateKeyNoText} style={{ marginTop: 8 }}>
+                        <label className="label" htmlFor={`${context.id}-${ch.templateKeyNoText}`} style={{ marginTop: 8 }}>
                           {(CHANNEL_TITLES[ch.channel] || ch.channel) + ' — без текста комментария'}
                         </label>
                         <textarea
-                          id={ch.templateKeyNoText}
+                          id={`${context.id}-${ch.templateKeyNoText}`}
                           className="textarea"
                           rows={2}
                           value={values[ch.templateKeyNoText] || ''}
@@ -510,7 +510,7 @@ export default function ActionsTab({ values, setValue, contexts, setContexts, er
         {contexts.map(context => {
           const enabled = enabledActionTitles(context);
           const isDefault = context.id === DEFAULT_CONTEXT;
-          const projects = contextProjects(context);
+          const projects = contextProjects(context, contexts);
 
           return (
             // <details> вместо своего состояния: раскрытие, фокус и клавиатура —
@@ -535,6 +535,7 @@ export default function ActionsTab({ values, setValue, contexts, setContexts, er
                   actions={PAGE_DATA.actions}
                   labels={PROJECT_LABELS}
                   context={context}
+                  contexts={contexts}
                   statuses={PAGE_DATA.statuses}
                   values={values}
                   setValue={setValue}

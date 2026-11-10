@@ -82,8 +82,8 @@ public class PluginLogging {
      * Применяет включённые области логирования. Вызывается при старте и при каждом
      * сохранении настроек — уровни меняются сразу, перезапуск Jira не нужен.
      * <p>
-     * Область без галочки получает INFO, а не «наследование от родителя»: иначе
-     * включённая {@link Area#ALL} не оставила бы способа приглушить шумную область.
+     * Без {@link Area#ALL} область без галочки получает INFO; включённая ALL
+     * задаёт DEBUG всем областям независимо от отдельных галочек.
      */
     public void applyAreas(Set<Area> enabled) {
         boolean all = enabled.contains(Area.ALL);
@@ -115,25 +115,20 @@ public class PluginLogging {
      * ломает сборку, а не тихо отключает галочку в админке.
      */
     private static List<String> loggers(Area area) {
-        switch (area) {
-            case CHANNELS:
-                return names(MattermostClient.class, MattermostNotificationSender.class,
-                        MattermostMessageFormatter.class, TelegramClient.class,
-                        TelegramNotificationSender.class, TelegramMessageFormatter.class,
-                        EmailNotificationSender.class, EmailMessageFormatter.class);
-            case RECIPIENTS:
-                return names(NotificationServiceImpl.class, IssueEventListener.class,
-                        IssueRecipients.class, DelegationServiceImpl.class,
-                        UserSettingsServiceImpl.class, CommentVisibility.class);
-            case SCHEDULER:
-                return names(TelegramPollingService.class);
-            case REST:
-                // здесь классов много и они однородные — берём пакеты целиком
-                return List.of(UserSettingsResource.class.getPackageName(),
-                        AdminSettingsServlet.class.getPackageName());
-            default:
-                return List.of();
-        }
+        return switch (area) {
+            case CHANNELS -> names(MattermostClient.class, MattermostNotificationSender.class,
+                    MattermostMessageFormatter.class, TelegramClient.class,
+                    TelegramNotificationSender.class, TelegramMessageFormatter.class,
+                    EmailNotificationSender.class, EmailMessageFormatter.class);
+            case RECIPIENTS -> names(NotificationServiceImpl.class, IssueEventListener.class,
+                    IssueRecipients.class, DelegationServiceImpl.class,
+                    UserSettingsServiceImpl.class, CommentVisibility.class);
+            case SCHEDULER -> names(TelegramPollingService.class);
+            // здесь классов много и они однородные — берём пакеты целиком
+            case REST -> List.of(UserSettingsResource.class.getPackageName(),
+                    AdminSettingsServlet.class.getPackageName());
+            default -> List.of();
+        };
     }
 
     private static List<String> names(Class<?>... classes) {

@@ -316,7 +316,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(statusChangedTo(CLOSING_STATUS_ID, issueInProject()));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap());
+                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap(), eq(List.of()));
     }
 
     @Test
@@ -326,7 +326,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any());
     }
 
     /** Без выбранных статусов проект уведомлений о закрытии не шлёт — правила по категории нет. */
@@ -335,7 +335,7 @@ public class IssueEventListenerTest {
         listener.onIssueEvent(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap());
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any());
     }
 
     @Test
@@ -372,6 +372,30 @@ public class IssueEventListenerTest {
 
         verify(notificationService).processEvent(
                 any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)));
+    }
+
+    @Test
+    public void assignedRecipientIsExcludedFromClosingAction() throws Exception {
+        closingStatusesInContext();
+        ApplicationUser assignee = mock(ApplicationUser.class);
+        org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
+        org.mockito.Mockito.when(notificationService.processAction(
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
+                .thenReturn(List.of(assignee));
+        GenericValue assigned = mock(GenericValue.class);
+        org.mockito.Mockito.when(assigned.getString("field")).thenReturn("assignee");
+        org.mockito.Mockito.when(assigned.getString("newvalue")).thenReturn("petr");
+        GenericValue closed = mock(GenericValue.class);
+        org.mockito.Mockito.when(closed.getString("field")).thenReturn("status");
+        org.mockito.Mockito.when(closed.getString("newvalue")).thenReturn(CLOSING_STATUS_ID);
+        GenericValue changes = mock(GenericValue.class);
+        org.mockito.Mockito.when(changes.getRelated("ChildChangeItem")).thenReturn(List.of(assigned, closed));
+
+        listener.onIssueEvent(new IssueEvent(issueInProject(), null, null, null, changes,
+                Collections.<String, Object>emptyMap(), EventType.ISSUE_UPDATED_ID));
+
+        verify(notificationService).processAction(any(), any(), eq(NotificationAction.CLOSED),
+                eq(List.of()), anyMap(), eq(List.of(assignee)));
     }
 
     @Test

@@ -95,6 +95,10 @@ public class UserSettingsResource {
         if (dto == null) return badRequest("Тело запроса не задано");
         log.debug("{} сохраняет свои настройки уведомлений", user.getKey());
 
+        if (dto.getChannels() != null && dto.getChannels().stream().anyMatch(java.util.Objects::isNull)) {
+            return badRequest("Список каналов не должен содержать null");
+        }
+
         String chatId = dto.getTelegramChatId();
         if (chatId != null && !chatId.isBlank() && !CHAT_ID.matcher(chatId.trim()).matches()) {
             return badRequest("Telegram chat_id — это число; его присылает бот в ответ на /start");

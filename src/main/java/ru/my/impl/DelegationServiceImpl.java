@@ -2,13 +2,15 @@ package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.cache.Cache;
+import com.atlassian.cache.CacheException;
+import com.google.common.base.Throwables;
 import com.atlassian.cache.CacheManager;
 import com.atlassian.cache.CacheSettingsBuilder;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.plugin.spring.scanner.annotation.export.ExportAsService;
 import com.atlassian.plugin.spring.scanner.annotation.imports.ComponentImport;
-import net.java.ao.DBParam;
+import ru.my.impl.util.AoUpsert;
 import net.java.ao.Query;
 import ru.my.ao.NotificationDelegationEntity;
 import ru.my.api.DelegationService;
@@ -77,7 +79,7 @@ public class DelegationServiceImpl implements DelegationService {
         this.userManager = userManager;
         this.cache = cacheManager.getCache(
                 DelegationServiceImpl.class.getName() + ".delegations",
-                null,
+                this::load,
                 new CacheSettingsBuilder()
                         .maxEntries(10_000)
                         .expireAfterWrite(5, TimeUnit.MINUTES)
@@ -134,23 +136,12 @@ public class DelegationServiceImpl implements DelegationService {
                 .collect(Collectors.joining(KEY_SEPARATOR));
         // AO работает с java.util.Date — конвертируем на границе слоя
         Date dateUntil = activeUntil != null ? Date.from(activeUntil) : null;
-        ao.executeInTransaction(() -> {
-            NotificationDelegationEntity[] rows = ao.find(
-                    NotificationDelegationEntity.class,
-                    Query.select().where("FROM_USER_KEY = ?", from.getKey()));
-
-            NotificationDelegationEntity entity = rows.length > 0
-                    ? rows[0]
-                    : ao.create(NotificationDelegationEntity.class,
-                            new DBParam("FROM_USER_KEY", from.getKey()));
-
+        AoUpsert.save(ao, NotificationDelegationEntity.class, "FROM_USER_KEY", from.getKey(), entity -> {
             entity.setToUserKey(toUserKeysCsv);
             entity.setActiveUntil(dateUntil);
-            entity.save();
-            return null;
         });
         cache.remove(from.getKey());
-        log.debug("Делегирование {} снято", from.getKey());
+        log.debug("Делегирование {} сохранено", from.getKey());
     }
 
     @Override
@@ -167,27 +158,22 @@ public class DelegationServiceImpl implements DelegationService {
         cache.remove(from.getKey());
     }
 
-    // null из кеша — это промах, а не «делегации нет»: последнее хранится
-    // как Optional.empty(), иначе пустой ответ перечитывался бы каждый раз
-    @SuppressWarnings("OptionalAssignedToNull")
     @Override
     public Optional<DelegationInfo> getDelegation(ApplicationUser from) {
-        Optional<DelegationInfo> cached = cache.get(from.getKey());
-        if (cached != null) {
-            return cached;
-        }
-        NotificationDelegationEntity[] rows;
         try {
-            rows = ao.find(NotificationDelegationEntity.class,
-                    Query.select().where("FROM_USER_KEY = ?", from.getKey()));
-        } catch (IllegalStateException e) {
-            // AO ещё не поднялся — ответ не кешируем, иначе он застрянет на пять минут
+            return cache.get(from.getKey());
+        } catch (CacheException e) {
+            if (!(Throwables.getRootCause(e) instanceof IllegalStateException)) {
+                throw e;
+            }
             log.warn("AO ещё не инициализирован, getDelegation возвращает пустой результат");
             return Optional.empty();
         }
-        Optional<DelegationInfo> loaded = toInfo(rows);
-        cache.put(from.getKey(), loaded);
-        return loaded;
+    }
+
+    private Optional<DelegationInfo> load(String userKey) {
+        return toInfo(ao.find(NotificationDelegationEntity.class,
+                Query.select().where("FROM_USER_KEY = ?", userKey)));
     }
 
     private static Optional<DelegationInfo> toInfo(NotificationDelegationEntity[] rows) {

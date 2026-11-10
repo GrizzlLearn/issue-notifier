@@ -9,8 +9,8 @@ import java.util.List;
  * {@code action.<key>.template.<channel>}. Включается действие не здесь,
  * а в контексте проектов ({@link ProjectContext#isEnabled}).
  * Встроенных текстов нет — пустой шаблон означает, что по этому каналу
- * уведомление не отправляется. Шаблоны поддерживаются для Mattermost
- * и Telegram; по email уведомления о действиях не рассылаются.
+ * уведомление не отправляется. Шаблоны поддерживаются для Mattermost,
+ * Telegram и email.
  */
 public enum NotificationAction {
 

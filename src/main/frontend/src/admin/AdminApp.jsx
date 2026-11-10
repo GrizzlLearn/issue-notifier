@@ -189,7 +189,7 @@ export default function AdminApp() {
           ))}
         </div>
 
-        <div
+        <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
           className="in-tab-panel"
           role="tabpanel"
           id={`in-admin-panel-${tab}`}
@@ -206,7 +206,7 @@ export default function AdminApp() {
                          onTested={channel => setTestedChannels(prev =>
                            prev.includes(channel) ? prev : [...prev, channel])} />
           )}
-        </div>
+        </fieldset>
       </div>
 
       {/* строка действий липнет к низу: страница длинная, иначе баннер и кнопка

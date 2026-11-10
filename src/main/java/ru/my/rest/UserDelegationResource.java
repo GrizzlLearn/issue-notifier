@@ -58,7 +58,7 @@ public class UserDelegationResource {
         DelegationInfo info = delegation.get();
         Instant activeUntil = info.getActiveUntil();
         String activeUntilStr = activeUntil == null ? null
-                : activeUntil.atOffset(ZoneOffset.UTC).toLocalDate().toString();
+                : activeUntil.atOffset(ZoneOffset.UTC).toLocalDate().minusDays(1).toString();
 
         return Response.ok(new DelegationDto(info.getToUserKeys(), activeUntilStr)).build();
     }

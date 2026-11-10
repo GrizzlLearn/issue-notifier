@@ -66,7 +66,11 @@ public final class ProjectContext {
         this.projects = projects == null ? Set.of() : new LinkedHashSet<>(projects);
         this.categories = categories == null ? Set.of() : new LinkedHashSet<>(categories);
         this.actions = actions == null ? Map.of() : new LinkedHashMap<>(actions);
-        this.closedStatuses = closedStatuses == null ? Map.of() : new LinkedHashMap<>(closedStatuses);
+        this.closedStatuses = new LinkedHashMap<>();
+        if (closedStatuses != null) {
+            closedStatuses.forEach((project, statuses) ->
+                    this.closedStatuses.put(project, new LinkedHashSet<>(statuses)));
+        }
     }
 
     public String id() {

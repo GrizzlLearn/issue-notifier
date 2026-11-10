@@ -15,6 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.my.api.AdminSettingsService;
 import ru.my.model.NotificationChannel;
+import ru.my.model.ChannelKeys;
+import java.util.Map;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -49,7 +51,7 @@ public class TelegramPollingService implements JobRunner {
     /** Первый опрос не сразу: на старте плагина AO и настройки ещё поднимаются. */
     private static final long INITIAL_DELAY_MS = 30_000;
 
-    /** Ключ настройки с offset — переживает перезапуск и переезд задания на другую ноду. */
+    /** Префикс ключа offset: суффикс — публичный числовой id бота, не секрет токена. */
     static final String OFFSET_KEY = "telegram.pollOffset";
 
     private static final Pattern START = Pattern.compile("/start(?:@[A-Za-z0-9_]+)?(?:\\s+.*)?", Pattern.DOTALL);
@@ -84,7 +86,7 @@ public class TelegramPollingService implements JobRunner {
 
     @PreDestroy
     public void destroy() {
-        schedulerService.unscheduleJob(JOB_ID);
+        // Расписание общее: остановка этой ноды не должна выключать остальные.
         schedulerService.unregisterJobRunner(RUNNER_KEY);
         log.info("Опрос Telegram остановлен");
     }
@@ -103,9 +105,16 @@ public class TelegramPollingService implements JobRunner {
             return;
         }
         try {
-            long offset = readOffset();
+            String token = adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "");
+            if (token.isBlank()) return;
+            String botId = token.split(":", 2)[0];
+            if (!botId.matches("[0-9]+")) {
+                throw new TelegramClient.TelegramException("Некорректный идентификатор Telegram-бота");
+            }
+            String offsetKey = OFFSET_KEY + "." + botId;
+            long offset = readOffset(offsetKey);
             long nextOffset = offset;
-            JsonNode updates = TelegramClient.parseResponse(client.getUpdates(offset)).path("result");
+            JsonNode updates = TelegramClient.parseResponse(client.getUpdates(offset, token)).path("result");
             if (!updates.isArray()) {
                 throw new TelegramClient.TelegramException("Некорректный ответ getUpdates: ожидается массив result");
             }
@@ -135,7 +144,8 @@ public class TelegramPollingService implements JobRunner {
                 try {
                     client.sendMessage(chatId,
                             "Ваш Telegram chat_id: <code>" + chatId + "</code>\n\n" +
-                            "Скопируйте это число в настройки уведомлений Jira.");
+                            "Скопируйте это число в настройки уведомлений Jira.",
+                            Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, token));
                     log.debug("Ответили на /start в чате {}", chatId);
                 } catch (Exception e) {
                     log.warn("Не удалось ответить на /start в чате {}: {}", chatId, e.getMessage());
@@ -143,7 +153,7 @@ public class TelegramPollingService implements JobRunner {
             }
             // пишем только когда offset реально сдвинулся — иначе запись в БД на каждый опрос
             if (nextOffset != offset) {
-                adminSettings.set(OFFSET_KEY, String.valueOf(nextOffset));
+                adminSettings.set(offsetKey, String.valueOf(nextOffset));
                 log.debug("Опрос Telegram: offset {} → {}", offset, nextOffset);
             }
         } catch (Exception e) {
@@ -151,10 +161,11 @@ public class TelegramPollingService implements JobRunner {
         }
     }
 
-    private long readOffset() {
-        String raw = adminSettings.get(OFFSET_KEY, "0");
+    private long readOffset(String offsetKey) {
+        String raw = adminSettings.get(offsetKey, "0");
         try {
-            return Long.parseLong(raw.trim());
+            long offset = Long.parseLong(raw.trim());
+            return Math.max(0, offset);
         } catch (NumberFormatException e) {
             log.warn("Некорректный offset '{}' в настройках, начинаем с нуля", raw);
             return 0;

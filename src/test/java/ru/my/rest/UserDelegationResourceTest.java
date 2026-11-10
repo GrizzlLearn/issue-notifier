@@ -62,7 +62,7 @@ public class UserDelegationResourceTest {
     @Test
     public void getReturnsDelegationWithDate() {
         when(authContext.getLoggedInUser()).thenReturn(user);
-        Instant until = LocalDate.of(2026, 12, 31).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant until = LocalDate.of(2027, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
         when(delegationService.getDelegation(user)).thenReturn(Optional.of(new DelegationInfo(List.of("bob"), until)));
 
         Response response = resource.get();
@@ -227,6 +227,21 @@ public class UserDelegationResourceTest {
 
         assertEquals(400, resource.set(new DelegationDto(many, null)).getStatus());
         verify(delegationService, never()).setDelegation(any(), anyList(), any());
+    }
+
+    @Test
+    public void delegationDateSurvivesSaveReadSave() {
+        when(authContext.getLoggedInUser()).thenReturn(user);
+        when(userManager.getUserByKey("bob")).thenReturn(bob);
+        Instant until = Instant.parse("2027-01-01T00:00:00Z");
+        when(delegationService.getDelegation(user))
+                .thenReturn(Optional.of(new DelegationInfo(List.of("bob"), until)));
+
+        assertEquals(204, resource.set(new DelegationDto(List.of("bob"), "2026-12-31")).getStatus());
+        DelegationDto loaded = (DelegationDto) resource.get().getEntity();
+        assertEquals("2026-12-31", loaded.getActiveUntil());
+        assertEquals(204, resource.set(loaded).getStatus());
+        verify(delegationService, times(2)).setDelegation(user, List.of(bob), until);
     }
 
 }

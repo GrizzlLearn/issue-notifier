@@ -128,12 +128,12 @@ function CommentTextChoice({ hidden, onChange }) {
 
 // Сохранение настроек одно на все вкладки: PUT принимает объект целиком, а
 // настройки лежат выше, в модалке, поэтому кнопка на любой вкладке пишет всё сразу.
-function useSaveSettings(settings, onSaved) {
-  const [saving, setSaving] = useState(false);
+function useSaveSettings(settings, onSaved, saving, setSaving) {
   const [error, setError] = useState(null);
   const [success, showSuccess] = useSuccessTimer();
 
   async function save(problem) {
+    if (saving) return;
     if (problem) {
       setError(problem);
       return;
@@ -151,11 +151,11 @@ function useSaveSettings(settings, onSaved) {
     }
   }
 
-  return { saving, error, success, save };
+  return { error, success, save };
 }
 
-function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
-  const { saving, error, success, save } = useSaveSettings(settings, onSaved);
+function SettingsTab({ settings, onChange, telegramBotUsername, onSaved, saving, setSaving }) {
+  const { error, success, save } = useSaveSettings(settings, onSaved, saving, setSaving);
 
   // Подстраховка на случай неполного/битого ответа сервера — UI не должен падать
   const channels = settings.channels ?? [];
@@ -267,8 +267,8 @@ function SettingsTab({ settings, onChange, telegramBotUsername, onSaved }) {
 // Вкладка «Наблюдение»: в каких проектах получать уведомления об изменениях задач,
 // за которыми пользователь наблюдает. Появляется только когда администратор включил
 // эту рассылку — иначе ограничивать нечего.
-function WatchingTab({ settings, onChange, projectItems, onSaved }) {
-  const { saving, error, success, save } = useSaveSettings(settings, onSaved);
+function WatchingTab({ settings, onChange, projectItems, onSaved, saving, setSaving }) {
+  const { error, success, save } = useSaveSettings(settings, onSaved, saving, setSaving);
 
   const projects = settings.projects ?? ['*'];
   const allProjects = projects.length === 1 && projects[0] === '*';
@@ -470,6 +470,7 @@ function DelegationTab({ delegation, delegateItems, onSaved, onDirtyChange }) {
 export default function UserSettingsModal({ onClose }) {
   const [tab, setTab] = useState('settings');
   const [settings, setSettings] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [delegation, setDelegation] = useState(null);
   const [projectItems, setProjectItems] = useState([]);
   const [delegateItems, setDelegateItems] = useState([]);
@@ -581,17 +582,18 @@ export default function UserSettingsModal({ onClose }) {
       // поэтому окно не скачет при переключении вкладок. Скрытая панель
       // спрятана через visibility — так она не ловит фокус и не читается
       // скринридером, но продолжает занимать место
-      <div className="in-tab-stack">
+      <fieldset disabled={saving} className="in-tab-stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <div role="tabpanel" id="in-panel-settings" aria-labelledby="in-tab-settings"
              className={'in-tab-layer' + (tab === 'settings' ? ' in-active' : '')}>
           <SettingsTab settings={settings} onChange={setSettings}
+                       saving={saving} setSaving={setSaving}
                        telegramBotUsername={settings?.telegramBotUsername} projectItems={projectItems}
                        onSaved={saved => { savedSettingsRef.current = JSON.stringify(saved); }} />
         </div>
         {settings?.watchersEnabled === true && (
           <div role="tabpanel" id="in-panel-watching" aria-labelledby="in-tab-watching"
                className={'in-tab-layer' + (tab === 'watching' ? ' in-active' : '')}>
-            <WatchingTab settings={settings} onChange={setSettings} projectItems={projectItems}
+            <WatchingTab saving={saving} setSaving={setSaving} settings={settings} onChange={setSettings} projectItems={projectItems}
                          onSaved={saved => { savedSettingsRef.current = JSON.stringify(saved); }} />
           </div>
         )}
@@ -600,7 +602,7 @@ export default function UserSettingsModal({ onClose }) {
           <DelegationTab delegation={delegation} delegateItems={delegateItems} onSaved={setDelegation}
                          onDirtyChange={setDelegationDirty} />
         </div>
-      </div>
+      </fieldset>
     );
   }
 

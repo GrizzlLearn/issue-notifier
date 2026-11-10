@@ -10,7 +10,7 @@ import net.java.ao.schema.Unique;
  * AO-сущность: настройки уведомлений одного пользователя.
  * <p>
  * Одна строка на пользователя. {@code USER_KEY} имеет уникальный индекс на уровне БД
- * (защита от race condition при параллельном upsert) и NOT NULL-ограничение.
+ * (не допускает дубли строк) и NOT NULL-ограничение.
  */
 @Table("USER_NOTIF_SETTINGS")
 public interface UserNotificationSettingsEntity extends Entity {
