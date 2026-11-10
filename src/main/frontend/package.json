@@ -6,7 +6,7 @@
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
     "lint": "eslint src",
-    "test": "node test/contextProjects.cjs"
+    "test": "node --test test/*.cjs"
   },
   "dependencies": {
     "react": "^17.0.2",

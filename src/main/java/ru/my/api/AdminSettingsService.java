@@ -27,6 +27,15 @@ public interface AdminSettingsService {
     void set(String key, String value);
 
     /**
+     * Сохраняет настройку, только если текущее значение в БД равно ожидаемому.
+     * Проверка и запись защищены общей для нод блокировкой; кеш для проверки не используется.
+     *
+     * @param expectedValue значение, прочитанное клиентом; для отсутствующей настройки — пустая строка
+     * @return false при конфликте, без изменения настройки
+     */
+    boolean compareAndSet(String key, String expectedValue, String value);
+
+    /**
      * Проверяет, включён ли канал уведомлений в глобальных настройках.
      * Ключ в хранилище: {@code channel.name().toLowerCase() + ".enabled"}.
      *

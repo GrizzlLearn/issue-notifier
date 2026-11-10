@@ -1,6 +1,7 @@
 package ru.my.impl;
 
 import com.atlassian.activeobjects.external.ActiveObjects;
+import com.atlassian.beehive.ClusterLockService;
 import com.atlassian.cache.Cache;
 import com.atlassian.cache.CacheException;
 import com.google.common.base.Throwables;
@@ -24,7 +25,9 @@ import javax.inject.Named;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Реализация {@link AdminSettingsService} на базе Active Objects.
@@ -51,13 +54,16 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
     private final ActiveObjects ao;
     private final Cache<String, String> cache;
     private final PluginLogging pluginLogging;
+    private final ClusterLockService clusterLockService;
 
     @Inject
     public AdminSettingsServiceImpl(@ComponentImport ActiveObjects ao,
                                     @ComponentImport CacheManager cacheManager,
-                                    PluginLogging pluginLogging) {
+                                    PluginLogging pluginLogging,
+                                    @ComponentImport ClusterLockService clusterLockService) {
         this.ao = ao;
         this.pluginLogging = pluginLogging;
+        this.clusterLockService = clusterLockService;
         this.cache = cacheManager.getCache(
                 AdminSettingsServiceImpl.class.getName() + ".settings",
                 this::load,
@@ -108,9 +114,45 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     @Override
     public void set(String key, String value) {
+        Lock lock = lockFor(key);
+        lock.lock();
+        try {
+            store(key, value);
+        } finally {
+            lock.unlock();
+        }
+        applyLoggingIfNeeded(key);
+    }
+
+    @Override
+    public boolean compareAndSet(String key, String expectedValue, String value) {
+        Lock lock = lockFor(key);
+        lock.lock();
+        try {
+            String current = load(key);
+            if (!Objects.equals(ABSENT.equals(current) ? "" : current, expectedValue)) {
+                cache.remove(key);
+                return false;
+            }
+            store(key, value);
+        } finally {
+            lock.unlock();
+        }
+        applyLoggingIfNeeded(key);
+        return true;
+    }
+
+    private Lock lockFor(String key) {
+        return clusterLockService.getLockForName(AdminSettingsServiceImpl.class.getName() + "." + key);
+    }
+
+    private void store(String key, String value) {
         AoUpsert.save(ao, AdminSettingsEntity.class, "SETTING_KEY", key,
                 entity -> entity.setSettingValue(value));
         cache.remove(key);
+    }
+
+    private void applyLoggingIfNeeded(String key) {
         if (Area.byKey(key).isPresent()) {
             pluginLogging.applyAreas(enabledLogAreas());
         }

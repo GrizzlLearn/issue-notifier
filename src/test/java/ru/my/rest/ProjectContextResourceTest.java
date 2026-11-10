@@ -23,7 +23,6 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -44,7 +43,15 @@ public class ProjectContextResourceTest {
     @Before
     public void setUp() {
         resource = new ProjectContextResource(authContext, globalPermissionManager, adminSettingsService);
+        when(adminSettingsService.get(ProjectContexts.KEY, "")).thenReturn("");
+        when(adminSettingsService.compareAndSet(eq(ProjectContexts.KEY), anyString(), anyString())).thenReturn(true);
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, admin)).thenReturn(true);
+    }
+
+    private Response save(List<ProjectContextDto> body) {
+        Response current = resource.get();
+        Object tag = current.getMetadata().getFirst("ETag");
+        return resource.save(body, tag == null ? null : tag.toString());
     }
 
     private static ProjectContextDto dto(String id, String name, List<String> projects, List<String> categories) {
@@ -59,7 +66,7 @@ public class ProjectContextResourceTest {
     /** Значение, записанное в настройки последним PUT-ом. */
     private List<ProjectContext> saved() {
         ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
-        verify(adminSettingsService).set(eq(ProjectContexts.KEY), value.capture());
+        verify(adminSettingsService).compareAndSet(eq(ProjectContexts.KEY), anyString(), value.capture());
         return ProjectContexts.parse(value.getValue());
     }
 
@@ -93,21 +100,21 @@ public class ProjectContextResourceTest {
     @Test
     public void putReturns403ForNonAdmin() {
         when(authContext.getLoggedInUser()).thenReturn(regular);
-        assertEquals(403, resource.save(List.of()).getStatus());
-        verify(adminSettingsService, never()).set(anyString(), any());
+        assertEquals(403, save(List.of()).getStatus());
+        verify(adminSettingsService, never()).compareAndSet(anyString(), anyString(), anyString());
     }
 
     @Test
     public void putReturns400WhenBodyIsNull() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
-        assertEquals(400, resource.save(null).getStatus());
+        assertEquals(400, save(null).getStatus());
     }
 
     @Test
     public void putAssignsIdToNewContext() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        assertEquals(204, resource.save(List.of(
+        assertEquals(200, save(List.of(
                 dto(null, "Категория А", List.of("HELP"), List.of()))).getStatus());
 
         List<ProjectContext> contexts = saved();
@@ -122,7 +129,7 @@ public class ProjectContextResourceTest {
     public void putKeepsExistingId() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        resource.save(List.of(dto("a1b2c3d4", "Портал", List.of("HELP"), List.of())));
+        save(List.of(dto("a1b2c3d4", "Портал", List.of("HELP"), List.of())));
 
         assertEquals("a1b2c3d4", saved().get(0).id());
     }
@@ -131,8 +138,8 @@ public class ProjectContextResourceTest {
     public void putReturns400WhenNameIsEmpty() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        assertEquals(400, resource.save(List.of(dto(null, "  ", List.of("HELP"), List.of()))).getStatus());
-        verify(adminSettingsService, never()).set(anyString(), any());
+        assertEquals(400, save(List.of(dto(null, "  ", List.of("HELP"), List.of()))).getStatus());
+        verify(adminSettingsService, never()).compareAndSet(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -140,26 +147,26 @@ public class ProjectContextResourceTest {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         String name = "и".repeat(ProjectContextResource.MAX_NAME + 1);
 
-        assertEquals(400, resource.save(List.of(dto(null, name, List.of(), List.of()))).getStatus());
+        assertEquals(400, save(List.of(dto(null, name, List.of(), List.of()))).getStatus());
     }
 
     @Test
     public void putReturns400WhenProjectIsInTwoContexts() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.save(List.of(
+        Response response = save(List.of(
                 dto(null, "Первый", List.of("HELP"), List.of()),
                 dto(null, "Второй", List.of("HELP"), List.of())));
 
         assertEquals(400, response.getStatus());
-        verify(adminSettingsService, never()).set(anyString(), any());
+        verify(adminSettingsService, never()).compareAndSet(anyString(), anyString(), anyString());
     }
 
     @Test
     public void putReturns400WhenCategoryIsInTwoContexts() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.save(List.of(
+        Response response = save(List.of(
                 dto(null, "Первый", List.of(), List.of("10000")),
                 dto(null, "Второй", List.of(), List.of("10000"))));
 
@@ -174,7 +181,7 @@ public class ProjectContextResourceTest {
             body.add(dto(null, "Контекст " + i, List.of("P" + i), List.of()));
         }
 
-        assertEquals(400, resource.save(body).getStatus());
+        assertEquals(400, save(body).getStatus());
     }
 
     @Test
@@ -183,7 +190,7 @@ public class ProjectContextResourceTest {
         ProjectContextDto dto = dto(null, "Контекст", List.of("HELP"), List.of());
         dto.setActions(Map.of("mentoin", new ProjectContextDto.ActionDto(true, "")));
 
-        assertEquals(400, resource.save(List.of(dto)).getStatus());
+        assertEquals(400, save(List.of(dto)).getStatus());
     }
 
     @Test
@@ -194,7 +201,7 @@ public class ProjectContextResourceTest {
                 new ProjectContextDto.ActionDto(true, "reporter,assignee")));
         dto.setClosedStatuses(Map.of("HELP", List.of("10001")));
 
-        resource.save(List.of(dto));
+        save(List.of(dto));
 
         ProjectContext context = saved().get(0);
         assertTrue(context.isEnabled(NotificationAction.CLOSED));
@@ -212,7 +219,7 @@ public class ProjectContextResourceTest {
                 Map.of())));
         when(adminSettingsService.get(ProjectContexts.KEY, "")).thenReturn(stored);
 
-        resource.save(List.of(dto(null, "Портал", List.of("HELP"), List.of())));
+        save(List.of(dto(null, "Портал", List.of("HELP"), List.of())));
 
         ProjectContext defaultContext = ProjectContexts.byId(saved(), ProjectContexts.DEFAULT_ID);
         assertNotNull(defaultContext);
@@ -226,7 +233,7 @@ public class ProjectContextResourceTest {
         dto.setActions(Map.of(NotificationAction.ASSIGNED.key(),
                 new ProjectContextDto.ActionDto(true, "")));
 
-        resource.save(List.of(dto));
+        save(List.of(dto));
 
         ProjectContext defaultContext = ProjectContexts.byId(saved(), ProjectContexts.DEFAULT_ID);
         assertNotNull(defaultContext);
@@ -237,10 +244,53 @@ public class ProjectContextResourceTest {
     public void putReturns400WhenDefaultContextIsListedTwice() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
-        Response response = resource.save(List.of(
+        Response response = save(List.of(
                 dto(ProjectContexts.DEFAULT_ID, "Остальные", List.of(), List.of()),
                 dto(ProjectContexts.DEFAULT_ID, "Остальные", List.of(), List.of())));
 
         assertEquals(400, response.getStatus());
     }
+    @Test
+    public void putRequiresIfMatchWithoutWriting() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        assertEquals(428, resource.save(List.of(), null).getStatus());
+        assertEquals(428, resource.save(List.of(), " ").getStatus());
+        verify(adminSettingsService, never()).compareAndSet(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    public void staleTagCannotOverwriteUpdatedContexts() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        String oldTag = resource.get().getMetadata().getFirst("ETag").toString();
+        when(adminSettingsService.get(ProjectContexts.KEY, "")).thenReturn("[]");
+        assertEquals(409, resource.save(List.of(), oldTag).getStatus());
+        verify(adminSettingsService, never()).compareAndSet(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    public void concurrentChangeDuringSaveReturnsConflict() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        when(adminSettingsService.compareAndSet(eq(ProjectContexts.KEY), anyString(), anyString())).thenReturn(false);
+        assertEquals(409, save(List.of()).getStatus());
+    }
+
+    @Test
+    public void successfulSaveReturnsCanonicalBodyAndTag() {
+        when(authContext.getLoggedInUser()).thenReturn(admin);
+        Response response = save(List.of(dto(null, "Portal", List.of("HELP"), List.of())));
+        assertEquals(200, response.getStatus());
+        ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
+        verify(adminSettingsService).compareAndSet(eq(ProjectContexts.KEY), eq(""), value.capture());
+        when(adminSettingsService.get(ProjectContexts.KEY, "")).thenReturn(value.getValue());
+        Response loaded = resource.get();
+        assertEquals(loaded.getMetadata().getFirst("ETag"), response.getMetadata().getFirst("ETag"));
+        assertTrue(response.getEntity() instanceof List<?>);
+        List<?> body = (List<?>) response.getEntity();
+        assertEquals(2, body.size());
+        assertTrue(body.get(0) instanceof ProjectContextDto);
+        ProjectContextDto savedDto = (ProjectContextDto) body.get(0);
+        assertEquals(ProjectContexts.parse(value.getValue()).get(0).id(), savedDto.getId());
+        assertEquals("Portal", savedDto.getName());
+    }
+
 }

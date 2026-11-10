@@ -99,16 +99,18 @@ export async function saveAdminSettings(data) {
 export async function getContexts(signal) {
   const resp = await fetch(`${apiBase()}/admin/contexts`, { credentials: 'same-origin', signal });
   await checkOk(resp);
-  return resp.json();
+  return { contexts: await resp.json(), etag: resp.headers.get('ETag') };
 }
 
-export async function saveContexts(contexts) {
-  await checkOk(await fetch(`${apiBase()}/admin/contexts`, {
+export async function saveContexts(contexts, etag) {
+  const resp = await fetch(`${apiBase()}/admin/contexts`, {
     method: 'PUT',
     credentials: 'same-origin',
-    headers: mutationHeaders,
+    headers: { ...mutationHeaders, 'If-Match': etag },
     body: JSON.stringify(contexts),
-  }));
+  });
+  await checkOk(resp);
+  return { contexts: await resp.json(), etag: resp.headers.get('ETag') };
 }
 
 // Проверочная отправка: отправляем значения прямо из формы, ещё не сохранённые,

@@ -55,6 +55,7 @@ export default function AdminApp() {
   // контексты живут отдельным эндпоинтом и правятся списком целиком
   const [contexts, setContexts] = useState([]);
   const [savedContexts, setSavedContexts] = useState('');
+  const [contextsEtag, setContextsEtag] = useState(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -62,8 +63,9 @@ export default function AdminApp() {
       .then(([data, ctx]) => {
         setValues(data);
         setSaved(data);
-        setContexts(ctx);
-        setSavedContexts(JSON.stringify(ctx));
+        setContexts(ctx.contexts);
+        setSavedContexts(JSON.stringify(ctx.contexts));
+        setContextsEtag(ctx.etag);
         setLoading(false);
       })
       .catch(e => {
@@ -116,14 +118,16 @@ export default function AdminApp() {
       return;
     }
     setSaving(true); setError(null); setSuccess(false);
+    let contextsSaved = false;
     try {
       // контексты первыми: они валидируются на сервере строже, и при отказе
       // настройки каналов не должны уехать половиной
       if (contextsDirty) {
-        await saveContexts(contextsToSave);
-        const fresh = await getContexts();
-        setContexts(fresh);
-        setSavedContexts(JSON.stringify(fresh));
+        const fresh = await saveContexts(contextsToSave, contextsEtag);
+        setContexts(fresh.contexts);
+        setSavedContexts(JSON.stringify(fresh.contexts));
+        setContextsEtag(fresh.etag);
+        contextsSaved = true;
       }
       if (Object.keys(payload).length > 0) {
         await saveAdminSettings(payload);
@@ -141,7 +145,9 @@ export default function AdminApp() {
       clearTimeout(successTimerRef.current);
       successTimerRef.current = setTimeout(() => setSuccess(false), 2500);
     } catch (e) {
-      setError(e.message);
+      setError(contextsSaved
+        ? 'Контексты сохранены. Остальные настройки не удалось сохранить: ' + e.message
+        : e.message);
     } finally {
       setSaving(false);
     }

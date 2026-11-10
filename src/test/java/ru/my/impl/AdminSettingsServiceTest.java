@@ -26,6 +26,10 @@ public class AdminSettingsServiceTest {
     private ActiveObjects ao;
     @Mock
     private PluginLogging pluginLogging;
+    @Mock
+    private com.atlassian.beehive.ClusterLockService clusterLockService;
+    @Mock
+    private com.atlassian.beehive.ClusterLock clusterLock;
 
     private AutoCloseable mocks;
     private AdminSettingsServiceImpl service;
@@ -33,7 +37,11 @@ public class AdminSettingsServiceTest {
     @Before
     public void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        service = new AdminSettingsServiceImpl(ao, new MemoryCacheManager(), pluginLogging);
+        var sharedLock = new java.util.concurrent.locks.ReentrantLock();
+        doAnswer(call -> { sharedLock.lock(); return null; }).when(clusterLock).lock();
+        doAnswer(call -> { sharedLock.unlock(); return null; }).when(clusterLock).unlock();
+        when(clusterLockService.getLockForName(anyString())).thenReturn(clusterLock);
+        service = new AdminSettingsServiceImpl(ao, new MemoryCacheManager(), pluginLogging, clusterLockService);
     }
 
     @After
@@ -152,7 +160,7 @@ public class AdminSettingsServiceTest {
     @Test
     public void invalidationCannotLeaveAnInFlightOldLoadCached() throws Exception {
         var cacheManager = spy(new MemoryCacheManager());
-        service = new AdminSettingsServiceImpl(ao, cacheManager, pluginLogging);
+        service = new AdminSettingsServiceImpl(ao, cacheManager, pluginLogging, clusterLockService);
         verify(cacheManager).getCache(anyString(),
                 org.mockito.ArgumentMatchers.<com.atlassian.cache.CacheLoader<String, String>>notNull(),
                 any(com.atlassian.cache.CacheSettings.class));
@@ -193,6 +201,78 @@ public class AdminSettingsServiceTest {
             releaseLoad.countDown();
             pool.shutdownNow();
         }
+    }
+
+    @Test
+    public void compareAndSetRejectsStaleApplicationCacheUsingFreshDatabaseRead() {
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenReturn("old");
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+        assertEquals("old", service.get("key", ""));
+        when(row.getSettingValue()).thenReturn("other-node");
+        assertFalse(service.compareAndSet("key", "old", "mine"));
+        assertEquals("other-node", service.get("key", ""));
+        verify(ao, times(3)).find(eq(AdminSettingsEntity.class), any(Query.class));
+        verify(ao, never()).executeInTransaction(any());
+        verify(row, never()).save();
+    }
+
+    @Test
+    public void successfulCompareAndSetInvalidatesCachedValue() {
+        var value = new java.util.concurrent.atomic.AtomicReference<>("old");
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenAnswer(call -> value.get());
+        doAnswer(call -> { value.set(call.getArgument(0)); return null; })
+                .when(row).setSettingValue(anyString());
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+        when(ao.executeInTransaction(any())).thenAnswer(call ->
+                ((com.atlassian.sal.api.transaction.TransactionCallback<?>) call.getArgument(0)).doInTransaction());
+        assertEquals("old", service.get("key", ""));
+        assertTrue(service.compareAndSet("key", "old", "new"));
+        assertEquals("new", service.get("key", ""));
+        verify(row).save();
+    }
+
+    @Test
+    public void twoServiceInstancesCannotBothSaveTheSameExpectedValue() throws Exception {
+        var value = new java.util.concurrent.atomic.AtomicReference<>("old");
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenAnswer(call -> value.get());
+        doAnswer(call -> { value.set(call.getArgument(0)); return null; })
+                .when(row).setSettingValue(anyString());
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+        when(ao.executeInTransaction(any())).thenAnswer(call ->
+                ((com.atlassian.sal.api.transaction.TransactionCallback<?>) call.getArgument(0)).doInTransaction());
+        var second = new AdminSettingsServiceImpl(ao, new MemoryCacheManager(), pluginLogging, clusterLockService);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var a = pool.submit(() -> { start.await(); return service.compareAndSet("key", "old", "a"); });
+            var b = pool.submit(() -> { start.await(); return second.compareAndSet("key", "old", "b"); });
+            start.countDown();
+            assertNotEquals(a.get(5, java.util.concurrent.TimeUnit.SECONDS), b.get(5, java.util.concurrent.TimeUnit.SECONDS));
+            verify(row, times(1)).save();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    public void compareAndSetUnlocksWhenStoreFails() {
+        AdminSettingsEntity row = mock(AdminSettingsEntity.class);
+        when(row.getSettingValue()).thenReturn("old");
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class)))
+                .thenReturn(new AdminSettingsEntity[]{row});
+        RuntimeException failure = new IllegalStateException("database failure");
+        when(ao.executeInTransaction(any())).thenThrow(failure);
+        assertSame(failure, assertThrows(RuntimeException.class,
+                () -> service.compareAndSet("key", "old", "new")));
+        var ordered = inOrder(clusterLock);
+        ordered.verify(clusterLock).lock();
+        ordered.verify(clusterLock).unlock();
     }
 
 }

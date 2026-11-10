@@ -17,6 +17,12 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
+import javax.ws.rs.HeaderParam;
+import javax.ws.rs.core.EntityTag;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
@@ -36,6 +42,7 @@ import java.util.UUID;
  * Список правится целиком одним PUT, без отдельных POST и DELETE на контекст:
  * все контексты лежат в одном ключе настроек, поэтому запись списка и так
  * атомарна, а клиенту не приходится собирать идентификаторы самому.
+ * GET возвращает ETag; PUT требует его в If-Match и отклоняет устаревший список.
  * Встроенный контекст «Остальные проекты» удалить нельзя — если его нет в теле
  * запроса, он сохраняется с прежними настройками.
  */
@@ -74,16 +81,22 @@ public class ProjectContextResource {
 
         log.debug("Запрошены контексты проектов");
         List<ProjectContextDto> body = new ArrayList<>();
-        for (ProjectContext context : contexts()) {
+        String raw = adminSettingsService.get(ProjectContexts.KEY, "");
+        for (ProjectContext context : ProjectContexts.parse(raw)) {
             body.add(ProjectContextDto.from(context));
         }
-        return Response.ok(body).build();
+        return Response.ok(body).tag(etag(raw)).build();
     }
 
     @PUT
-    public Response save(List<ProjectContextDto> body) {
+    public Response save(List<ProjectContextDto> body, @HeaderParam("If-Match") String ifMatch) {
         Response denied = requireAdmin();
         if (denied != null) return denied;
+        if (ifMatch == null || ifMatch.isBlank()) {
+            return Response.status(428).entity(Map.of("error", "Для сохранения нужен заголовок If-Match")).build();
+        }
+        String raw = adminSettingsService.get(ProjectContexts.KEY, "");
+        if (!etag(raw).toString().equals(ifMatch)) return conflict();
         log.debug("Сохранение контекстов проектов: {}", body == null ? "тело не задано" : body.size());
         if (body == null) return UserSettingsResource.badRequest("Тело запроса не задано");
         if (body.size() > MAX_CONTEXTS) {
@@ -139,12 +152,15 @@ public class ProjectContextResource {
 
         // «Остальные проекты» не пришли — сохраняем прежние настройки этого контекста
         if (defaultContext == null) {
-            defaultContext = ProjectContexts.byId(contexts(), ProjectContexts.DEFAULT_ID);
+            defaultContext = ProjectContexts.byId(ProjectContexts.parse(raw), ProjectContexts.DEFAULT_ID);
         }
         incoming.add(defaultContext != null ? defaultContext : ProjectContexts.emptyDefault());
 
-        adminSettingsService.set(ProjectContexts.KEY, ProjectContexts.format(incoming));
-        return Response.noContent().build();
+        String updated = ProjectContexts.format(incoming);
+        if (!adminSettingsService.compareAndSet(ProjectContexts.KEY, raw, updated)) return conflict();
+        List<ProjectContextDto> saved = new ArrayList<>();
+        for (ProjectContext context : incoming) saved.add(ProjectContextDto.from(context));
+        return Response.ok(saved).tag(etag(updated)).build();
     }
 
     private Response validate(ProjectContext context) {
@@ -192,8 +208,18 @@ public class ProjectContextResource {
                 actions, context.closedStatuses());
     }
 
-    private List<ProjectContext> contexts() {
-        return ProjectContexts.parse(adminSettingsService.get(ProjectContexts.KEY, ""));
+    private static EntityTag etag(String raw) {
+        try {
+            return new EntityTag(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(raw.getBytes(StandardCharsets.UTF_8))));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Нет SHA-256 для версии контекстов", e);
+        }
+    }
+
+    private static Response conflict() {
+        return Response.status(409).entity(Map.of("error",
+                "Контексты уже изменены. Обновите страницу перед сохранением")).build();
     }
 
     private Response requireAdmin() {
