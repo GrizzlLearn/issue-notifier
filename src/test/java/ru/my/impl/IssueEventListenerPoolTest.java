@@ -10,6 +10,7 @@ import org.junit.Test;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.model.DiffResult;
+import ru.my.model.DeliveryProgress;
 import ru.my.model.QueuedIssueEvent;
 import java.util.List;
 import static org.mockito.Mockito.*;
@@ -31,10 +32,10 @@ public class IssueEventListenerPoolTest {
         String payload = new QueuedIssueEvent(42L, "deleted-author", 2L, false, null, null, false,
                 new DiffResult(List.of(new DiffResult.FieldChange("summary", "old", "new")))).encode();
         doThrow(new IllegalStateException("transport failed")).when(service)
-                .processEvent(eq(issue), isNull(), any(), any());
-        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload));
+                .processEvent(eq(issue), isNull(), any(), any(), any(DeliveryProgress.class));
+        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload, new DeliveryProgress()));
         verify(users).getUserByKey("deleted-author");
-        verify(service).processEvent(eq(issue), isNull(), any(), any());
+        verify(service).processEvent(eq(issue), isNull(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -44,7 +45,7 @@ public class IssueEventListenerPoolTest {
                 mock(ApplicationProperties.class), mock(JsonEntityPropertyManager.class),
                 mock(NotificationService.class), mock(AdminSettingsService.class));
         listener.processQueuedEvent(new QueuedIssueEvent(42L, null, 2L, false, null, null,
-                false, new DiffResult(List.of())).encode());
+                false, new DiffResult(List.of())).encode(), new DeliveryProgress());
     }
     @Test
     public void capturesCommentAndDiffInOneDurableRecord() throws Exception {
@@ -77,7 +78,7 @@ public class IssueEventListenerPoolTest {
     }
 
     @Test
-    public void mentionFailureStillAttemptsOtherCommentRecipients() {
+    public void partialMentionFailureExcludesDeliveredRecipientFromCommentFallback() {
         IssueManager issues = mock(IssueManager.class);
         UserManager users = mock(UserManager.class);
         NotificationService service = mock(NotificationService.class);
@@ -85,17 +86,19 @@ public class IssueEventListenerPoolTest {
         when(issues.getIssueObject(42L)).thenReturn(issue);
         com.atlassian.jira.user.ApplicationUser mentioned = mock(com.atlassian.jira.user.ApplicationUser.class);
         when(users.getUserByName("tail")).thenReturn(mentioned);
-        doThrow(new IllegalStateException("transport")).when(service).processAction(any(), any(),
-                eq(ru.my.model.NotificationAction.MENTION), any(), anyMap(), any(), any());
+        doThrow(new ru.my.model.NotificationDeliveryException(List.of(new IllegalStateException("transport")),
+                List.of(mentioned))).when(service).processAction(any(), any(),
+                eq(ru.my.model.NotificationAction.MENTION), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
         IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
                 mock(PersistentNotificationQueue.class), issues, users, mock(ApplicationProperties.class),
                 mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class));
         String payload = new QueuedIssueEvent(42L, null, 6L, true, null,
                 "x".repeat(600) + " [~tail]", false, new DiffResult(List.of())).encode();
 
-        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload));
+        DeliveryProgress progress = new DeliveryProgress();
+        assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload, progress));
         verify(service).processAction(any(), any(), eq(ru.my.model.NotificationAction.COMMENT_ADDED),
-                any(), anyMap(), any(), any());
+                any(), anyMap(), eq(List.of(mentioned)), any(), same(progress));
     }
 
 }

@@ -1080,4 +1080,59 @@ public class NotificationServiceTest {
         assertTrue(detail.contains("HTTP 403"));
     }
 
+    @Test
+    public void retrySkipsSuccessfulEmailAndTelegramButRetriesMattermost() {
+        NotificationSender telegram = mock(NotificationSender.class);
+        NotificationServiceImpl threeChannels = serviceWithSenders(Map.of(
+                NotificationChannel.MATTERMOST, sender, NotificationChannel.TELEGRAM, telegram,
+                NotificationChannel.EMAIL, emailSender));
+        enableAction(NotificationAction.COMMENT_ADDED, "Комментарий в {issueKey}");
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.TELEGRAM)).thenReturn(true);
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.EMAIL)).thenReturn(true);
+        setupWatcherWithChannels(List.of(NotificationChannel.EMAIL, NotificationChannel.TELEGRAM,
+                NotificationChannel.MATTERMOST));
+        org.mockito.Mockito.doThrow(new RuntimeException("network")).doNothing()
+                .when(sender).send(eq(watcher), anyString());
+        var snapshot = new java.util.concurrent.atomic.AtomicReference<String>();
+        var first = new ru.my.model.DeliveryProgress(null, snapshot::set);
+        var partial = assertThrows(ru.my.model.NotificationDeliveryException.class, () ->
+                threeChannels.processAction(issue, null, NotificationAction.COMMENT_ADDED, List.of(),
+                        Map.of("issueKey", "PROJ-1"), List.of(), CommentScope.NONE, first));
+        assertEquals(List.of(watcher), partial.getNotifiedRecipients());
+        assertTrue(first.delivered(NotificationAction.COMMENT_ADDED, NotificationChannel.EMAIL, watcher.getKey()));
+        assertTrue(first.delivered(NotificationAction.COMMENT_ADDED, NotificationChannel.TELEGRAM, watcher.getKey()));
+
+        var restored = new ru.my.model.DeliveryProgress(snapshot.get(), snapshot::set);
+        assertEquals(List.of(watcher), threeChannels.processAction(issue, null, NotificationAction.COMMENT_ADDED,
+                List.of(), Map.of("issueKey", "PROJ-1"), List.of(), CommentScope.NONE, restored));
+
+        verify(emailSender, times(1)).send(eq(watcher), anyString(), anyString());
+        verify(telegram, times(1)).send(eq(watcher), anyString());
+        verify(sender, times(2)).send(eq(watcher), anyString());
+    }
+
+    @Test
+    public void retryDoesNotRepeatFieldChangesForAlreadyDeliveredRecipient() {
+        ApplicationUser second = new MockApplicationUser("carol");
+        when(watcherManager.getWatchers(issue, Locale.ROOT)).thenReturn(List.of(watcher, second));
+        UserSettings settings = UserSettings.builder().projects(List.of("*"))
+                .channels(List.of(NotificationChannel.MATTERMOST)).build();
+        when(userSettingsService.getSettings(watcher)).thenReturn(settings);
+        when(userSettingsService.getSettings(second)).thenReturn(settings);
+        when(delegationService.getEffectiveRecipients(watcher)).thenReturn(List.of(watcher));
+        when(delegationService.getEffectiveRecipients(second)).thenReturn(List.of(second));
+        when(adminSettingsService.isChannelEnabled(NotificationChannel.MATTERMOST)).thenReturn(true);
+        when(formatter.format(any(), any())).thenReturn("msg");
+        org.mockito.Mockito.doThrow(new RuntimeException("network")).doNothing().when(sender).send(second, "msg");
+        var snapshot = new java.util.concurrent.atomic.AtomicReference<String>();
+        assertThrows(ru.my.model.NotificationDeliveryException.class, () -> service.processEvent(issue, null,
+                NON_EMPTY_DIFF, List.of(), new ru.my.model.DeliveryProgress(null, snapshot::set)));
+
+        service.processEvent(issue, null, NON_EMPTY_DIFF, List.of(),
+                new ru.my.model.DeliveryProgress(snapshot.get(), snapshot::set));
+
+        verify(sender, times(1)).send(watcher, "msg");
+        verify(sender, times(2)).send(second, "msg");
+    }
+
 }

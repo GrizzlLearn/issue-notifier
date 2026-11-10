@@ -8,6 +8,8 @@ import com.atlassian.jira.event.type.EventType;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
 import ru.my.model.QueuedIssueEvent;
+import ru.my.model.DeliveryProgress;
+import ru.my.model.NotificationDeliveryException;
 import com.atlassian.jira.issue.comments.Comment;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
@@ -112,7 +114,7 @@ public class IssueEventListener {
                 hasComment && CommentVisibility.isRestrictedByLevel(comment), diff).encode());
     }
 
-    void processQueuedEvent(String payload) {
+    void processQueuedEvent(String payload, DeliveryProgress progress) {
         QueuedIssueEvent event = QueuedIssueEvent.decode(payload);
         Issue issue = issueManager.getIssueObject(event.issueId());
         if (issue == null) {
@@ -123,7 +125,7 @@ public class IssueEventListener {
         List<Exception> failures = new ArrayList<>();
         if (event.hasComment()) {
             step(issue, "комментарий", () -> processComment(issue, author, event.commentBody(),
-                    event.commentId(), event.restrictedByLevel()), failures);
+                    event.commentId(), event.restrictedByLevel(), progress), failures);
         }
         DiffResult diff = event.diff();
         if (!diff.isEmpty()) {
@@ -133,19 +135,19 @@ public class IssueEventListener {
             DiffResult.FieldChange assigneeChange = changeOf(diff, "assignee");
             if (assigneeChange != null) {
                 step(issue, "назначение исполнителя",
-                        () -> notified.addAll(notifyAssigned(issue, author, assigneeChange)), failures);
+                        () -> notified.addAll(notifyAssigned(issue, author, assigneeChange, progress)), failures, notified);
             }
             DiffResult.FieldChange statusChange = changeOf(diff, "status");
             if (statusChange != null) {
                 step(issue, "переход в закрывающий статус", () -> {
                     if (isClosingTransition(issue, statusChange.toId())) {
                         notified.addAll(notificationService.processAction(issue, author, NotificationAction.CLOSED,
-                                List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue())), notified));
+                                List.of(), placeholders(issue, author, "status", nullToEmpty(statusChange.toValue())), notified, CommentScope.NONE, progress));
                     }
-                }, failures);
+                }, failures, notified);
             }
             step(issue, "рассылка наблюдателям",
-                    () -> notificationService.processEvent(issue, author, diff, notified), failures);
+                    () -> notificationService.processEvent(issue, author, diff, notified, progress), failures);
         }
         rethrow(failures);
     }
@@ -161,7 +163,7 @@ public class IssueEventListener {
      * плейсхолдеров, и сервис берёт шаблон «без текста комментария»).
      */
     private void processComment(Issue issue, ApplicationUser author, String body,
-                                Long commentId, boolean restrictedByLevel) {
+                                Long commentId, boolean restrictedByLevel, DeliveryProgress progress) {
         // свойство комментария — запрос в БД, поэтому читается в рабочем потоке
         boolean internal = CommentVisibility.isServiceDeskInternal(commentId, entityProperties);
         CommentScope scope = new CommentScope(commentId, internal);
@@ -175,7 +177,7 @@ public class IssueEventListener {
                 : placeholders(issue, author, "comment", truncate(body));
 
         if (internal) {
-            notifyAssigneeOnly(issue, author, values, scope);
+            notifyAssigneeOnly(issue, author, values, scope, progress);
             return;
         }
 
@@ -184,10 +186,10 @@ public class IssueEventListener {
         List<Exception> failures = new ArrayList<>();
         if (!mentioned.isEmpty()) {
             step(issue, "упоминания", () -> notified.addAll(notificationService.processAction(
-                    issue, author, NotificationAction.MENTION, mentioned, values, List.of(), scope)), failures);
+                    issue, author, NotificationAction.MENTION, mentioned, values, List.of(), scope, progress)), failures, notified);
         }
         step(issue, "новый комментарий", () -> notificationService.processAction(issue, author,
-                NotificationAction.COMMENT_ADDED, List.of(), values, notified, scope), failures);
+                NotificationAction.COMMENT_ADDED, List.of(), values, notified, scope, progress), failures);
         rethrow(failures);
     }
 
@@ -197,13 +199,13 @@ public class IssueEventListener {
      * занимается {@link CommentScope#blocksDelegation()}.
      */
     private void notifyAssigneeOnly(Issue issue, ApplicationUser author,
-                                    Map<String, String> values, CommentScope scope) {
+                                    Map<String, String> values, CommentScope scope, DeliveryProgress progress) {
         ApplicationUser assignee = issue.getAssignee();
         if (assignee == null) {
             return;
         }
         notificationService.processAction(issue, author, NotificationAction.COMMENT_ADDED,
-                List.of(assignee), values, List.of(), scope);
+                List.of(assignee), values, List.of(), scope, progress);
     }
 
     /** Резолвит имена из упоминаний в пользователей; неизвестные имена отбрасываются. */
@@ -238,7 +240,7 @@ public class IssueEventListener {
      * @return кому сообщение реально ушло — им не нужна вторая рассылка об изменении полей
      */
     private List<ApplicationUser> notifyAssigned(Issue issue, ApplicationUser author,
-                                                 DiffResult.FieldChange change) {
+                                                 DiffResult.FieldChange change, DeliveryProgress progress) {
         if (change.toId() == null || change.toId().isBlank()) {
             return List.of(); // исполнителя сняли
         }
@@ -247,7 +249,8 @@ public class IssueEventListener {
             return List.of();
         }
         return notificationService.processAction(issue, author, NotificationAction.ASSIGNED,
-                List.of(assignee), placeholders(issue, author, "assignee", assignee.getDisplayName()));
+                List.of(assignee), placeholders(issue, author, "assignee", assignee.getDisplayName()),
+                List.of(), CommentScope.NONE, progress);
     }
 
     /**
@@ -297,9 +300,17 @@ public class IssueEventListener {
 
     /** Выполняет остальные шаги после ошибки; очередь повторит событие после их завершения. */
     private void step(Issue issue, String what, Runnable action, List<Exception> failures) {
+        step(issue, what, action, failures, null);
+    }
+
+    private void step(Issue issue, String what, Runnable action, List<Exception> failures,
+                      List<ApplicationUser> notified) {
         try {
             action.run();
         } catch (Exception e) {
+            if (notified != null && e instanceof NotificationDeliveryException partial) {
+                notified.addAll(partial.getNotifiedRecipients());
+            }
             log.warn("Задача {}: шаг «{}» не выполнен", issue.getKey(), what, e);
             failures.add(e);
         }

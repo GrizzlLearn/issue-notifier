@@ -30,6 +30,11 @@ public interface NotificationJobEntity extends Entity {
     Date getLastFailedAt();
     void setLastFailedAt(Date lastFailedAt);
 
+    /** JSON-журнал подтвержденных доставок; null у события без чекпойнтов. */
+    @StringLength(StringLength.UNLIMITED)
+    String getDeliveredRaw();
+    void setDeliveredRaw(String deliveredRaw);
+
     int getAttempts();
     void setAttempts(int attempts);
 }

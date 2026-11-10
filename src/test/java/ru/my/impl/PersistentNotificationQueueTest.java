@@ -14,7 +14,8 @@ import ru.my.ao.NotificationJobEntity;
 import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
+import ru.my.model.DeliveryProgress;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
@@ -27,7 +28,7 @@ public class PersistentNotificationQueueTest {
     private final ThreadLocalDelegateExecutorFactory delegates = mock(ThreadLocalDelegateExecutorFactory.class);
     private final ExecutorService executor = mock(ExecutorService.class);
     private final NotificationJobEntity row = mock(NotificationJobEntity.class);
-    private final Consumer<String> handler = mock();
+    private final BiConsumer<String, DeliveryProgress> handler = mock();
     private PersistentNotificationQueue queue;
 
     @Before
@@ -51,7 +52,7 @@ public class PersistentNotificationQueueTest {
     @Test
     public void successfulProcessingDeletesPersistentJob() {
         queue.runJob(null);
-        verify(handler).accept("event");
+        verify(handler).accept(eq("event"), any(DeliveryProgress.class));
         verify(ao).delete(row);
         verify(lock).unlock();
     }
@@ -66,7 +67,7 @@ public class PersistentNotificationQueueTest {
 
     @Test
     public void failureRetainsJobAndSchedulesRetryWithoutPersistingExceptionText() {
-        doThrow(new IllegalStateException("private body")).when(handler).accept(anyString());
+        doThrow(new IllegalStateException("private body")).when(handler).accept(anyString(), any(DeliveryProgress.class));
         long before = System.currentTimeMillis();
         queue.runJob(null);
         verify(row).setAttempts(1);
@@ -87,7 +88,7 @@ public class PersistentNotificationQueueTest {
         var restarted = new PersistentNotificationQueue(ao, scheduler, locks, delegates);
         restarted.start(handler);
         restarted.runJob(null);
-        verify(handler).accept("event");
+        verify(handler).accept(eq("event"), any(DeliveryProgress.class));
         verify(ao).delete(row);
         verify(scheduler, never()).unscheduleJob(any());
     }
@@ -103,7 +104,7 @@ public class PersistentNotificationQueueTest {
 
     @Test
     public void interruptionAfterHandlerDoesNotAcknowledgeJob() {
-        doAnswer(call -> { Thread.currentThread().interrupt(); return null; }).when(handler).accept(anyString());
+        doAnswer(call -> { Thread.currentThread().interrupt(); return null; }).when(handler).accept(anyString(), any(DeliveryProgress.class));
         try {
             queue.runJob(null);
             verify(ao, never()).delete(any(NotificationJobEntity.class));
@@ -143,7 +144,7 @@ public class PersistentNotificationQueueTest {
     @Test
     public void repeatedFailuresSaturateAttemptCounterAndCapDelay() {
         when(row.getAttempts()).thenReturn(Integer.MAX_VALUE);
-        doThrow(new IllegalStateException()).when(handler).accept(anyString());
+        doThrow(new IllegalStateException()).when(handler).accept(anyString(), any(DeliveryProgress.class));
         long before = System.currentTimeMillis();
         queue.runJob(null);
         verify(row).setAttempts(Integer.MAX_VALUE);
@@ -162,7 +163,7 @@ public class PersistentNotificationQueueTest {
             entered.countDown();
             assertTrue(release.await(5, java.util.concurrent.TimeUnit.SECONDS));
             return null;
-        }).when(handler).accept("event");
+        }).when(handler).accept(eq("event"), any(DeliveryProgress.class));
         doAnswer(call -> { stopping.countDown(); return null; }).when(executor).shutdown();
         var threads = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
@@ -232,7 +233,7 @@ public class PersistentNotificationQueueTest {
         }));
         var actual = new PersistentNotificationQueue(database, scheduler, realLocks, realDelegates);
         var delivered = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
-        actual.start(payload -> {
+        actual.start((payload, progress) -> {
             busy.countDown();
             try {
                 if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
@@ -262,6 +263,49 @@ public class PersistentNotificationQueueTest {
             release.countDown();
             actual.stop();
         }
+    }
+
+    @Test
+    public void partialCheckpointSurvivesFailureAndQueueRestart() {
+        var raw = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(row.getDeliveredRaw()).thenAnswer(call -> raw.get());
+        doAnswer(call -> { raw.set(call.getArgument(0)); return null; }).when(row).setDeliveredRaw(any());
+        doAnswer(call -> {
+            DeliveryProgress progress = call.getArgument(1);
+            progress.record(null, ru.my.model.NotificationChannel.EMAIL, "user-a");
+            throw new IllegalStateException("second delivery failed");
+        }).when(handler).accept(anyString(), any(DeliveryProgress.class));
+        queue.runJob(null);
+        assertNotNull(raw.get());
+        verify(ao, never()).delete(any(NotificationJobEntity.class));
+        queue.stop();
+        var restarted = new PersistentNotificationQueue(ao, scheduler, locks, delegates);
+        restarted.start((payload, progress) -> assertTrue(progress.delivered(null,
+                ru.my.model.NotificationChannel.EMAIL, "user-a")));
+        restarted.runJob(null);
+        verify(ao).delete(row);
+    }
+
+    @Test
+    public void failedCheckpointRestoresOldProxyLedgerBeforeSavingRetry() {
+        var raw = new java.util.concurrent.atomic.AtomicReference<String>();
+        DeliveryProgress seed = new DeliveryProgress(null, raw::set);
+        seed.record(null, ru.my.model.NotificationChannel.EMAIL, "already-delivered");
+        String previous = raw.get();
+        when(row.getDeliveredRaw()).thenAnswer(call -> raw.get());
+        doAnswer(call -> { raw.set(call.getArgument(0)); return null; }).when(row).setDeliveredRaw(any());
+        doThrow(new IllegalStateException("checkpoint failed")).doNothing().when(row).save();
+        doAnswer(call -> {
+            DeliveryProgress progress = call.getArgument(1);
+            progress.record(null, ru.my.model.NotificationChannel.EMAIL, "user-b");
+            return null;
+        }).when(handler).accept(anyString(), any(DeliveryProgress.class));
+        queue.runJob(null);
+        assertEquals(previous, raw.get());
+        verify(row).setAttempts(1);
+        verify(ao, never()).delete(any(NotificationJobEntity.class));
+        assertFalse(new DeliveryProgress(raw.get(), snapshot -> fail()).delivered(null,
+                ru.my.model.NotificationChannel.EMAIL, "user-b"));
     }
 
 }

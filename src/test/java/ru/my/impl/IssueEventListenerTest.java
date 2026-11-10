@@ -22,6 +22,7 @@ import org.ofbiz.core.entity.GenericValue;
 import ru.my.api.AdminSettingsService;
 import ru.my.api.NotificationService;
 import ru.my.model.DiffResult;
+import ru.my.model.DeliveryProgress;
 import ru.my.model.CommentScope;
 import ru.my.model.NotificationAction;
 
@@ -68,7 +69,7 @@ public class IssueEventListenerTest {
         listener = new IssueEventListener(eventPublisher, queue, issueManager, userManager,
                 applicationProperties, entityProperties, notificationService, adminSettingsService);
         doAnswer(inv -> {
-            listener.processQueuedEvent(inv.getArgument(0));
+            listener.processQueuedEvent(inv.getArgument(0), new DeliveryProgress());
             return null;
         }).when(queue).enqueue(any(String.class));
     }
@@ -90,7 +91,7 @@ public class IssueEventListenerTest {
         route(event);
 
         verify(queue, never()).enqueue(any(String.class));
-        verify(notificationService, never()).processEvent(any(), any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -100,7 +101,7 @@ public class IssueEventListenerTest {
         route(event);
 
         verify(queue, never()).enqueue(any(String.class));
-        verify(notificationService, never()).processEvent(any(), any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -119,7 +120,7 @@ public class IssueEventListenerTest {
 
         route(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -128,7 +129,7 @@ public class IssueEventListenerTest {
 
         route(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -137,19 +138,19 @@ public class IssueEventListenerTest {
 
         route(event);
 
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any(), any(DeliveryProgress.class));
     }
 
     @Test
     public void continuesAfterNotificationServiceThrows() {
         IssueEvent event = eventWithChanges(EventType.ISSUE_UPDATED_ID);
         org.mockito.Mockito.doThrow(new RuntimeException("ошибка"))
-                .when(notificationService).processEvent(any(), any(), any(), any());
+                .when(notificationService).processEvent(any(), any(), any(), any(), any(DeliveryProgress.class));
 
         route(event);
 
         // сервис был вызван (исключение внутри — не повод не попробовать)
-        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any());
+        verify(notificationService).processEvent(any(Issue.class), isNull(), any(DiffResult.class), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -161,7 +162,7 @@ public class IssueEventListenerTest {
 
         route(event);
 
-        verify(notificationService, never()).processEvent(any(), any(), any(), any());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -170,17 +171,17 @@ public class IssueEventListenerTest {
         org.mockito.Mockito.when(userManager.getUserByName("ipetrov")).thenReturn(mentioned);
 
         org.mockito.Mockito.when(notificationService.processAction(
-                        any(), any(), eq(NotificationAction.MENTION), any(), anyMap(), any(), any()))
+                        any(), any(), eq(NotificationAction.MENTION), any(), anyMap(), any(), any(), any(DeliveryProgress.class)))
                 .thenReturn(List.of(mentioned));
 
         route(commentEvent("[~ipetrov] посмотри пожалуйста"));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap(), any(), any());
+                any(), any(), eq(NotificationAction.MENTION), eq(List.of(mentioned)), anyMap(), any(), any(), any(DeliveryProgress.class));
         // упомянутый уже уведомлён — в рассылке о комментарии он исключён
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(),
-                eq(List.of(mentioned)), any());
+                eq(List.of(mentioned)), any(), any(DeliveryProgress.class));
     }
 
     /** Обычный комментарий уходит с текстом — ограничений у него нет. */
@@ -192,7 +193,7 @@ public class IssueEventListenerTest {
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()),
-                values.capture(), eq(List.of()), any());
+                values.capture(), eq(List.of()), any(), any(DeliveryProgress.class));
         assertEquals("посмотри пожалуйста", values.getValue().get("comment"));
     }
 
@@ -210,7 +211,7 @@ public class IssueEventListenerTest {
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()),
-                values.capture(), any(), any());
+                values.capture(), any(), any(), any(DeliveryProgress.class));
         assertFalse(values.getValue().containsKey("comment"));
     }
 
@@ -220,7 +221,7 @@ public class IssueEventListenerTest {
 
         // пустой список получателей — сервис берёт их из настройки действия
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -230,7 +231,7 @@ public class IssueEventListenerTest {
         route(commentEvent("[~nobody] ау"));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), eq(List.of()), any(), any(DeliveryProgress.class));
     }
 
     /** Внутренний комментарий Service Desk виден только команде — уведомляем исполнителя. */
@@ -247,9 +248,9 @@ public class IssueEventListenerTest {
         ArgumentCaptor<CommentScope> scope = ArgumentCaptor.forClass(CommentScope.class);
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)), anyMap(),
-                eq(List.of()), scope.capture());
+                eq(List.of()), scope.capture(), any(DeliveryProgress.class));
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), any(), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), anyMap(), any(), any(), any(DeliveryProgress.class));
         // сервис должен знать, что комментарий внутренний: по нему не применяется
         // делегирование, иначе делегат исполнителя увидит внутреннюю переписку
         assertTrue(scope.getValue().isServiceDeskInternal());
@@ -283,7 +284,7 @@ public class IssueEventListenerTest {
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
                 any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of(assignee)),
-                values.capture(), eq(List.of()), any());
+                values.capture(), eq(List.of()), any(), any(DeliveryProgress.class));
         assertFalse(values.getValue().containsKey("comment"));
     }
 
@@ -301,7 +302,7 @@ public class IssueEventListenerTest {
         @SuppressWarnings("unchecked") // ArgumentCaptor не умеет generic-типы иначе
         ArgumentCaptor<Map<String, String>> values = ArgumentCaptor.forClass(Map.class);
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any(), any());
+                any(), any(), eq(NotificationAction.COMMENT_ADDED), eq(List.of()), values.capture(), any(), any(), any(DeliveryProgress.class));
         assertFalse(values.getValue().containsKey("comment"));
     }
 
@@ -313,9 +314,7 @@ public class IssueEventListenerTest {
         route(new IssueEvent(mock(MutableIssue.class), mock(ApplicationUser.class), comment, null, null,
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_COMMENT_EDITED_ID));
 
-        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap());
-        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any());
-        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any(), any());
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     /** Закрывающим считается только статус, выбранный для этого проекта. */
@@ -326,7 +325,7 @@ public class IssueEventListenerTest {
         route(statusChangedTo(CLOSING_STATUS_ID, issueInProject()));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap(), eq(List.of()));
+                any(), any(), eq(NotificationAction.CLOSED), eq(List.of()), anyMap(), eq(List.of()), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -336,7 +335,7 @@ public class IssueEventListenerTest {
         route(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any());
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     /** Без выбранных статусов проект уведомлений о закрытии не шлёт — правила по категории нет. */
@@ -345,7 +344,7 @@ public class IssueEventListenerTest {
         route(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any());
+                any(), any(), eq(NotificationAction.CLOSED), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -357,7 +356,7 @@ public class IssueEventListenerTest {
         route(assignedTo("petr", issueInProject()));
 
         verify(notificationService).processAction(
-                any(), any(), eq(NotificationAction.ASSIGNED), eq(List.of(assignee)), anyMap());
+                any(), any(), eq(NotificationAction.ASSIGNED), eq(List.of(assignee)), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     /** Снятие исполнителя уведомлять некому: в changelog пустое newvalue. */
@@ -366,7 +365,7 @@ public class IssueEventListenerTest {
         route(assignedTo(null, issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     /** Назначенный получает одно сообщение: про назначение, а не ещё и про изменение полей. */
@@ -375,13 +374,13 @@ public class IssueEventListenerTest {
         ApplicationUser assignee = mock(ApplicationUser.class);
         org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
         org.mockito.Mockito.when(notificationService.processAction(
-                        any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
+                        any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap(), any(), any(), any(DeliveryProgress.class)))
                 .thenReturn(List.of(assignee));
 
         route(assignedTo("petr", issueInProject()));
 
         verify(notificationService).processEvent(
-                any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)));
+                any(Issue.class), isNull(), any(DiffResult.class), eq(List.of(assignee)), any(DeliveryProgress.class));
     }
 
     @Test
@@ -390,7 +389,7 @@ public class IssueEventListenerTest {
         ApplicationUser assignee = mock(ApplicationUser.class);
         org.mockito.Mockito.when(userManager.getUserByKey("petr")).thenReturn(assignee);
         org.mockito.Mockito.when(notificationService.processAction(
-                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap()))
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap(), any(), any(), any(DeliveryProgress.class)))
                 .thenReturn(List.of(assignee));
         GenericValue assigned = mock(GenericValue.class);
         org.mockito.Mockito.when(assigned.getString("field")).thenReturn("assignee");
@@ -405,7 +404,7 @@ public class IssueEventListenerTest {
                 Collections.<String, Object>emptyMap(), EventType.ISSUE_UPDATED_ID));
 
         verify(notificationService).processAction(any(), any(), eq(NotificationAction.CLOSED),
-                eq(List.of()), anyMap(), eq(List.of(assignee)));
+                eq(List.of()), anyMap(), eq(List.of(assignee)), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -413,7 +412,7 @@ public class IssueEventListenerTest {
         route(statusChangedTo("10001", issueInProject()));
 
         verify(notificationService, never()).processAction(
-                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap());
+                any(), any(), eq(NotificationAction.ASSIGNED), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     @Test
@@ -490,8 +489,8 @@ public class IssueEventListenerTest {
 
         route(silent);
 
-        verify(notificationService, never()).processEvent(any(), any(), any(), any());
-        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap());
+        verify(notificationService, never()).processEvent(any(), any(), any(), any(), any(DeliveryProgress.class));
+        verify(notificationService, never()).processAction(any(), any(), any(), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
     }
 
     /** Задача в проекте PROJ: ключ проекта важен только для настройки закрывающих статусов. */

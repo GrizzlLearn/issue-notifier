@@ -3,6 +3,7 @@ package ru.my.api;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import ru.my.model.CommentScope;
+import ru.my.model.DeliveryProgress;
 import ru.my.model.DiffResult;
 import ru.my.model.NotificationAction;
 
@@ -16,7 +17,8 @@ import java.util.Map;
  * changelog читается в потоке Jira-события, а не в рабочем потоке пула.
  * Сбои отдельных доставок не останавливают остальные, но после обхода получателей
  * метод бросает исключение: событие остаётся в очереди для повторной попытки.
- * При повторе уже успешные доставки могут дублироваться.
+ * Подтверждённые пары получатель/канал пропускаются при повторе. Падение после
+ * отправки, но до фиксации подтверждения всё ещё может дать дубликат.
  */
 public interface NotificationService {
 
@@ -36,12 +38,18 @@ public interface NotificationService {
 
     /**
      * То же, но без тех, кому по этому же событию уже ушло уведомление
-     * о действии в текущей попытке обработки. При повторе после сбоя возможны дубли.
+     * о действии в текущей или предыдущей попытке обработки.
      *
      * @param exclude получатели, которых нужно пропустить
      */
+    default void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
+                              Collection<ApplicationUser> exclude) {
+        processEvent(issue, author, diff, exclude, new DeliveryProgress());
+    }
+
+    /** Общий прогресс доставок события сохраняется очередью между попытками. */
     void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
-                      Collection<ApplicationUser> exclude);
+                      Collection<ApplicationUser> exclude, DeliveryProgress progress);
 
     /**
      * Рассылает уведомление о действии в задаче по шаблону из настроек плагина.
@@ -86,7 +94,14 @@ public interface NotificationService {
      * @param scope ограничения комментария; {@link CommentScope#NONE} — событие
      *              не про комментарий
      */
+    default List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
+                                                List<ApplicationUser> recipients, Map<String, String> placeholders,
+                                                Collection<ApplicationUser> exclude, CommentScope scope) {
+        return processAction(issue, author, action, recipients, placeholders, exclude, scope, new DeliveryProgress());
+    }
+
+    /** Общий прогресс учитывает успешные доставки предыдущих попыток события. */
     List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
                                         List<ApplicationUser> recipients, Map<String, String> placeholders,
-                                        Collection<ApplicationUser> exclude, CommentScope scope);
+                                        Collection<ApplicationUser> exclude, CommentScope scope, DeliveryProgress progress);
 }

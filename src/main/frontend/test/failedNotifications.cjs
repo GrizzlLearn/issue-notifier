@@ -54,7 +54,7 @@ async function main() {
   assert.doesNotMatch(html, /<script>/);
   const initial = renderToStaticMarkup(React.createElement(Tab));
   assert.match(initial, /Загрузка…/);
-  assert.match(initial, /уже доставленные сообщения могут прийти ещё раз/);
+  assert.match(initial, /уже подтверждённые отправки в каналы пропускаются/);
   assert.match(initial, /disabled=""/);
   console.log('failedNotifications: endpoint, signal, empty/loading, task link and escaped multiline errors passed');
 }

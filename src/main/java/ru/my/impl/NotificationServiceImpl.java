@@ -22,6 +22,8 @@ import ru.my.api.UserSettingsService;
 import ru.my.model.CommentScope;
 import ru.my.impl.util.NotificationErrors;
 import ru.my.model.DiffResult;
+import ru.my.model.DeliveryProgress;
+import ru.my.model.NotificationDeliveryException;
 import ru.my.model.NotificationAction;
 import ru.my.model.NotificationChannel;
 import ru.my.model.UserSettings;
@@ -164,7 +166,8 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     public void processEvent(Issue issue, ApplicationUser author, DiffResult diff,
-                             Collection<ApplicationUser> exclude) {
+                             Collection<ApplicationUser> exclude, DeliveryProgress progress) {
+        Objects.requireNonNull(progress, "progress");
         if (diff.isEmpty()) {
             log.debug("Задача {}: изменений нет, уведомление не формируем", issue.getKey());
             return;
@@ -215,15 +218,16 @@ public class NotificationServiceImpl implements NotificationService {
                         r.user().getKey(), issue.getKey());
                 continue;
             }
-            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache, messages, failures);
+            sendToRecipient(issue, watched, r.user(), r.settings(), channelCache, messages, failures, progress);
         }
-        requireDelivered(failures);
+        requireDelivered(failures, List.of());
     }
 
     @Override
     public List<ApplicationUser> processAction(Issue issue, ApplicationUser author, NotificationAction action,
                                                List<ApplicationUser> recipients, Map<String, String> placeholders,
-                                               Collection<ApplicationUser> exclude, CommentScope scope) {
+                                               Collection<ApplicationUser> exclude, CommentScope scope, DeliveryProgress progress) {
+        Objects.requireNonNull(progress, "progress");
         // всё про «где и кому» лежит в контексте проектов задачи: одно чтение
         // настроек вместо чтения флага, области и получателей по отдельности
         ProjectContext context = contextOf(issue, adminSettingsService);
@@ -287,7 +291,7 @@ public class NotificationServiceImpl implements NotificationService {
                 for (NotificationChannel channel : new LinkedHashSet<>(r.settings().getChannels())) {
                     checkInterrupted();
                     if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                        sent |= sendAction(action, channel, r.user(), values, withText, failures);
+                        sent |= sendAction(action, channel, r.user(), values, withText, failures, progress);
                     }
                 }
                 if (sent) {
@@ -299,7 +303,7 @@ public class NotificationServiceImpl implements NotificationService {
                 failures.add(NotificationErrors.context(action.title() + "; получатель " + r.user().getKey(), e));
             }
         }
-        requireDelivered(failures);
+        requireDelivered(failures, notified);
         return List.copyOf(notified);
     }
 
@@ -355,7 +359,8 @@ public class NotificationServiceImpl implements NotificationService {
     // всем, кто читает логи, а связка «кто получает уведомления + его email» лишняя
     private boolean sendAction(NotificationAction action, NotificationChannel channel,
                                ApplicationUser recipient, Map<String, String> placeholders,
-                               boolean withText, List<Exception> failures) {
+                               boolean withText, List<Exception> failures, DeliveryProgress progress) {
+        if (progress.delivered(action, channel, recipient.getKey())) return true;
         String templateKey = action.carriesCommentText() && !withText
                 ? ActionTemplates.templateKeyNoText(action, channel)
                 : ActionTemplates.templateKey(action, channel);
@@ -372,6 +377,7 @@ public class NotificationServiceImpl implements NotificationService {
         try {
             deliver(sender, recipient, subjectFor(action, channel, placeholders),
                     ActionTemplates.render(template, placeholders, channel));
+            progress.record(action, channel, recipient.getKey());
             return true;
         } catch (Exception e) {
             log.warn("Ошибка отправки уведомления о действии {} через {} для {}: {}",
@@ -555,19 +561,21 @@ public class NotificationServiceImpl implements NotificationService {
 
     private void sendToRecipient(Issue issue, DiffResult diff, ApplicationUser recipient,
                                  UserSettings settings, Map<NotificationChannel, Boolean> channelCache,
-                                 Map<NotificationChannel, String> messages, List<Exception> failures) {
+                                 Map<NotificationChannel, String> messages, List<Exception> failures,
+                                 DeliveryProgress progress) {
         // Set защищает от двойной отправки при дублях в List<NotificationChannel>
         for (NotificationChannel channel : new LinkedHashSet<>(settings.getChannels())) {
             checkInterrupted();
             if (Boolean.TRUE.equals(channelCache.get(channel))) {
-                sendViaChannel(issue, diff, recipient, channel, messages, failures);
+                sendViaChannel(issue, diff, recipient, channel, messages, failures, progress);
             }
         }
     }
 
     private void sendViaChannel(Issue issue, DiffResult diff, ApplicationUser recipient,
                                 NotificationChannel channel, Map<NotificationChannel, String> messages,
-                                List<Exception> failures) {
+                                List<Exception> failures, DeliveryProgress progress) {
+        if (progress.delivered(null, channel, recipient.getKey())) return;
         MessageFormatter formatter = formatters.get(channel);
         NotificationSender sender = senders.get(channel);
 
@@ -579,6 +587,7 @@ public class NotificationServiceImpl implements NotificationService {
         try {
             String message = messages.computeIfAbsent(channel, c -> formatter.format(issue, diff));
             deliver(sender, recipient, subjectFor(issue, channel), message);
+            progress.record(null, channel, recipient.getKey());
             log.debug("Задача {}: уведомление отправлено {} через {}",
                     issue.getKey(), recipient.getKey(), channel);
         } catch (Exception e) {
@@ -619,12 +628,8 @@ public class NotificationServiceImpl implements NotificationService {
         }
     }
 
-    private static void requireDelivered(List<Exception> failures) {
-        if (!failures.isEmpty()) {
-            IllegalStateException failure = new IllegalStateException("Не все уведомления отправлены: ошибок " + failures.size());
-            failures.forEach(failure::addSuppressed);
-            throw failure;
-        }
+    private static void requireDelivered(List<Exception> failures, List<ApplicationUser> notified) {
+        if (!failures.isEmpty()) throw new NotificationDeliveryException(failures, notified);
     }
 
     /**

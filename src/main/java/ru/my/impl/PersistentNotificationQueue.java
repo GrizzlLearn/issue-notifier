@@ -32,7 +32,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
+import ru.my.model.DeliveryProgress;
 
 /**
  * Очередь событий в AO с доставкой как минимум один раз. Падение после отправки,
@@ -48,7 +49,7 @@ public class PersistentNotificationQueue implements JobRunner {
     private final SchedulerService scheduler;
     private final ClusterLockService locks;
     private final ExecutorService workers;
-    private volatile Consumer<String> handler;
+    private volatile BiConsumer<String, DeliveryProgress> handler;
     private volatile boolean stopped;
 
     @Inject
@@ -77,7 +78,7 @@ public class PersistentNotificationQueue implements JobRunner {
     }
 
     /** Устанавливает обработчик до регистрации scheduler; вызывается слушателем при старте. */
-    public void start(Consumer<String> handler) {
+    public void start(BiConsumer<String, DeliveryProgress> handler) {
         this.handler = Objects.requireNonNull(handler, "handler");
         scheduler.registerJobRunner(RUNNER, this);
         try {
@@ -122,7 +123,22 @@ public class PersistentNotificationQueue implements JobRunner {
             NotificationJobEntity row = rows[0];
             if (row.getAvailableAt().after(new Date())) return;
             try {
-                handler.accept(row.getPayload());
+                DeliveryProgress progress = new DeliveryProgress(row.getDeliveredRaw(), snapshot -> {
+                    if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+                    String previous = row.getDeliveredRaw();
+                    try {
+                        ao.executeInTransaction(() -> {
+                            row.setDeliveredRaw(snapshot);
+                            row.save();
+                            return null;
+                        });
+                    } catch (RuntimeException failure) {
+                        // AO proxy может сохранить dirty-поле после rollback: retry не должен подтвердить доставку.
+                        row.setDeliveredRaw(previous);
+                        throw failure;
+                    }
+                });
+                handler.accept(row.getPayload(), progress);
                 if (Thread.currentThread().isInterrupted()) return;
                 ao.executeInTransaction(() -> {
                     ao.delete(row);
