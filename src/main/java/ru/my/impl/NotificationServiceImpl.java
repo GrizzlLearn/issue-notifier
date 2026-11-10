@@ -641,16 +641,5 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     /** Пара (получатель, его настройки) для однократной отправки. */
-    private static final class Recipient {
-        private final ApplicationUser user;
-        private final UserSettings settings;
-
-        Recipient(ApplicationUser user, UserSettings settings) {
-            this.user = user;
-            this.settings = settings;
-        }
-
-        ApplicationUser user()     { return user; }
-        UserSettings settings()    { return settings; }
-    }
+    private record Recipient(ApplicationUser user, UserSettings settings) {}
 }

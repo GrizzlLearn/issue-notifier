@@ -26,111 +26,86 @@ async function checkOk(resp) {
   throw new Error(message || resp.statusText || 'Ошибка запроса');
 }
 
-export async function getUserSettings(signal) {
-  const resp = await fetch(`${apiBase()}/user/settings`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
-  return resp.json();
+async function request(path, { method = 'GET', data, headers, signal } = {}) {
+  return checkOk(await fetch(`${apiBase()}${path}`, {
+    method,
+    credentials: 'same-origin',
+    signal,
+    headers: method === 'GET' ? headers
+      : method === 'DELETE' ? { 'X-Atlassian-Token': 'no-check', ...headers }
+        : { ...mutationHeaders, ...headers },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  }));
+}
+
+async function getJson(path, signal) {
+  return (await request(path, { signal })).json();
+}
+
+export function getUserSettings(signal) {
+  return getJson('/user/settings', signal);
 }
 
 export async function saveUserSettings(data) {
-  await checkOk(await fetch(`${apiBase()}/user/settings`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: mutationHeaders,
-    body: JSON.stringify(data),
-  }));
+  await request('/user/settings', { method: 'PUT', data });
 }
 
-export async function getDelegation(signal) {
-  const resp = await fetch(`${apiBase()}/user/delegation`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
-  return resp.json();
+export function getDelegation(signal) {
+  return getJson('/user/delegation', signal);
 }
 
 export async function saveDelegation(data) {
-  await checkOk(await fetch(`${apiBase()}/user/delegation`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: mutationHeaders,
-    body: JSON.stringify(data),
-  }));
+  await request('/user/delegation', { method: 'PUT', data });
 }
 
 export async function removeDelegation() {
-  await checkOk(await fetch(`${apiBase()}/user/delegation`, {
-    method: 'DELETE',
-    credentials: 'same-origin',
-    headers: { 'X-Atlassian-Token': 'no-check' },
-  }));
+  await request('/user/delegation', { method: 'DELETE' });
 }
 
-// Резолв уже сохранённых ключей (проект/пользователь) в человекочитаемые лейблы для
-// пред-заполнения пикеров — через собственный REST (см. ProjectPickerResource/UserPickerResource),
-// фронтенд не ходит в REST API самой Jira напрямую.
-export async function resolveProject(key, signal) {
-  const resp = await fetch(`${apiBase()}/projects/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
-  if (!resp.ok) return null;
-  return (await resp.json()).label;
+// Пикеры пропускают HTTP-ошибки, но сетевые ошибки и отмена запроса доходят до вызывающего.
+async function resolveLabel(type, key, signal) {
+  const resp = await fetch(`${apiBase()}/${type}/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
+  return resp.ok ? (await resp.json()).label : null;
 }
 
-export async function resolveUser(key, signal) {
-  const resp = await fetch(`${apiBase()}/users/${encodeURIComponent(key)}`, { credentials: 'same-origin', signal });
-  if (!resp.ok) return null;
-  return (await resp.json()).label;
+export function resolveProject(key, signal) {
+  return resolveLabel('projects', key, signal);
 }
 
-export async function getAdminSettings(signal) {
-  const resp = await fetch(`${apiBase()}/admin/settings`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
-  return resp.json();
+export function resolveUser(key, signal) {
+  return resolveLabel('users', key, signal);
+}
+
+export function getAdminSettings(signal) {
+  return getJson('/admin/settings', signal);
 }
 
 export async function saveAdminSettings(data) {
-  await checkOk(await fetch(`${apiBase()}/admin/settings`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: mutationHeaders,
-    body: JSON.stringify(data),
-  }));
+  await request('/admin/settings', { method: 'PUT', data });
 }
 
-// Контексты проектов лежат отдельным эндпоинтом: они правятся списком целиком,
-// а не ключами настроек (см. ProjectContextResource).
+// Контекстам нужен Response: вместе с телом читаем ETag для защиты от перезаписи.
 export async function getContexts(signal) {
-  const resp = await fetch(`${apiBase()}/admin/contexts`, { credentials: 'same-origin', signal });
-  await checkOk(resp);
+  const resp = await request('/admin/contexts', { signal });
   return { contexts: await resp.json(), etag: resp.headers.get('ETag') };
 }
 
 export async function saveContexts(contexts, etag) {
-  const resp = await fetch(`${apiBase()}/admin/contexts`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: { ...mutationHeaders, 'If-Match': etag },
-    body: JSON.stringify(contexts),
+  const resp = await request('/admin/contexts', {
+    method: 'PUT', data: contexts, headers: { 'If-Match': etag },
   });
-  await checkOk(resp);
   return { contexts: await resp.json(), etag: resp.headers.get('ETag') };
 }
 
-// Проверочная отправка: отправляем значения прямо из формы, ещё не сохранённые,
-// чтобы админ проверил введённый токен до записи в настройки.
+// Проверка использует несохранённые значения формы.
 export async function testChannel(channel, settings, recipientType, recipient) {
-  const resp = await fetch(`${apiBase()}/admin/settings/test`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: mutationHeaders,
-    body: JSON.stringify({ channel, settings, recipientType, recipient }),
+  const resp = await request('/admin/settings/test', {
+    method: 'POST', data: { channel, settings, recipientType, recipient },
   });
-  await checkOk(resp);
   return (await resp.json()).message;
 }
 
-export async function getFailedNotifications(beforeId, signal) {
+export function getFailedNotifications(beforeId, signal) {
   const query = beforeId == null ? '' : `?beforeId=${encodeURIComponent(beforeId)}`;
-  const resp = await fetch(`${apiBase()}/admin/failed-notifications${query}`, {
-    credentials: 'same-origin', signal,
-  });
-  await checkOk(resp);
-  return resp.json();
+  return getJson(`/admin/failed-notifications${query}`, signal);
 }
