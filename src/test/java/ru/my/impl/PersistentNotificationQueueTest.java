@@ -411,4 +411,34 @@ public class PersistentNotificationQueueTest {
         }
     }
 
+    @Test
+    public void corruptLedgerIsQuarantinedWithoutCallingHandler() {
+        when(row.getDeliveredRaw()).thenReturn("not json");
+        queue.runJob(null);
+        verify(row).setQuarantinedAt(any(Date.class));
+        verifyNoInteractions(handler);
+        verify(ao, never()).delete(any(NotificationJobEntity.class));
+    }
+
+    @Test
+    public void quarantinedEventCannotRunOrRetryButCanBeExplicitlyDiscarded() {
+        when(row.getQuarantinedAt()).thenReturn(new Date());
+        when(row.getAttempts()).thenReturn(1);
+        queue.runJob(null);
+        verifyNoInteractions(handler);
+        assertEquals(PersistentNotificationQueue.RetryResult.NOT_FOUND, queue.retryNow(1, job -> true));
+        assertEquals(PersistentNotificationQueue.RetryResult.NOT_FOUND, queue.discard(1, job -> false));
+        verify(ao, never()).delete(any(NotificationJobEntity.class));
+        assertEquals(PersistentNotificationQueue.RetryResult.SCHEDULED, queue.discard(1, job -> true));
+        verify(ao).delete(row);
+    }
+
+    @Test
+    public void ordinaryInvalidArgumentFromChannelStillRetries() {
+        doThrow(new IllegalArgumentException("configuration")).when(handler).accept(anyString(), any(DeliveryProgress.class));
+        queue.runJob(null);
+        verify(row).setAttempts(1);
+        verify(row, never()).setQuarantinedAt(any());
+    }
+
 }

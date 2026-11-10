@@ -35,6 +35,10 @@ public interface NotificationJobEntity extends Entity {
     String getDeliveredRaw();
     void setDeliveredRaw(String deliveredRaw);
 
+    /** null означает обычную очередь, включая записи до обновления. */
+    Date getQuarantinedAt();
+    void setQuarantinedAt(Date value);
+
     int getAttempts();
     void setAttempts(int attempts);
 }

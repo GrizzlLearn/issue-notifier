@@ -41,6 +41,7 @@ public class IssueEventListener {
     private static final Logger log = LoggerFactory.getLogger(IssueEventListener.class);
     private static final int COMMENT_LIMIT = 500;
     private final EventPublisher eventPublisher;
+    private final EventIntakeDiagnostics intakeDiagnostics;
     private final PersistentNotificationQueue queue;
     private final IssueManager issueManager;
     private final NotificationService notificationService;
@@ -57,7 +58,9 @@ public class IssueEventListener {
                               @ComponentImport ApplicationProperties applicationProperties,
                               @ComponentImport JsonEntityPropertyManager entityProperties,
                               NotificationService notificationService,
-                              AdminSettingsService adminSettingsService) {
+                              AdminSettingsService adminSettingsService,
+                              EventIntakeDiagnostics intakeDiagnostics) {
+        this.intakeDiagnostics = intakeDiagnostics;
         this.eventPublisher = eventPublisher;
         this.queue = queue;
         this.issueManager = issueManager;
@@ -84,6 +87,7 @@ public class IssueEventListener {
         try {
             handleIssueEvent(event);
         } catch (Exception e) {
+            intakeDiagnostics.recordFailure(e);
             log.error("Задача {}: ошибка сохранения или разбора события {}",
                     event.getIssue() == null ? "?" : event.getIssue().getKey(), event.getEventTypeId(), e);
         }
@@ -115,7 +119,13 @@ public class IssueEventListener {
     }
 
     void processQueuedEvent(String payload, DeliveryProgress progress) {
-        QueuedIssueEvent event = QueuedIssueEvent.decode(payload);
+        QueuedIssueEvent event;
+        try {
+            event = QueuedIssueEvent.decode(payload);
+            if (event.issueId() == null) throw new IllegalArgumentException("issueId missing");
+        } catch (RuntimeException malformed) {
+            throw new ru.my.model.CorruptQueuedDataException("Некорректное сохранённое событие", malformed);
+        }
         Issue issue = issueManager.getIssueObject(event.issueId());
         if (issue == null) {
             log.info("Задача {} удалена: событие {} пропущено", event.issueId(), event.typeId());

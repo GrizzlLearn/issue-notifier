@@ -8,6 +8,8 @@ public class FailedNotificationDto {
     @JsonProperty
     public int id;
     @JsonProperty
+    public Long quarantinedAt;
+    @JsonProperty
     public Long issueId;
     @JsonProperty
     public String issueKey;

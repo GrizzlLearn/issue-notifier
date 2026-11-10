@@ -223,4 +223,20 @@ public class FailedNotificationsResourceTest {
         assertEquals(404, resource.retry(1).getStatus());
     }
 
+    @Test
+    public void discardRequiresAdminAndMapsQueueResults() {
+        assertEquals(401, resource.discard(1).getStatus());
+        when(auth.getLoggedInUser()).thenReturn(admin);
+        assertEquals(403, resource.discard(1).getStatus());
+        verifyNoInteractions(queue);
+        admin();
+        assertEquals(400, resource.discard(0).getStatus());
+        when(queue.discard(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.NOT_FOUND);
+        assertEquals(404, resource.discard(1).getStatus());
+        when(queue.discard(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.BUSY);
+        assertEquals(409, resource.discard(1).getStatus());
+        when(queue.discard(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.SCHEDULED);
+        assertEquals(204, resource.discard(1).getStatus());
+    }
+
 }

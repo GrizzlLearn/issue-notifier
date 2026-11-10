@@ -85,12 +85,20 @@ public class MattermostClient {
      * Возвращает empty если пользователь с таким email не найден в Mattermost.
      */
     public Optional<String> findDirectChannelId(String email) {
-        String key = cacheKey(email, Map.of());
+        return findDirectChannelId(email, configuration());
+    }
+
+    public Map<String, String> configuration() {
+        return adminSettings.snapshot();
+    }
+
+    public Optional<String> findDirectChannelId(String email, Map<String, String> settings) {
+        String key = cacheKey(email, settings);
         String cached = channelIds.getIfPresent(key);
         if (cached != null) {
             return Optional.of(cached);
         }
-        Optional<String> channelId = resolveDirectChannelId(email, Map.of());
+        Optional<String> channelId = resolveDirectChannelId(email, settings);
         channelId.ifPresentOrElse(
                 id -> {
                     channelIds.put(key, id);
@@ -116,6 +124,16 @@ public class MattermostClient {
      * и записывать результат проверки в рабочий кеш нельзя.
      */
     public void sendTest(String email, String text, Map<String, String> settings) {
+        if (settings.keySet().containsAll(java.util.Set.of(ChannelKeys.MATTERMOST_DOMAIN, ChannelKeys.MATTERMOST_TOKEN, ChannelKeys.MATTERMOST_BOT_ID))) {
+            sendTestSnapshot(email, text, Map.copyOf(settings));
+            return;
+        }
+        Map<String, String> merged = new java.util.HashMap<>(configuration());
+        settings.forEach((key, value) -> { if (value != null && !value.isBlank()) merged.put(key, value); });
+        sendTestSnapshot(email, text, Map.copyOf(merged));
+    }
+
+    private void sendTestSnapshot(String email, String text, Map<String, String> settings) {
         String channelId = resolveDirectChannelId(email, settings)
                 .orElseThrow(() -> new MattermostException(
                         "Пользователь с таким email не найден в Mattermost"));
@@ -126,7 +144,7 @@ public class MattermostClient {
     /** Значение настройки: из формы, а если там пусто — из сохранённых настроек. */
     private String value(String key, Map<String, String> settings) {
         String fromForm = settings.get(key);
-        return fromForm == null || fromForm.isBlank() ? adminSettings.get(key, "") : fromForm;
+        return fromForm == null ? "" : fromForm;
     }
 
     private Optional<String> resolveDirectChannelId(String email, Map<String, String> settings) {
@@ -155,13 +173,21 @@ public class MattermostClient {
      * и тогда сохранённый id перестаёт работать до следующего резолва.
      */
     public void forgetChannel(String email) {
-        channelIds.invalidate(cacheKey(email, Map.of()));
+        channelIds.invalidate(cacheKey(email, configuration()));
+    }
+
+    public void forgetChannel(String email, Map<String, String> settings) {
+        channelIds.invalidate(cacheKey(email, settings));
     }
 
     /** Отправляет сообщение в канал. Бросает {@link MattermostException} при сбое. */
     public void sendMessage(String channelId, String text) {
-        postMessage(adminSettings.get(ChannelKeys.MATTERMOST_DOMAIN, ""),
-                adminSettings.get(ChannelKeys.MATTERMOST_TOKEN, ""), channelId, text);
+        sendMessage(channelId, text, configuration());
+    }
+
+    public void sendMessage(String channelId, String text, Map<String, String> settings) {
+        postMessage(value(ChannelKeys.MATTERMOST_DOMAIN, settings),
+                value(ChannelKeys.MATTERMOST_TOKEN, settings), channelId, text);
     }
 
     private void postMessage(String domain, String token, String channelId, String text) {

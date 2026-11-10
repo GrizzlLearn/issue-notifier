@@ -28,7 +28,7 @@ public class IssueEventListenerPoolTest {
         when(issues.getIssueObject(42L)).thenReturn(issue);
         IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
                 mock(PersistentNotificationQueue.class), issues, users, mock(ApplicationProperties.class),
-                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class));
+                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class), new EventIntakeDiagnostics());
         String payload = new QueuedIssueEvent(42L, "deleted-author", 2L, false, null, null, false,
                 new DiffResult(List.of(new DiffResult.FieldChange("summary", "old", "new")))).encode();
         doThrow(new IllegalStateException("transport failed")).when(service)
@@ -43,7 +43,7 @@ public class IssueEventListenerPoolTest {
         IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
                 mock(PersistentNotificationQueue.class), mock(IssueManager.class), mock(UserManager.class),
                 mock(ApplicationProperties.class), mock(JsonEntityPropertyManager.class),
-                mock(NotificationService.class), mock(AdminSettingsService.class));
+                mock(NotificationService.class), mock(AdminSettingsService.class), new EventIntakeDiagnostics());
         listener.processQueuedEvent(new QueuedIssueEvent(42L, null, 2L, false, null, null,
                 false, new DiffResult(List.of())).encode(), new DeliveryProgress());
     }
@@ -52,7 +52,7 @@ public class IssueEventListenerPoolTest {
         PersistentNotificationQueue queue = mock(PersistentNotificationQueue.class);
         IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class), queue,
                 mock(IssueManager.class), mock(UserManager.class), mock(ApplicationProperties.class),
-                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class));
+                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class), new EventIntakeDiagnostics());
         MutableIssue issue = mock(MutableIssue.class);
         when(issue.getId()).thenReturn(42L);
         com.atlassian.jira.issue.comments.Comment comment = mock(com.atlassian.jira.issue.comments.Comment.class);
@@ -91,7 +91,7 @@ public class IssueEventListenerPoolTest {
                 eq(ru.my.model.NotificationAction.MENTION), any(), anyMap(), any(), any(), any(DeliveryProgress.class));
         IssueEventListener listener = new IssueEventListener(mock(EventPublisher.class),
                 mock(PersistentNotificationQueue.class), issues, users, mock(ApplicationProperties.class),
-                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class));
+                mock(JsonEntityPropertyManager.class), service, mock(AdminSettingsService.class), new EventIntakeDiagnostics());
         String payload = new QueuedIssueEvent(42L, null, 6L, true, null,
                 "x".repeat(600) + " [~tail]", false, new DiffResult(List.of())).encode();
 
@@ -99,6 +99,49 @@ public class IssueEventListenerPoolTest {
         assertThrows(IllegalStateException.class, () -> listener.processQueuedEvent(payload, progress));
         verify(service).processAction(any(), any(), eq(ru.my.model.NotificationAction.COMMENT_ADDED),
                 any(), anyMap(), eq(List.of(mentioned)), any(), same(progress));
+    }
+
+    @Test
+    public void intakeFailureIsCountedWithoutEscapingJiraDispatcher() {
+        var diagnostics = new EventIntakeDiagnostics();
+        var issue = mock(MutableIssue.class);
+        when(issue.getId()).thenThrow(new IllegalStateException("private"));
+        var comment = mock(com.atlassian.jira.issue.comments.Comment.class);
+        var event = new com.atlassian.jira.event.issue.IssueEvent(issue, null, comment, null, null,
+                java.util.Collections.emptyMap(), com.atlassian.jira.event.type.EventType.ISSUE_COMMENTED_ID);
+        var listener = new IssueEventListener(mock(EventPublisher.class), mock(PersistentNotificationQueue.class),
+                mock(IssueManager.class), mock(UserManager.class), mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class), diagnostics);
+        listener.onIssueEvent(event);
+        assertEquals(1, diagnostics.snapshot().failures);
+        assertEquals("Ошибка приёма события (IllegalStateException)", diagnostics.snapshot().lastError);
+    }
+
+    @Test
+    public void malformedPersistedEventIsClassifiedAsPermanent() {
+        var listener = new IssueEventListener(mock(EventPublisher.class), mock(PersistentNotificationQueue.class),
+                mock(IssueManager.class), mock(UserManager.class), mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class), new EventIntakeDiagnostics());
+        assertThrows(ru.my.model.CorruptQueuedDataException.class,
+                () -> listener.processQueuedEvent("broken", new DeliveryProgress()));
+    }
+
+    @Test
+    public void databaseFailureBeforeEnqueueIsCountedWithoutClaimingDurability() {
+        var diagnostics = new EventIntakeDiagnostics();
+        var queue = mock(PersistentNotificationQueue.class);
+        doThrow(new IllegalStateException("database unavailable")).when(queue).enqueue(anyString());
+        var issue = mock(MutableIssue.class);
+        when(issue.getId()).thenReturn(42L);
+        var comment = mock(com.atlassian.jira.issue.comments.Comment.class);
+        var event = new com.atlassian.jira.event.issue.IssueEvent(issue, null, comment, null, null,
+                java.util.Collections.emptyMap(), com.atlassian.jira.event.type.EventType.ISSUE_COMMENTED_ID);
+        var listener = new IssueEventListener(mock(EventPublisher.class), queue,
+                mock(IssueManager.class), mock(UserManager.class), mock(ApplicationProperties.class),
+                mock(JsonEntityPropertyManager.class), mock(NotificationService.class), mock(AdminSettingsService.class), diagnostics);
+        listener.onIssueEvent(event);
+        verify(queue).enqueue(anyString());
+        assertEquals(1, diagnostics.snapshot().failures);
     }
 
 }

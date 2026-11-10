@@ -18,6 +18,15 @@ public interface AdminSettingsService {
      */
     String get(String key, String defaultValue);
 
+    /** Согласованный снимок сохранённых значений; отсутствующие ключи не включаются. */
+    java.util.Map<String, String> snapshot();
+
+    /** Атомарно сохраняет набор настроек. */
+    void setAll(java.util.Map<String, String> values);
+
+    boolean setAllIfUnchanged(java.util.Map<String, String> expected, java.util.Map<String, String> values);
+
+
     /**
      * Сохраняет значение настройки (upsert: создаёт или обновляет).
      *

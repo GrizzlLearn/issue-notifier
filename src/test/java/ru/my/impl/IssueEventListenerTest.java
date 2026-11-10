@@ -67,7 +67,7 @@ public class IssueEventListenerTest {
     @Before
     public void setUp() {
         listener = new IssueEventListener(eventPublisher, queue, issueManager, userManager,
-                applicationProperties, entityProperties, notificationService, adminSettingsService);
+                applicationProperties, entityProperties, notificationService, adminSettingsService, new EventIntakeDiagnostics());
         doAnswer(inv -> {
             listener.processQueuedEvent(inv.getArgument(0), new DeliveryProgress());
             return null;

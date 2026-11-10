@@ -118,6 +118,19 @@ public class FailedNotificationsResource {
         return Response.status(202).build();
     }
 
+    @POST
+    @Path("/{id}/discard")
+    public Response discard(@PathParam("id") int id) {
+        ApplicationUser user = auth.getLoggedInUser();
+        if (user == null) return UserSettingsResource.unauthorized();
+        if (!globals.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
+        if (id <= 0) return UserSettingsResource.badRequest("Некорректный id");
+        var result = queue.discard(id, row -> describe(row, user) != null);
+        if (result == PersistentNotificationQueue.RetryResult.NOT_FOUND) return Response.status(404).build();
+        if (result == PersistentNotificationQueue.RetryResult.BUSY) return Response.status(409).entity(java.util.Map.of("error", "Очередь занята обработкой")).build();
+        return Response.noContent().build();
+    }
+
     private FailedNotificationDto describe(NotificationJobEntity row, ApplicationUser user) {
         QueuedIssueEvent event;
         try {
@@ -156,9 +169,10 @@ public class FailedNotificationsResource {
     private static FailedNotificationDto basic(NotificationJobEntity row) {
         FailedNotificationDto item = new FailedNotificationDto();
         item.id = row.getID();
+        item.quarantinedAt = millis(row.getQuarantinedAt());
         item.attempts = row.getAttempts();
         item.lastFailedAt = millis(row.getLastFailedAt());
-        item.nextAttemptAt = millis(row.getAvailableAt());
+        item.nextAttemptAt = row.getQuarantinedAt() == null ? millis(row.getAvailableAt()) : null;
         return item;
     }
 

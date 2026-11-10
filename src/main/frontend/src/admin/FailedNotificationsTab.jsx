@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { getFailedNotifications, retryFailedNotification } from '../api';
+import { getFailedNotifications, retryFailedNotification, discardFailedNotification, getIntakeDiagnostics } from '../api';
 
 const time = value => value == null ? '—' : new Date(value).toLocaleString('ru-RU');
 
-export function FailedNotificationsTable({ items, nextBeforeId, onRetry, retrying }) {
+export function FailedNotificationsTable({ items, nextBeforeId, onRetry, onDiscard, retrying }) {
   if (items.length === 0) return <p>{nextBeforeId != null
     ? 'На этой странице нет доступных событий с ошибками.'
     : 'Нет доступных для просмотра ошибок отправки.'}</p>;
@@ -22,10 +22,10 @@ export function FailedNotificationsTable({ items, nextBeforeId, onRetry, retryin
               : item.issueKey || item.issueId || '—'}</td>
             <td>{item.event}<div className="description">{item.context}</div></td>
             <td>{time(item.lastFailedAt)}</td><td>{item.attempts}</td>
-            <td>{time(item.nextAttemptAt)}</td>
+            <td>{item.quarantinedAt ? "Карантин: автоматический повтор остановлен" : time(item.nextAttemptAt)}</td>
             <td style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.error || '—'}</td>
-            <td><button type="button" className="aui-button" disabled={!onRetry || retrying != null || !item.issueId}
-              onClick={() => onRetry(item.id)}>{retrying === item.id ? 'Постановка…' : 'Повторить сейчас'}</button></td>
+            <td><button type="button" className="aui-button" disabled={!onRetry || retrying != null || !item.issueId || item.quarantinedAt != null}
+              onClick={() => onRetry(item.id)}>{retrying === item.id ? 'Постановка…' : 'Повторить сейчас'}</button>{item.quarantinedAt && <button type="button" className="aui-button" disabled={!onDiscard || retrying != null} onClick={() => onDiscard(item.id)}>Удалить из карантина</button>}</td>
           </tr>
         ))}</tbody>
       </table>
@@ -34,6 +34,8 @@ export function FailedNotificationsTable({ items, nextBeforeId, onRetry, retryin
 }
 
 export default function FailedNotificationsTab() {
+  const [intakeError, setIntakeError] = useState(null);
+  const [intake, setIntake] = useState(null);
   const [pages, setPages] = useState([null]);
   const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState(null);
@@ -46,6 +48,8 @@ export default function FailedNotificationsTab() {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(null); setData(null);
+    setIntake(null); setIntakeError(null);
+    getIntakeDiagnostics(controller.signal).then(result => { if (!controller.signal.aborted) setIntake(result); }).catch(() => { if (!controller.signal.aborted) setIntakeError("Диагностика приёма событий недоступна."); });
     getFailedNotifications(beforeId, controller.signal)
       .then(result => { if (!controller.signal.aborted) setData(result); })
       .catch(e => { if (!controller.signal.aborted) setError(e.message); })
@@ -66,6 +70,17 @@ export default function FailedNotificationsTab() {
     }
   }
 
+  async function discard(id) {
+    if (!window.confirm('Удалить событие из карантина? Неотправленные уведомления будут потеряны.')) return;
+    setRetrying(id); setError(null); setMessage(null);
+    try {
+      await discardFailedNotification(id);
+      setMessage('Событие удалено из карантина.');
+      setRefresh(value => value + 1);
+    } catch (e) { setError(e.message); }
+    finally { setRetrying(null); }
+  }
+
   function refreshNewest() {
     setLoading(true);
     setPages([null]);
@@ -74,6 +89,10 @@ export default function FailedNotificationsTab() {
 
   return (
     <div>
+      {intakeError && <p className="aui-message aui-message-warning">{intakeError}</p>}
+      {intake?.failures > 0 && <p className="aui-message aui-message-error">Ошибок приёма событий на этом экземпляре плагина: {intake.failures}.
+        Последняя: {time(intake.lastFailedAt)} — {intake.lastError}. Эти события не попали в очередь и автоматически не восстанавливаются.
+        Счётчик действует с {time(intake.startedAt)} и сбрасывается при перезапуске.</p>}
       <p>Здесь показаны события с ошибками, ожидающие повторной отправки. Одно событие может
         включать несколько получателей и каналов. После успешной обработки оно исчезнет из списка.
         При повторе уже подтверждённые отправки в каналы пропускаются. Дубль возможен,
@@ -89,7 +108,7 @@ export default function FailedNotificationsTab() {
         {message && <p className="aui-message aui-message-success">{message}</p>}
         {loading && <p>Загрузка…</p>}
         {error && <p className="aui-message aui-message-error">{error}</p>}
-        {!loading && data && <FailedNotificationsTable items={data.items} nextBeforeId={data.nextBeforeId} onRetry={retry} retrying={retrying} />}
+        {!loading && data && <FailedNotificationsTable items={data.items} nextBeforeId={data.nextBeforeId} onRetry={retry} onDiscard={discard} retrying={retrying} />}
       </div>
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
         <button type="button" className="aui-button" disabled={loading || pages.length === 1}

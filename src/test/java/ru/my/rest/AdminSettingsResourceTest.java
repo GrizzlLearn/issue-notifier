@@ -50,6 +50,19 @@ public class AdminSettingsResourceTest {
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, admin)).thenReturn(true);
         when(globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, regular)).thenReturn(false);
         when(adminSettingsService.get(anyString(), anyString())).thenReturn("");
+        when(adminSettingsService.snapshot()).thenAnswer(call -> {
+            java.util.Map<String, String> values = new java.util.HashMap<>();
+            for (String key : AdminSettingsResource.KNOWN_KEYS) {
+                String value = adminSettingsService.get(key, key.endsWith("enabled") || key.startsWith("logging.") || key.equals(ActionTemplates.HIDE_COMMENT_TEXT_KEY) ? "false" : "");
+                if (!value.isBlank()) values.put(key, value);
+            }
+            for (NotificationChannel channel : NotificationChannel.values()) {
+                String key = AdminSettingsResource.testedKey(channel);
+                values.put(key, adminSettingsService.get(key, ""));
+            }
+            return values;
+        });
+        when(adminSettingsService.setAllIfUnchanged(anyMap(), anyMap())).thenReturn(true);
     }
 
     // --- GET ---
@@ -174,8 +187,8 @@ public class AdminSettingsResourceTest {
         ));
 
         assertEquals(204, response.getStatus());
-        verify(adminSettingsService).set("email.enabled", "false");
-        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_TOKEN, "secret123");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get("email.enabled"), "false")));
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.MATTERMOST_TOKEN), "secret123")));
     }
 
     @Test
@@ -214,7 +227,7 @@ public class AdminSettingsResourceTest {
         rememberTest();
 
         assertEquals(204, resource.set(Map.of("telegram.enabled", "true")).getStatus());
-        verify(adminSettingsService).set("telegram.enabled", "true");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get("telegram.enabled"), "true")));
     }
 
     /**
@@ -246,7 +259,7 @@ public class AdminSettingsResourceTest {
                 ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com"));
 
         assertEquals(204, response.getStatus());
-        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.MATTERMOST_DOMAIN), "https://mm.example.com")));
     }
 
     /**
@@ -270,7 +283,7 @@ public class AdminSettingsResourceTest {
         resource.set(Map.of("unknown.key", "value", "email.enabled", "false"));
 
         verify(adminSettingsService, never()).set(eq("unknown.key"), any());
-        verify(adminSettingsService).set("email.enabled", "false");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get("email.enabled"), "false")));
     }
 
     @Test
@@ -281,7 +294,7 @@ public class AdminSettingsResourceTest {
         resource.set(Map.of(ChannelKeys.MATTERMOST_TOKEN, "", "email.enabled", "false"));
 
         verify(adminSettingsService, never()).set(eq(ChannelKeys.MATTERMOST_TOKEN), any());
-        verify(adminSettingsService).set("email.enabled", "false");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get("email.enabled"), "false")));
     }
 
     @Test
@@ -290,7 +303,7 @@ public class AdminSettingsResourceTest {
 
         resource.set(Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123456:ABC-DEF"));
 
-        verify(adminSettingsService).set(ChannelKeys.TELEGRAM_BOT_TOKEN, "123456:ABC-DEF");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.TELEGRAM_BOT_TOKEN), "123456:ABC-DEF")));
     }
 
     @Test
@@ -313,7 +326,7 @@ public class AdminSettingsResourceTest {
         ));
 
         verify(adminSettingsService, never()).set(eq(ChannelKeys.MATTERMOST_TOKEN + AdminSettingsResource.IS_SET_SUFFIX), any());
-        verify(adminSettingsService).set("email.enabled", "false");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get("email.enabled"), "false")));
     }
 
     @Test
@@ -323,7 +336,7 @@ public class AdminSettingsResourceTest {
 
         resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, ""));
 
-        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.MATTERMOST_DOMAIN), "")));
     }
 
     // --- шаблоны действий ---
@@ -347,7 +360,7 @@ public class AdminSettingsResourceTest {
         Response response = resource.set(Map.of(key, "{issueKey} — {summary}"));
 
         assertEquals(204, response.getStatus());
-        verify(adminSettingsService).set(key, "{issueKey} — {summary}");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(key), "{issueKey} — {summary}")));
     }
 
     // --- «не задано» у булевых ключей ---
@@ -378,7 +391,7 @@ public class AdminSettingsResourceTest {
 
         assertEquals(204, response.getStatus());
         verify(adminSettingsService, never()).set(eq(enabledKey), anyString());
-        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.MATTERMOST_DOMAIN), "https://mm.example.com")));
     }
 
     /** Кривой домен ломает URI.create в клиенте — ловим на сохранении, а не в логе отправки. */
@@ -393,7 +406,7 @@ public class AdminSettingsResourceTest {
     public void putAcceptsAbsoluteMattermostDomain() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         assertEquals(204, resource.set(Map.of(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com")).getStatus());
-        verify(adminSettingsService).set(ChannelKeys.MATTERMOST_DOMAIN, "https://mm.example.com");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ChannelKeys.MATTERMOST_DOMAIN), "https://mm.example.com")));
     }
 
     // --- POST /test ---
@@ -426,8 +439,8 @@ public class AdminSettingsResourceTest {
                 Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC")));
 
         assertEquals(200, response.getStatus());
-        verify(telegramSender).sendTest(admin, TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName()),
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
+        verify(telegramSender).sendTest(eq(admin), eq(TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName())),
+                argThat(settings -> "123:ABC".equals(settings.get(ChannelKeys.TELEGRAM_BOT_TOKEN)) && !settings.containsKey("какой-то.мусор")));
     }
 
     /**
@@ -459,8 +472,8 @@ public class AdminSettingsResourceTest {
 
         resource.test(request(TELEGRAM, form));
 
-        verify(telegramSender).sendTest(admin, TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName()),
-                Map.of(ChannelKeys.TELEGRAM_BOT_TOKEN, "123:ABC"));
+        verify(telegramSender).sendTest(eq(admin), eq(TestMessages.forChannel(NotificationChannel.TELEGRAM, admin.getDisplayName())),
+                argThat(settings -> "123:ABC".equals(settings.get(ChannelKeys.TELEGRAM_BOT_TOKEN)) && !settings.containsKey("какой-то.мусор")));
     }
 
     /** Проверка выбранному пользователю Jira: ищем по логину. */
@@ -607,7 +620,7 @@ public class AdminSettingsResourceTest {
         when(authContext.getLoggedInUser()).thenReturn(admin);
 
         assertEquals(204, resource.set(Map.of(ActionTemplates.WATCHERS_ENABLED_KEY, "true")).getStatus());
-        verify(adminSettingsService).set(ActionTemplates.WATCHERS_ENABLED_KEY, "true");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(ActionTemplates.WATCHERS_ENABLED_KEY), "true")));
     }
 
     /** Старый инвертированный ключ больше не известен — запись по нему не проходит. */
@@ -632,7 +645,7 @@ public class AdminSettingsResourceTest {
     public void putAcceptsKnownCommentTextMode() {
         when(authContext.getLoggedInUser()).thenReturn(admin);
         assertEquals(204, resource.set(Map.of(CommentTextMode.KEY, "shown")).getStatus());
-        verify(adminSettingsService).set(CommentTextMode.KEY, "shown");
+        verify(adminSettingsService).setAllIfUnchanged(anyMap(), argThat(values -> java.util.Objects.equals(values.get(CommentTextMode.KEY), "shown")));
     }
 
     /** Записи о режиме ещё нет — GET отдаёт режим, выведенный из старой галки. */

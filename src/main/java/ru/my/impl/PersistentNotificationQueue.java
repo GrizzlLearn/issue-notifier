@@ -96,7 +96,7 @@ public class PersistentNotificationQueue implements JobRunner {
         if (stopped || handler == null) return JobRunnerResponse.success();
         try {
             NotificationJobEntity[] ready = ao.find(NotificationJobEntity.class,
-                    Query.select().where("AVAILABLE_AT <= ?", new Date()).order("ID ASC").limit(16));
+                    Query.select().where("AVAILABLE_AT <= ? AND QUARANTINED_AT IS NULL", new Date()).order("ID ASC").limit(16));
             for (NotificationJobEntity row : ready) {
                 int id = row.getID();
                 try {
@@ -121,7 +121,7 @@ public class PersistentNotificationQueue implements JobRunner {
         try {
             return ao.executeInTransaction(() -> {
                 NotificationJobEntity[] rows = ao.find(NotificationJobEntity.class, Query.select().where("ID = ?", id));
-                if (rows.length == 0 || rows[0].getAttempts() <= 0 || !visible.test(rows[0])) {
+                if (rows.length == 0 || rows[0].getAttempts() <= 0 || rows[0].getQuarantinedAt() != null || !visible.test(rows[0])) {
                     return RetryResult.NOT_FOUND;
                 }
                 rows[0].setAvailableAt(new Date());
@@ -133,6 +133,20 @@ public class PersistentNotificationQueue implements JobRunner {
         }
     }
 
+    /** Удаление только карантинной записи под блокировкой обработчика. */
+    public RetryResult discard(int id, java.util.function.Predicate<NotificationJobEntity> visible) {
+        Lock lock = locks.getLockForName("ru.noname.atlassian.jira.in.notification-stripe." + Math.floorMod(id, LOCK_STRIPES));
+        if (!lock.tryLock()) return RetryResult.BUSY;
+        try {
+            return ao.executeInTransaction(() -> {
+                NotificationJobEntity[] rows = ao.find(NotificationJobEntity.class, Query.select().where("ID = ?", id));
+                if (rows.length == 0 || rows[0].getQuarantinedAt() == null || !visible.test(rows[0])) return RetryResult.NOT_FOUND;
+                ao.delete(rows[0]);
+                return RetryResult.SCHEDULED;
+            });
+        } finally { lock.unlock(); }
+    }
+
     private void process(int id) {
         Lock lock = locks.getLockForName("ru.noname.atlassian.jira.in.notification-stripe." + Math.floorMod(id, LOCK_STRIPES));
         if (!lock.tryLock()) return;
@@ -142,9 +156,10 @@ public class PersistentNotificationQueue implements JobRunner {
                     Query.select().where("ID = ?", id));
             if (rows.length == 0) return;
             NotificationJobEntity row = rows[0];
-            if (row.getAvailableAt().after(new Date())) return;
+            if (row.getQuarantinedAt() != null || row.getAvailableAt().after(new Date())) return;
             try {
-                DeliveryProgress progress = new DeliveryProgress(row.getDeliveredRaw(), snapshot -> {
+                String deliveredRaw = row.getDeliveredRaw();
+                DeliveryProgress progress = new DeliveryProgress(deliveredRaw, snapshot -> {
                     if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
                     String previous = row.getDeliveredRaw();
                     try {
@@ -170,14 +185,17 @@ public class PersistentNotificationQueue implements JobRunner {
                 int attempts = row.getAttempts() == Integer.MAX_VALUE ? Integer.MAX_VALUE : row.getAttempts() + 1;
                 long delaySeconds = Math.min(300, 1L << Math.min(9, attempts));
                 ao.executeInTransaction(() -> {
+                    if (e instanceof ru.my.model.CorruptQueuedDataException) row.setQuarantinedAt(new Date());
                     row.setAttempts(attempts);
-                    row.setLastError(NotificationErrors.summarize(e));
+                    row.setLastError(e instanceof ru.my.model.CorruptQueuedDataException
+                            ? "Некорректные сохранённые данные: событие помещено в карантин" : NotificationErrors.summarize(e));
                     row.setLastFailedAt(new Date());
                     row.setAvailableAt(new Date(System.currentTimeMillis() + delaySeconds * 1_000));
                     row.save();
                     return null;
                 });
-                log.warn("Задание уведомлений {} отложено, попытка {} ({})", id, attempts, e.getClass().getSimpleName());
+                log.warn("Задание уведомлений {}: {}, попытка {} ({})", id,
+                        e instanceof ru.my.model.CorruptQueuedDataException ? "карантин" : "отложено", attempts, e.getClass().getSimpleName());
             }
         } catch (RuntimeException e) {
             log.warn("Задание уведомлений {} осталось в очереди ({})", id, e.getClass().getSimpleName());

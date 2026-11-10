@@ -150,6 +150,7 @@ public class AdminSettingsResource {
         if (user == null) return UserSettingsResource.unauthorized();
         if (!globalPermissionManager.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
 
+        Map<String, String> saved = adminSettingsService.snapshot();
         Map<String, String> settings = new LinkedHashMap<>();
         for (String key : KNOWN_KEYS) {
             if (SECRETS.contains(key)) {
@@ -158,10 +159,10 @@ public class AdminSettingsResource {
             } else if (isIsSetKey(key)) {
                 // производный ключ: читаем реальный секрет и возвращаем факт его наличия
                 String secretKey = key.substring(0, key.length() - IS_SET_SUFFIX.length());
-                boolean isSet = !adminSettingsService.get(secretKey, "").isBlank();
+                boolean isSet = !saved.getOrDefault(secretKey, "").isBlank();
                 settings.put(key, String.valueOf(isSet));
             } else {
-                settings.put(key, adminSettingsService.get(key, defaultFor(key)));
+                settings.put(key, saved.getOrDefault(key, defaultFor(key, saved)));
             }
         }
         return Response.ok(settings).build();
@@ -215,17 +216,21 @@ public class AdminSettingsResource {
             }
         }
 
-        Response untested = requireSuccessfulTest(body);
+        Map<String, String> saved = adminSettingsService.snapshot();
+        Response untested = requireSuccessfulTest(body, saved);
         if (untested != null) {
             return untested;
         }
 
-        body.entrySet().stream()
+        java.util.Map<String, String> updates = body.entrySet().stream()
                 .filter(e -> KNOWN_KEYS.contains(e.getKey()))
                 .filter(e -> !isBlankBoolean(e.getKey(), e.getValue()))                   // «не задано» — не трогаем
                 .filter(e -> !isIsSetKey(e.getKey()))                                      // read-only
                 .filter(e -> !SECRETS.contains(e.getKey()) || !e.getValue().isBlank())     // пустой секрет — не трогаем
-                .forEach(e -> adminSettingsService.set(e.getKey(), e.getValue()));
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        if (!adminSettingsService.setAllIfUnchanged(validationKeys(saved), updates)) {
+            return Response.status(409).entity(Map.of("error", "Настройки изменились. Обновите страницу и повторите сохранение.")).build();
+        }
 
         return Response.noContent().build();
     }
@@ -264,7 +269,14 @@ public class AdminSettingsResource {
         String type = request.getRecipientType() == null || request.getRecipientType().isBlank()
                 ? "me" : request.getRecipientType().trim();
         String target = request.getRecipient() == null ? "" : request.getRecipient().trim();
-        Map<String, String> settings = formSettings(request.getSettings());
+        Map<String, String> saved = adminSettingsService.snapshot();
+        Map<String, String> settings = new LinkedHashMap<>(formSettings(request.getSettings()));
+        for (String key : configKeys(channel)) {
+            if (!settings.containsKey(key) || settings.get(key).isBlank()) {
+                settings.put(key, saved.getOrDefault(key, ""));
+            }
+        }
+        settings = Map.copyOf(settings);
         // домен приходит из формы и уходит в HTTP-запрос: без проверки проверочная
         // отправка ходила бы по любому адресу, включая внутренние (PUT его проверяет)
         Response invalidDomain = validateDomain(ChannelKeys.MATTERMOST_DOMAIN,
@@ -303,7 +315,7 @@ public class AdminSettingsResource {
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
         // запоминаем, что именно проверено: без этого PUT не даст включить канал
-        adminSettingsService.set(testedKey(channel), fingerprint(channel, settings));
+        adminSettingsService.set(testedKey(channel), fingerprint(channel, settings, saved));
 
         return Response.ok(Map.of("message", channel == NotificationChannel.EMAIL
                 ? "Письмо поставлено в очередь Jira — проверьте ящик"
@@ -343,12 +355,12 @@ public class AdminSettingsResource {
      *
      * @param overrides значения, которые переопределяют сохранённые (форма или тело PUT)
      */
-    private String fingerprint(NotificationChannel channel, Map<String, String> overrides) {
+    private String fingerprint(NotificationChannel channel, Map<String, String> overrides, Map<String, String> saved) {
         StringBuilder canonical = new StringBuilder();
         for (String key : configKeys(channel)) {
             String value = overrides.get(key);
             if (value == null || value.isBlank()) {
-                value = adminSettingsService.get(key, "");
+                value = saved.getOrDefault(key, "");
             }
             canonical.append(key).append('=').append(value).append('\n');
         }
@@ -373,15 +385,22 @@ public class AdminSettingsResource {
      *
      * @return ответ 400 или {@code null}, если включать можно
      */
-    private Response requireSuccessfulTest(Map<String, String> body) {
+    private Map<String, String> validationKeys(Map<String, String> saved) {
+        Map<String, String> expected = new LinkedHashMap<>();
+        for (String key : KNOWN_KEYS) expected.put(key, saved.get(key));
+        for (NotificationChannel channel : NotificationChannel.values()) expected.put(testedKey(channel), saved.get(testedKey(channel)));
+        return expected;
+    }
+
+    private Response requireSuccessfulTest(Map<String, String> body, Map<String, String> saved) {
         for (NotificationChannel channel : NotificationChannel.values()) {
             boolean turningOn = "true".equals(body.get(channel.enabledKey()))
-                    && !Boolean.parseBoolean(adminSettingsService.get(channel.enabledKey(), "false"));
+                    && !Boolean.parseBoolean(saved.getOrDefault(channel.enabledKey(), "false"));
             if (!turningOn) {
                 continue;
             }
-            String tested = adminSettingsService.get(testedKey(channel), "");
-            if (!fingerprint(channel, body).equals(tested)) {
+            String tested = saved.getOrDefault(testedKey(channel), "");
+            if (!fingerprint(channel, body, saved).equals(tested)) {
                 return UserSettingsResource.badRequest("Отправьте проверку канала "
                         + channel + " с этими настройками — без успешной проверки включить его нельзя");
             }
@@ -433,14 +452,14 @@ public class AdminSettingsResource {
      * Булев ключ без записи — это «выключено», а не «пусто»: клиент отправляет
      * полученное значение обратно, и {@code ""} не прошло бы валидацию PUT.
      */
-    private String defaultFor(String key) {
+    private String defaultFor(String key, Map<String, String> saved) {
         if (BOOLEAN_KEYS.contains(key)) {
             return "false";
         }
         // режим текста комментария при отсутствии записи наследует старую галку
         if (CommentTextMode.KEY.equals(key)) {
             return CommentTextMode.resolve("",
-                    adminSettingsService.get(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).key();
+                    saved.getOrDefault(ActionTemplates.HIDE_COMMENT_TEXT_KEY, "false")).key();
         }
         return "";
     }

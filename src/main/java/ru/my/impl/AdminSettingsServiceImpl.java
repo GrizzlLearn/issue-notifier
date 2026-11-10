@@ -113,7 +113,7 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
 
     @Override
     public void set(String key, String value) {
-        Lock lock = lockFor(key);
+        Lock lock = lockFor("configuration");
         lock.lock();
         try {
             store(key, value);
@@ -124,8 +124,70 @@ public class AdminSettingsServiceImpl implements AdminSettingsService {
     }
 
     @Override
+    public java.util.Map<String, String> snapshot() {
+        Lock lock = lockFor("configuration");
+        lock.lock();
+        try {
+            return loadSnapshot();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private java.util.Map<String, String> loadSnapshot() {
+        return ao.executeInTransaction(() -> {
+                java.util.Map<String, String> values = new java.util.HashMap<>();
+                for (AdminSettingsEntity row : ao.find(AdminSettingsEntity.class, Query.select())) {
+                    if (row.getSettingKey() != null && row.getSettingValue() != null) values.put(row.getSettingKey(), row.getSettingValue());
+                }
+                return java.util.Map.copyOf(values);
+            });
+    }
+
+    @Override
+    public void setAll(java.util.Map<String, String> values) {
+        Lock lock = lockFor("configuration");
+        lock.lock();
+        try {
+            storeAll(values);
+        } finally {
+            try { values.keySet().forEach(cache::remove); } finally { lock.unlock(); }
+        }
+        values.keySet().forEach(this::applyLoggingIfNeeded);
+    }
+
+    private void storeAll(java.util.Map<String, String> values) {
+            ao.executeInTransaction(() -> {
+                values.forEach((key, value) -> {
+                    AdminSettingsEntity[] rows = ao.find(AdminSettingsEntity.class,
+                            Query.select().where("SETTING_KEY = ?", key));
+                    AdminSettingsEntity row = rows.length == 0
+                            ? ao.create(AdminSettingsEntity.class, new net.java.ao.DBParam("SETTING_KEY", key)) : rows[0];
+                    row.setSettingValue(value);
+                    row.save();
+                });
+                return null;
+            });
+    }
+
+    @Override
+    public boolean setAllIfUnchanged(java.util.Map<String, String> expected, java.util.Map<String, String> values) {
+        Lock lock = lockFor("configuration");
+        lock.lock();
+        try {
+            java.util.Map<String, String> current = loadSnapshot();
+            if (expected.entrySet().stream().anyMatch(e -> !Objects.equals(current.get(e.getKey()), e.getValue()))) return false;
+            storeAll(values);
+        } finally {
+            try { values.keySet().forEach(cache::remove); } finally { lock.unlock(); }
+        }
+        values.keySet().forEach(this::applyLoggingIfNeeded);
+        return true;
+    }
+
+    @Override
     public boolean compareAndSet(String key, String expectedValue, String value) {
-        Lock lock = lockFor(key);
+        Lock lock = lockFor("configuration");
         lock.lock();
         try {
             String current = load(key);

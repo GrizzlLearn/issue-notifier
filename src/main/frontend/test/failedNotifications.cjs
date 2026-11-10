@@ -26,6 +26,11 @@ async function main() {
   assert.equal(calls[2].url, '/rest/issue-notifier/1/admin/failed-notifications/42/retry');
   assert.equal(calls[2].options.method, 'POST');
   assert.equal(calls[2].options.credentials, 'same-origin');
+  await api.discardFailedNotification(42);
+  assert.equal(calls[3].url, '/rest/issue-notifier/1/admin/failed-notifications/42/discard');
+  assert.equal(calls[3].options.method, 'POST');
+  await api.getIntakeDiagnostics(signal);
+  assert.equal(calls[4].url, '/rest/issue-notifier/1/admin/intake-diagnostics');
   const source = fs.readFileSync(path.join(frontend, 'src/admin/FailedNotificationsTab.jsx'), 'utf8');
   const refreshHandler = source.slice(source.indexOf('  function refreshNewest()'), source.indexOf('\n  return (', source.indexOf('  function refreshNewest()')));
   const refreshState = { setLoading: value => assert.equal(value, true),
@@ -56,6 +61,9 @@ async function main() {
   assert.match(html, /&lt;b&gt;Контекст&lt;\/b&gt;/);
   assert.match(html, /white-space:pre-wrap/);
   assert.doesNotMatch(html, /<script>/);
+  const quarantined = renderToStaticMarkup(React.createElement(FailedNotificationsTable, { items: [{ id: 2, quarantinedAt: 123, attempts: 1 }], onDiscard: () => {} }));
+  assert.match(quarantined, /Карантин: автоматический повтор остановлен/);
+  assert.match(quarantined, /Удалить из карантина/);
   const initial = renderToStaticMarkup(React.createElement(Tab));
   assert.match(initial, /Загрузка…/);
   assert.match(initial, /уже подтверждённые отправки в каналы пропускаются/);

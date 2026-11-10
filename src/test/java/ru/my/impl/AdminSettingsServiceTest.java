@@ -308,4 +308,43 @@ public class AdminSettingsServiceTest {
         verifyNoInteractions(pluginLogging);
     }
 
+    @Test
+    public void batchWritesUseOneTransactionAndSnapshotIsImmutable() {
+        when(ao.executeInTransaction(any())).thenAnswer(call ->
+                ((com.atlassian.sal.api.transaction.TransactionCallback<?>) call.getArgument(0)).doInTransaction());
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class))).thenReturn(new AdminSettingsEntity[0]);
+        AdminSettingsEntity entity = mock(AdminSettingsEntity.class);
+        when(ao.create(eq(AdminSettingsEntity.class), any(net.java.ao.DBParam.class))).thenReturn(entity);
+        service.setAll(java.util.Map.of("mattermost.domain", "https://example.com", "mattermost.token", "secret"));
+        verify(ao, times(1)).executeInTransaction(any());
+        verify(entity).setSettingValue("https://example.com");
+        verify(entity).setSettingValue("secret");
+        when(entity.getSettingKey()).thenReturn("mattermost.domain");
+        when(entity.getSettingValue()).thenReturn("https://example.com");
+        when(ao.find(eq(AdminSettingsEntity.class), any(Query.class))).thenReturn(new AdminSettingsEntity[]{entity});
+        var snapshot = service.snapshot();
+        assertEquals("https://example.com", snapshot.get("mattermost.domain"));
+        try {
+            snapshot.put("mattermost.domain", "changed");
+            fail("snapshot must be immutable");
+        } catch (UnsupportedOperationException expected) {
+            // Нельзя менять конфигурацию уже выполняющейся отправки.
+        }
+    }
+
+    @Test
+    public void batchInvalidationFailureStillReleasesConfigurationLock() throws Exception {
+        com.atlassian.cache.Cache<String, String> failingCache = mock(com.atlassian.cache.Cache.class);
+        java.lang.reflect.Field cacheField = AdminSettingsServiceImpl.class.getDeclaredField("cache");
+        cacheField.setAccessible(true);
+        cacheField.set(service, failingCache);
+        doThrow(new IllegalStateException("cache unavailable")).when(failingCache).remove("mattermost.domain");
+        try {
+            service.setAll(java.util.Map.of("mattermost.domain", "https://example.com"));
+            fail("expected invalidation failure");
+        } catch (IllegalStateException expected) {
+            verify(clusterLock).unlock();
+        }
+    }
+
 }

@@ -113,3 +113,10 @@ export function getFailedNotifications(beforeId, signal) {
 export async function retryFailedNotification(id) {
   await request(`/admin/failed-notifications/${encodeURIComponent(id)}/retry`, { method: 'POST' });
 }
+
+export async function discardFailedNotification(id) {
+  await request(`/admin/failed-notifications/${encodeURIComponent(id)}/discard`, { method: 'POST' });
+}
+export function getIntakeDiagnostics(signal) {
+  return getJson('/admin/intake-diagnostics', signal);
+}

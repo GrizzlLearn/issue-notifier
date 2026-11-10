@@ -30,12 +30,13 @@ public class MattermostNotificationSender implements NotificationSender {
     @Override
     public void send(ApplicationUser recipient, String message) {
         String email = email(recipient);
-        String channelId = client.findDirectChannelId(email)
+        Map<String, String> settings = client.configuration();
+        String channelId = client.findDirectChannelId(email, settings)
                 .orElseThrow(() -> new IllegalStateException(
                         "Пользователь " + recipient.getKey() + " не найден в Mattermost по своему email"));
         log.debug("Mattermost: уведомление для {} → канал {} ({} символов)",
                 recipient.getKey(), channelId, message.length());
-        sendOrForget(email, channelId, message);
+        sendOrForget(email, channelId, message, settings);
     }
 
     @Override
@@ -63,13 +64,13 @@ public class MattermostNotificationSender implements NotificationSender {
      * id канала кешируется, поэтому при сбое отправки его надо забыть: пользователя
      * могли удалить или пересоздать, и иначе канал остался бы битым до истечения кеша.
      */
-    private void sendOrForget(String email, String channelId, String message) {
+    private void sendOrForget(String email, String channelId, String message, Map<String, String> settings) {
         try {
-            client.sendMessage(channelId, message);
+            client.sendMessage(channelId, message, settings);
         } catch (RuntimeException e) {
             log.debug("Mattermost: отправка в канал {} не удалась, кеш канала сброшен: {}",
                     channelId, e.getMessage());
-            client.forgetChannel(email);
+            client.forgetChannel(email, settings);
             throw e;
         }
     }

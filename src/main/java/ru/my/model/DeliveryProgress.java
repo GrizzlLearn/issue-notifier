@@ -35,8 +35,8 @@ public final class DeliveryProgress {
                 entries.add(entry.getTextValue());
             }
             delivered = Set.copyOf(entries);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Не удалось прочитать журнал доставок");
+        } catch (IOException | RuntimeException e) {
+            throw new CorruptQueuedDataException("Не удалось прочитать журнал доставок", e);
         }
     }
 

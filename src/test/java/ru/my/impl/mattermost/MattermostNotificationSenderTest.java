@@ -22,11 +22,11 @@ public class MattermostNotificationSenderTest {
 
     @Test
     public void sendsToDirectChannelWhenUserFound() {
-        when(client.findDirectChannelId("alice@example.com")).thenReturn(Optional.of("chan123"));
+        when(client.findDirectChannelId("alice@example.com", java.util.Map.of())).thenReturn(Optional.of("chan123"));
 
         sender.send(mockUser("alice@example.com"), "hello");
 
-        verify(client).sendMessage("chan123", "hello");
+        verify(client).sendMessage("chan123", "hello", java.util.Map.of());
     }
 
     /**
@@ -35,7 +35,7 @@ public class MattermostNotificationSenderTest {
      */
     @Test(expected = IllegalStateException.class)
     public void failsWhenUserNotFoundInMattermost() {
-        when(client.findDirectChannelId("bob@example.com")).thenReturn(Optional.empty());
+        when(client.findDirectChannelId("bob@example.com", java.util.Map.of())).thenReturn(Optional.empty());
 
         sender.send(mockUser("bob@example.com"), "hello");
     }
@@ -65,4 +65,19 @@ public class MattermostNotificationSenderTest {
         when(user.getDisplayName()).thenReturn("Test User");
         return user;
     }
+    @Test
+    public void carriesSameSnapshotThroughResolutionDeliveryAndFailedCacheInvalidation() {
+        Map<String, String> snapshot = Map.of("mattermost.domain", "https://old.example");
+        when(client.configuration()).thenReturn(snapshot);
+        when(client.findDirectChannelId("alice@example.com", snapshot)).thenReturn(Optional.of("channel"));
+        doThrow(new IllegalStateException("send failed")).when(client).sendMessage("channel", "hello", snapshot);
+        try {
+            sender.send(mockUser("alice@example.com"), "hello");
+            org.junit.Assert.fail("expected send failure");
+        } catch (IllegalStateException expected) {
+            verify(client).forgetChannel("alice@example.com", snapshot);
+            verify(client, times(1)).configuration();
+        }
+    }
+
 }

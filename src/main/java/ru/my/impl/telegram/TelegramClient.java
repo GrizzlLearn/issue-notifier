@@ -112,7 +112,7 @@ public class TelegramClient {
      */
     public void sendMessage(String chatId, String htmlText, Map<String, String> settings) {
         String fromForm = settings.get(ChannelKeys.TELEGRAM_BOT_TOKEN);
-        String token = fromForm == null || fromForm.isBlank()
+        String token = fromForm == null
                 ? adminSettings.get(ChannelKeys.TELEGRAM_BOT_TOKEN, "")
                 : fromForm;
         if (token.isBlank()) {
