@@ -112,6 +112,27 @@ public class PersistentNotificationQueue implements JobRunner {
         }
     }
 
+    public enum RetryResult { SCHEDULED, BUSY, NOT_FOUND }
+
+    /** Меняет только срок повтора под той же блокировкой, что использует обработчик. */
+    public RetryResult retryNow(int id, java.util.function.Predicate<NotificationJobEntity> visible) {
+        Lock lock = locks.getLockForName("ru.noname.atlassian.jira.in.notification-stripe." + Math.floorMod(id, LOCK_STRIPES));
+        if (!lock.tryLock()) return RetryResult.BUSY;
+        try {
+            return ao.executeInTransaction(() -> {
+                NotificationJobEntity[] rows = ao.find(NotificationJobEntity.class, Query.select().where("ID = ?", id));
+                if (rows.length == 0 || rows[0].getAttempts() <= 0 || !visible.test(rows[0])) {
+                    return RetryResult.NOT_FOUND;
+                }
+                rows[0].setAvailableAt(new Date());
+                rows[0].save();
+                return RetryResult.SCHEDULED;
+            });
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private void process(int id) {
         Lock lock = locks.getLockForName("ru.noname.atlassian.jira.in.notification-stripe." + Math.floorMod(id, LOCK_STRIPES));
         if (!lock.tryLock()) return;

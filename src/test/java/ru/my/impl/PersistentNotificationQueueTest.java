@@ -308,4 +308,107 @@ public class PersistentNotificationQueueTest {
                 ru.my.model.NotificationChannel.EMAIL, "user-b"));
     }
 
+    @Test
+    public void manualRetryPreservesLedgerAndAttempts() {
+        when(row.getAttempts()).thenReturn(3);
+        assertEquals(PersistentNotificationQueue.RetryResult.SCHEDULED, queue.retryNow(1, job -> true));
+        verify(row).setAvailableAt(any(Date.class));
+        verify(row).save();
+        verify(row, never()).setAttempts(anyInt());
+        verify(row, never()).setDeliveredRaw(any());
+        verifyNoInteractions(handler);
+        verify(lock).unlock();
+    }
+
+    @Test
+    public void manualRetryRejectsBusyHiddenAndSuccessfulJobs() {
+        when(lock.tryLock()).thenReturn(false);
+        assertEquals(PersistentNotificationQueue.RetryResult.BUSY, queue.retryNow(1, job -> true));
+        when(lock.tryLock()).thenReturn(true);
+        when(row.getAttempts()).thenReturn(2);
+        assertEquals(PersistentNotificationQueue.RetryResult.NOT_FOUND, queue.retryNow(1, job -> false));
+        when(row.getAttempts()).thenReturn(0);
+        assertEquals(PersistentNotificationQueue.RetryResult.NOT_FOUND, queue.retryNow(1, job -> true));
+        verify(row, never()).save();
+    }
+
+    @Test
+    public void retryAfterCheckpointFailureDuplicatesUnconfirmedExternalSend() {
+        var raw = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(row.getDeliveredRaw()).thenAnswer(call -> raw.get());
+        doAnswer(call -> { raw.set(call.getArgument(0)); return null; }).when(row).setDeliveredRaw(any());
+        doThrow(new IllegalStateException("database unavailable")).doNothing().when(row).save();
+        var sends = new java.util.concurrent.atomic.AtomicInteger();
+        queue.start((payload, progress) -> {
+            if (!progress.delivered(null, ru.my.model.NotificationChannel.EMAIL, "user")) {
+                sends.incrementAndGet(); // Внешний сервис уже принял сообщение.
+                progress.record(null, ru.my.model.NotificationChannel.EMAIL, "user");
+            }
+        });
+        queue.runJob(null);
+        assertEquals(1, sends.get());
+        assertNull(raw.get());
+        queue.runJob(null);
+        assertEquals(2, sends.get());
+        verify(ao).delete(row);
+    }
+
+    @Test
+    public void partialChannelFailureRetriesOnlyUnconfirmedChannelAfterRestart() {
+        var raw = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(row.getDeliveredRaw()).thenAnswer(call -> raw.get());
+        doAnswer(call -> { raw.set(call.getArgument(0)); return null; }).when(row).setDeliveredRaw(any());
+        var email = new java.util.concurrent.atomic.AtomicInteger();
+        var telegram = new java.util.concurrent.atomic.AtomicInteger();
+        BiConsumer<String, DeliveryProgress> delivery = (payload, progress) -> {
+            if (!progress.delivered(null, ru.my.model.NotificationChannel.EMAIL, "user")) {
+                email.incrementAndGet();
+                progress.record(null, ru.my.model.NotificationChannel.EMAIL, "user");
+            }
+            if (!progress.delivered(null, ru.my.model.NotificationChannel.TELEGRAM, "user")) {
+                if (telegram.incrementAndGet() == 1) throw new IllegalStateException("channel unavailable");
+                progress.record(null, ru.my.model.NotificationChannel.TELEGRAM, "user");
+            }
+        };
+        queue.start(delivery);
+        queue.runJob(null);
+        queue.stop();
+        var restarted = new PersistentNotificationQueue(ao, scheduler, locks, delegates);
+        restarted.start(delivery);
+        restarted.runJob(null);
+        assertEquals(1, email.get());
+        assertEquals(2, telegram.get());
+        verify(ao).delete(row);
+    }
+
+    @Test
+    public void twoRunnersShareLockDuringDelivery() throws Exception {
+        var mutex = new java.util.concurrent.locks.ReentrantLock();
+        when(lock.tryLock()).thenAnswer(call -> mutex.tryLock());
+        doAnswer(call -> { mutex.unlock(); return null; }).when(lock).unlock();
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(call -> {
+            entered.countDown();
+            assertTrue(release.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            return null;
+        }).when(handler).accept(anyString(), any(DeliveryProgress.class));
+        var other = new PersistentNotificationQueue(ao, scheduler, locks, delegates);
+        other.start(handler);
+        var thread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var first = thread.submit(() -> queue.runJob(null));
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            other.runJob(null);
+            assertEquals(PersistentNotificationQueue.RetryResult.BUSY, other.retryNow(1, job -> true));
+            verify(handler, times(1)).accept(anyString(), any(DeliveryProgress.class));
+            release.countDown();
+            first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            verify(ao, times(1)).delete(row);
+        } finally {
+            release.countDown();
+            thread.shutdownNow();
+        }
+    }
+
 }

@@ -109,3 +109,7 @@ export function getFailedNotifications(beforeId, signal) {
   const query = beforeId == null ? '' : `?beforeId=${encodeURIComponent(beforeId)}`;
   return getJson(`/admin/failed-notifications${query}`, signal);
 }
+
+export async function retryFailedNotification(id) {
+  await request(`/admin/failed-notifications/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+}

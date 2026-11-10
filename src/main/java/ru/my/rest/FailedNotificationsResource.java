@@ -23,6 +23,9 @@ import ru.my.model.DiffResult;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.PathParam;
+import ru.my.impl.PersistentNotificationQueue;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
@@ -39,6 +42,7 @@ import java.util.List;
 public class FailedNotificationsResource {
     private static final int PAGE_SIZE = 50;
     private final ActiveObjects ao;
+    private final PersistentNotificationQueue queue;
     private final JiraAuthenticationContext auth;
     private final GlobalPermissionManager globals;
     private final IssueManager issues;
@@ -55,7 +59,9 @@ public class FailedNotificationsResource {
                                       @ComponentImport PermissionManager permissions,
                                       @ComponentImport ApplicationProperties properties,
                                       @ComponentImport CommentManager comments,
-                                      @ComponentImport CommentPermissionManager commentPermissions) {
+                                      @ComponentImport CommentPermissionManager commentPermissions,
+                                      PersistentNotificationQueue queue) {
+        this.queue = queue;
         this.ao = ao;
         this.auth = auth;
         this.globals = globals;
@@ -91,6 +97,25 @@ public class FailedNotificationsResource {
         }
         Integer next = rows.length > PAGE_SIZE ? rows[PAGE_SIZE - 1].getID() : null;
         return Response.ok(new FailedNotificationDto.Page(items, next)).build();
+    }
+
+    @POST
+    @Path("/{id}/retry")
+    public Response retry(@PathParam("id") int id) {
+        ApplicationUser user = auth.getLoggedInUser();
+        if (user == null) return UserSettingsResource.unauthorized();
+        if (!globals.hasPermission(GlobalPermissionKey.ADMINISTER, user)) return UserSettingsResource.forbidden();
+        if (id <= 0) return UserSettingsResource.badRequest("id должен быть положительным целым числом");
+        // Не раскрываем наличие события, если задача или комментарий недоступны.
+        var result = queue.retryNow(id, row -> {
+            FailedNotificationDto item = describe(row, user);
+            return item != null && item.issueId != null;
+        });
+        if (result == PersistentNotificationQueue.RetryResult.NOT_FOUND) return Response.status(404).build();
+        if (result == PersistentNotificationQueue.RetryResult.BUSY) {
+            return Response.status(409).entity(java.util.Map.of("error", "Очередь занята обработкой. Обновите список и попробуйте снова.")).build();
+        }
+        return Response.status(202).build();
     }
 
     private FailedNotificationDto describe(NotificationJobEntity row, ApplicationUser user) {

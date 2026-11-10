@@ -34,11 +34,12 @@ public class FailedNotificationsResourceTest {
     private final com.atlassian.jira.issue.comments.CommentManager comments = mock(com.atlassian.jira.issue.comments.CommentManager.class);
     private final com.atlassian.jira.issue.comments.CommentPermissionManager commentPermissions = mock(com.atlassian.jira.issue.comments.CommentPermissionManager.class);
     private final MockApplicationUser admin = new MockApplicationUser("admin");
+    private final ru.my.impl.PersistentNotificationQueue queue = mock(ru.my.impl.PersistentNotificationQueue.class);
     private FailedNotificationsResource resource;
 
     @Before
     public void setUp() {
-        resource = new FailedNotificationsResource(ao, auth, globals, issues, permissions, properties, comments, commentPermissions);
+        resource = new FailedNotificationsResource(ao, auth, globals, issues, permissions, properties, comments, commentPermissions, queue);
     }
 
     private void admin() {
@@ -185,6 +186,41 @@ public class FailedNotificationsResourceTest {
         verify(commentPermissions).hasBrowsePermission(admin, comment);
         verify(row, never()).getLastError();
         verifyNoInteractions(properties);
+    }
+
+    @Test
+    public void retryRequiresAdminBeforeAccessingQueue() {
+        assertEquals(401, resource.retry(1).getStatus());
+        when(auth.getLoggedInUser()).thenReturn(admin);
+        assertEquals(403, resource.retry(1).getStatus());
+        verifyNoInteractions(queue);
+    }
+
+    @Test
+    public void retryMapsQueueResultsAndRejectsInvalidId() {
+        admin();
+        assertEquals(400, resource.retry(0).getStatus());
+        verifyNoInteractions(queue);
+        when(queue.retryNow(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.SCHEDULED);
+        assertEquals(202, resource.retry(1).getStatus());
+        when(queue.retryNow(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.NOT_FOUND);
+        assertEquals(404, resource.retry(1).getStatus());
+        when(queue.retryNow(eq(1), any())).thenReturn(ru.my.impl.PersistentNotificationQueue.RetryResult.BUSY);
+        assertEquals(409, resource.retry(1).getStatus());
+    }
+
+    @Test
+    public void retryRejectsMalformedOrInaccessibleIssue() {
+        admin();
+        when(queue.retryNow(eq(1), any())).thenAnswer(call -> {
+            java.util.function.Predicate<NotificationJobEntity> visible = call.getArgument(1);
+            assertFalse(visible.test(row(1, "malformed")));
+            String payload = new QueuedIssueEvent(42L, null, 2L, false, null, null, false,
+                    new DiffResult(List.of())).encode();
+            assertFalse(visible.test(row(1, payload)));
+            return ru.my.impl.PersistentNotificationQueue.RetryResult.NOT_FOUND;
+        });
+        assertEquals(404, resource.retry(1).getStatus());
     }
 
 }

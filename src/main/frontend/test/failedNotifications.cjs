@@ -22,6 +22,10 @@ async function main() {
   assert.equal(calls[1].url, '/rest/issue-notifier/1/admin/failed-notifications?beforeId=42');
   assert.equal(calls[1].options.signal, signal);
   assert.equal(calls[1].options.credentials, 'same-origin');
+  await api.retryFailedNotification(42);
+  assert.equal(calls[2].url, '/rest/issue-notifier/1/admin/failed-notifications/42/retry');
+  assert.equal(calls[2].options.method, 'POST');
+  assert.equal(calls[2].options.credentials, 'same-origin');
   const source = fs.readFileSync(path.join(frontend, 'src/admin/FailedNotificationsTab.jsx'), 'utf8');
   const refreshHandler = source.slice(source.indexOf('  function refreshNewest()'), source.indexOf('\n  return (', source.indexOf('  function refreshNewest()')));
   const refreshState = { setLoading: value => assert.equal(value, true),

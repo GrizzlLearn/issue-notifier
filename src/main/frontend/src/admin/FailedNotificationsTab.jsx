@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { getFailedNotifications } from '../api';
+import { getFailedNotifications, retryFailedNotification } from '../api';
 
 const time = value => value == null ? '—' : new Date(value).toLocaleString('ru-RU');
 
-export function FailedNotificationsTable({ items, nextBeforeId }) {
+export function FailedNotificationsTable({ items, nextBeforeId, onRetry, retrying }) {
   if (items.length === 0) return <p>{nextBeforeId != null
     ? 'На этой странице нет доступных событий с ошибками.'
     : 'Нет доступных для просмотра ошибок отправки.'}</p>;
@@ -13,7 +13,7 @@ export function FailedNotificationsTable({ items, nextBeforeId }) {
         <thead><tr>
           <th scope="col">Задача</th><th scope="col">Событие и контекст</th>
           <th scope="col">Время ошибки</th><th scope="col">Неудачных попыток</th>
-          <th scope="col">Следующая попытка</th><th scope="col">Причина</th>
+          <th scope="col">Следующая попытка</th><th scope="col">Причина</th><th scope="col">Действия</th>
         </tr></thead>
         <tbody>{items.map(item => (
           <tr key={item.id}>
@@ -24,6 +24,8 @@ export function FailedNotificationsTable({ items, nextBeforeId }) {
             <td>{time(item.lastFailedAt)}</td><td>{item.attempts}</td>
             <td>{time(item.nextAttemptAt)}</td>
             <td style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.error || '—'}</td>
+            <td><button type="button" className="aui-button" disabled={!onRetry || retrying != null || !item.issueId}
+              onClick={() => onRetry(item.id)}>{retrying === item.id ? 'Постановка…' : 'Повторить сейчас'}</button></td>
           </tr>
         ))}</tbody>
       </table>
@@ -37,6 +39,8 @@ export default function FailedNotificationsTab() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(null);
+  const [message, setMessage] = useState(null);
   const beforeId = pages[pages.length - 1];
 
   useEffect(() => {
@@ -48,6 +52,19 @@ export default function FailedNotificationsTab() {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [beforeId, refresh]);
+
+  async function retry(id) {
+    setRetrying(id); setError(null); setMessage(null);
+    try {
+      await retryFailedNotification(id);
+      setMessage('Повтор запланирован. Событие обработается при ближайшем опросе очереди.');
+      setRefresh(value => value + 1);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRetrying(null);
+    }
+  }
 
   function refreshNewest() {
     setLoading(true);
@@ -63,15 +80,16 @@ export default function FailedNotificationsTab() {
         если Jira остановилась после отправки до сохранения результата.</p>
       <p>Найдите нужную задачу и событие, затем посмотрите столбец «Причина»: в нём указаны
         действие, канал, получатель и ошибка. Исправьте причину сбоя — плагин повторит обработку
-        автоматически, время указано в столбце «Следующая попытка». Нажмите «Обновить», чтобы
+        автоматически, либо нажмите «Повторить сейчас». Время указано в столбце «Следующая попытка». Нажмите «Обновить», чтобы
         увидеть актуальные данные с первой страницы; кнопки «Назад» и «Далее» переключают страницы.
         Это список текущих проблем, а не история всех отправок.</p>
       <button type="button" className="aui-button" disabled={loading}
               onClick={refreshNewest}>Обновить</button>
       <div aria-live="polite" aria-busy={loading}>
+        {message && <p className="aui-message aui-message-success">{message}</p>}
         {loading && <p>Загрузка…</p>}
         {error && <p className="aui-message aui-message-error">{error}</p>}
-        {!loading && data && <FailedNotificationsTable items={data.items} nextBeforeId={data.nextBeforeId} />}
+        {!loading && data && <FailedNotificationsTable items={data.items} nextBeforeId={data.nextBeforeId} onRetry={retry} retrying={retrying} />}
       </div>
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
         <button type="button" className="aui-button" disabled={loading || pages.length === 1}
